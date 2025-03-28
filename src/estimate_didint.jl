@@ -66,7 +66,7 @@ function didint(outcome::AbstractString,
                 state::AbstractString,
                 time::AbstractString,
                 data::DataFrame,
-                treated_states::Union{Vector{<:AbstractString}, AbstractString},
+                treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number},
                 treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date};
                 date_format::Union{AbstractString, Nothing} = nothing,
                 covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing} = nothing,
@@ -101,11 +101,11 @@ function didint(outcome::AbstractString,
     end
 
     # Ensure the outcome variable is a numeric variable and create outcome column
-    data_copy[!, "outcome_71X9yTx"] = convert(Vector{Float64}, data_copy[!, outcome])
-    if !(eltype(data_copy[!,"outcome_71X9yTx"]) <: Number)
+    outcome_nonmissingtype = Base.nonmissingtype(eltype(data_copy[!, outcome]))
+    if !(outcome_nonmissingtype <: Number)
         error("Er02: Column '$outcome' must be numeric, but found $(eltype(data_copy[!, outcome]))")
     end
-    
+    data_copy.outcome_71X9yTx = data_copy[!, outcome]
 
     # Check that the specified covariates exist
     if !isnothing(covariates)
@@ -114,7 +114,7 @@ function didint(outcome::AbstractString,
         end
         missing_cov = [col for col in covariates if !(col in names(data_copy))]
         if !isempty(missing_cov)
-            error("Er03: The following covariates could not be found in the data: ", join(missing_cov, ", "))
+            error("Er03$(join(missing_cov, ", ")): The preceding covariates could not be found in the data.")
         end
     end
 
@@ -144,7 +144,8 @@ function didint(outcome::AbstractString,
     else 
         treatment_times_numeric = false
     end
-    if eltype(data_copy[!, time]) <: Number
+    nonmissing_time_type = Base.nonmissingtype(eltype(data_copy[!, time]))
+    if nonmissing_time_type <: Number
         time_column_numeric = true
         unique_time_lengths = unique(length.(string.(data_copy[!, time])))
         if length(unique_time_lengths) > 1 || unique_time_lengths[1] != 4
@@ -171,19 +172,11 @@ function didint(outcome::AbstractString,
         error("Er06: 'treatment_times' must have at least one entry.")
     end
     
-    # Ensure the state column is a string
-    data_copy.state_71X9yTx = string.(data_copy[!, state])
-    missing_states = setdiff(treated_states, data_copy.state_71X9yTx)
-    if !isempty(missing_states)
-        error("Er12: The following 'treated_states' could not be found in the data: $(missing_states). \n 
-Only found the following states: $(unique(data_copy.state_71X9yTx))")
-    end
-
     # Make sure treated_states and control_states are vectors, make sure control_states exist
     if !(treated_states isa AbstractVector)
         treated_states = [treated_states]
     end 
-    unique_states = unique(data_copy.state_71X9yTx)
+    unique_states = unique(data_copy[!, state])
     control_states = setdiff(unique_states, treated_states)
     if !(control_states isa AbstractVector)
         control_states = [control_states]
@@ -192,6 +185,21 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
     if missing_control_states
         error("Er22: No control states were found.")
     end 
+
+    # Ensure the state column is a string or number and that the nonmissingtype(treated_states) == nonmissingtype(state column)
+    treated_states_type = Base.nonmissingtype(eltype(treated_states))
+    state_column_type = Base.nonmissingtype(eltype(data_copy[!, state]))
+    if !((treated_states_type <: Number && state_column_type <: Number) || 
+        (treated_states_type <: AbstractString && state_column_type <: AbstractString))
+        error("Er40: 'treated_states' and the 'state' column ($state) must both be numerical or both be strings. \n 
+Instead, found: 'treated_states': $treated_states_type and '$state': $state_column_type.")
+    end
+    data_copy.state_71X9yTx = data_copy[!, state]
+    missing_states = setdiff(treated_states, data_copy.state_71X9yTx)
+    if !isempty(missing_states)
+        error("Er12: The following 'treated_states' could not be found in the data: $(missing_states). \n 
+Only found the following states: $(unique(data_copy.state_71X9yTx))")
+    end
 
     # Check for missing/nothing/NaN values
     if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy.outcome_71X9yTx)
@@ -211,17 +219,22 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
         end
     end
 
+    # Force outcome to float64 to speed up regression (runs faster is <:Number rather than <:Union{Number, Missing})
+    data_copy.outcome_71X9yTx = convert(Vector{Float64}, data_copy.outcome_71X9yTx)
+
     # Check that time column entries are all in the same date format
-    if eltype(data_copy[!, time]) <: AbstractString || eltype(data_copy[!, time]) <:Number
+    nonmissing_time_type = Base.nonmissingtype(eltype(data_copy[!, time]))
+    if nonmissing_time_type <: AbstractString || nonmissing_time_type <:Number
         dates_str = string.(data_copy[!, time])
         if length(unique(length.(dates_str))) != 1
             error("Er27: Dates in the 'time' column are not all the same length!")
         end
-        if unique(length.(dates_str))[1] != 4 && eltype(data_copy[!, time]) <:Number
+        if unique(length.(dates_str))[1] != 4 && nonmissing_time_type <:Number
             error("Er32: If 'time' is a numeric column, dates must be 4 digits long.")
         end
     end
-    if eltype(data_copy[!, time]) <: AbstractString
+    
+    if nonmissing_time_type <: AbstractString
         ref_positions, ref_sep_types = get_sep_info(dates_str[1])
         if length(ref_sep_types) > 1
             error("Er28: First date in 'time' column uses mixed separators: - and /.")
@@ -231,13 +244,13 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
             i += 1
             sep_positions, sep_types = get_sep_info(date)
             if sep_positions != ref_positions
-                error("Er29: Separator positions differs from the first date in 'time' column in date entry $i: $date")
+                error("Er29 $i: Separator positions differs from the first date in 'time' column in date entry $i: $date")
             end
             if length(sep_types) > 1
-                error("Er30: Date found in 'time' column (entry $i) which uses multiple separator types: $date")
+                error("Er30 $i: Date found in 'time' column (entry $i) which uses multiple separator types: $date")
             end
             if sep_types != ref_sep_types
-                error("Er31: Date found in 'time' column (entry $i: $date) which uses different separator types from first date.")
+                error("Er31 $i: Date found in 'time' column (entry $i: $date) which uses different separator types from first date.")
             end
         end
     end
@@ -253,19 +266,19 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
             i += 1
             sep_positions, sep_types = get_sep_info(date)
             if sep_positions != ref_positions
-                error("Er35: Separator positions differs from the first date in 'treatment_times' in the $i'th entry: $date")
+                error("Er35 $i: Separator positions differs from the first date in 'treatment_times' in the $i'th entry: $date")
             end
             if length(sep_types) > 1
-                error("Er36: Date found in 'treatment_times' column (entry $i) which uses multiple separator types: $date")
+                error("Er36 $i: Date found in 'treatment_times' column (entry $i) which uses multiple separator types: $date")
             end
             if sep_types != ref_sep_types
-                error("Er37: Date found in 'treatment_times' (entry $i: $date) which uses different separator types from first date.")
+                error("Er37 $i: Date found in 'treatment_times' (entry $i: $date) which uses different separator types from first date.")
             end
         end
     end
 
     # Check that time column and treatment_times have the same date format if they are both strings
-    if eltype(data_copy[!, time]) <:AbstractString && eltype(treatment_times) <:AbstractString
+    if nonmissing_time_type <:AbstractString && eltype(treatment_times) <:AbstractString
         treatment_times_length = length(treatment_times[1])
         date_column_entry_length = length(data_copy[!, time][1])
         if treatment_times_length != date_column_entry_length
@@ -282,15 +295,17 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
     end
 
     # Make sure the time column is a Date object, especially relevant for staggered adoption
-    if eltype(data_copy[!, time]) <: Number
+    if nonmissing_time_type <: Number
         data_copy.time_71X9yTx = Date.(data_copy[!, time])
-    elseif typeof(data_copy[!, time]) <: Date
-        data_copy.time_71X9yTx = data_copy[!, time]
-    else
+    elseif nonmissing_time_type <: AbstractString
         if isnothing(date_format)
             error("Er15: If 'time' column is a String column, must specify the 'date_format' argument.")
         end 
-        data_copy.time_71X9yTx = parse_string_to_date_didint.(string.(data_copy[!, time]), date_format)
+        data_copy.time_71X9yTx = parse_string_to_date_didint.(data_copy[!, time], date_format)
+    elseif nonmissing_time_type <: Date
+        data_copy.time_71X9yTx = data_copy[!, time]
+    else
+        error("Er10: 'time' column must be a String, Date, or Number column.")
     end
 
     # Convert treatment_times to Date objects
@@ -350,10 +365,10 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
         earliest = minimum(state_dates)
         latest = maximum(state_dates)
         if !(earliest < treat_time)
-            error("Er38: For state $s, the earliest date ($earliest) is not strictly less than the treatment time ($treat_time).")
+            error("Er38 $s: For state $s, the earliest date ($earliest) is not strictly less than the treatment time ($treat_time).")
         end
         if !(treat_time <= latest)
-            error("Er39: For state $s, the treatment time ($treat_time) is greater than the last date ($latest).")
+            error("Er39 $s: For state $s, the treatment time ($treat_time) is greater than the last date ($latest).")
         end
     end
 
@@ -374,14 +389,15 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
     covariates_to_include = String[]
     if !isnothing(covariates)
         for cov in covariates
-            if eltype(data_copy[!, cov]) <: AbstractString || eltype(data_copy[!, cov]) <: CategoricalValue
+            cov_type = Base.nonmissingtype(eltype(data_copy[!, cov]))
+            if cov_type <: AbstractString || cov_type <: CategoricalValue
                 unique_categories = unique(data_copy[!, cov])
                 if length(unique_categories) >= 2 
 
                     if !isnothing(ref) && haskey(ref, cov)
                         refcat = ref[cov]
                         if !(refcat in unique_categories)
-                            error("Er04: Reference category '$refcat' not found in column '$cov'.")
+                            error("Er04 $refcat $cov: Reference category '$refcat' not found in column '$cov'.")
                         end
                     else
                         refcat = first(unique_categories)
@@ -401,11 +417,13 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                         push!(covariates_to_include, string(newcol))
                     end
                 else    
-                    error("Er05: Only detected one unique factor ($unique_categories) in factor variable $cov.")
+                    error("Er05 $cov: Only detected one unique factor ($unique_categories) in factor variable $cov.")
                 end 
-            else
+            elseif cov_type <:Number
                 data_copy[!, cov] = convert(Vector{Float64}, data_copy[!, cov])
                 push!(covariates_to_include, cov)
+            else
+                error("Er41 $cov: column was found to be ($cov_type) neither of type Number, AbstractString, nor CategoricalValue!")
             end
         end
     end 
