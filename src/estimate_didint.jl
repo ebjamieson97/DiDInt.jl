@@ -101,10 +101,11 @@ function didint(outcome::AbstractString,
     end
 
     # Ensure the outcome variable is a numeric variable and create outcome column
-    if !(eltype(data_copy[!, outcome]) <: Number)
+    data_copy[!, "outcome_71X9yTx"] = convert(Vector{Float64}, data_copy[!, outcome])
+    if !(eltype(data_copy[!,"outcome_71X9yTx"]) <: Number)
         error("Er02: Column '$outcome' must be numeric, but found $(eltype(data_copy[!, outcome]))")
     end
-    data_copy[!, "outcome_71X9yTx"] = data_copy[!, outcome]
+    
 
     # Check that the specified covariates exist
     if !isnothing(covariates)
@@ -405,6 +406,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                     error("Er05: Only detected one unique factor ($unique_categories) in factor variable $cov.")
                 end 
             else
+                data_copy[!, cov] = convert(Vector{Float64}, data_copy[!, cov])
                 push!(covariates_to_include, cov)
             end
         end
