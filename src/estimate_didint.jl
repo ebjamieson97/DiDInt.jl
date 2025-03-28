@@ -1,9 +1,14 @@
 """
-    didint(outcome::AbstractString, state::AbstractString, time::AbstractString,
-           data::DataFrame, treated_states::Union{Vector{AbstractString}, AbstractString},
-           treatment_times; covariates::Union{Vector{AbstractString}, AbstractString, nothing} = nothing,
-           ccc::AbstractString = "int", agg::AbstractString = "cohort",
-           ref::Union{Dict{AbstractString, AbstractString}, nothing} = nothing)
+    didint(outcome::AbstractString, state::AbstractString,
+           time::AbstractString, data::DataFrame,
+           treated_states::Union{Vector{<:AbstractString}, AbstractString},
+           treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date};
+           date_format::Union{AbstractString, Nothing} = nothing,
+           covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing} = nothing,
+           ccc::AbstractString = "int", agg::AbstractString = "state",
+           ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
+           freq::Union{AbstractString, Nothing} = nothing, freq_multiplier::Number = 1,
+           autoadjust::Bool = false, nperm::Number = 1000, verbose::Bool = true)
 
 The `didint()` function estimates the average effect of treatment on the treated (ATT)
 while accounting for covariates that may vary by state, time, or by both state and time simultaneously.
@@ -25,9 +30,9 @@ in `treated_times`, and so on.
     The DataFrame to be used for the analysis.
 - `treated_states::Union{Vector{<:AbstractString}, AbstractString}`
     A vector of strings (or a single string) noting the treated state(s).
-- `treated_times`
-    A vector (or single entry) denoting the associated .
-- `covariates::Union{Vector{<:AbstractString}, AbstractString, nothing}` 
+- `treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date}`
+    A vector (or single entry) denoting the associated treatment times of the 'treated_states'.
+- `covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing}` 
     A vector of covariates entered as strings (or a single covariate string),
     or, `nothing` (default).
 - `ccc::AbstractString = "int"`
@@ -36,23 +41,36 @@ in `treated_times`, and so on.
 - `agg::AbstractString = "cohort"` 
     Enter the weighting method as a string.
     Options are: `"cohort"` (default), `"simple"`, `"state"`, `"unweighted"`.
-- `ref::Union{Dict{<:AbstractString, <:AbstractString}, nothing} = nothing`
+- `ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing`
     A dictionary specifying which category in a categorical variable should be used
     as the reference (baseline) category.
+- `freq::Union{AbstractString, Nothing} = nothing`
+    A string indicating the desired timeframe of a period for the analysis for staggered adoption scenarios.
+    Options are: `"year"`, `"month"`, `"week"`, `"day"`.
+- `freq_multiplier::Number = 1`
+    An integer by which the 'freq' argument should be multiplied in a staggered adoption scenario, e.g. if a two-year
+    period is desired, set `freq = "year"` and `freq_multiplier = 2`.
+- `autoadjust::Bool = false`
+    A boolean option for the length of a period to be considered in staggered adoption scenario to be automatically
+    determined by DiDInt.
+- `nperm::Number = 1000`
+    The number of unique permutations to be considered when performing the randomization inference.
+- `verbose::Bool = true`
+    A boolean option for displaying progress of the randomization procedure. 
 
 # Returns
 A DataFrame of results including the estimate of the ATT as well as standard errors and p-values.
 
 """
 function didint(outcome::AbstractString,
-                state::Union{AbstractString, Symbol},
-                time::Union{AbstractString, Symbol},
+                state::AbstractString,
+                time::AbstractString,
                 data::DataFrame,
                 treated_states::Union{Vector{<:AbstractString}, AbstractString},
                 treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date};
                 date_format::Union{AbstractString, Nothing} = nothing,
                 covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing} = nothing,
-                ccc::AbstractString = "int", agg::AbstractString = "state",
+                ccc::AbstractString = "int", agg::AbstractString = "cohort",
                 ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
                 freq::Union{AbstractString, Nothing} = nothing,
                 freq_multiplier::Number = 1,
