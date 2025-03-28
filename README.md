@@ -69,3 +69,10 @@ didint(outcome::AbstractString, state::AbstractString,
 
 - **verbose** (Bool = true):  
   Display progress during computation.
+
+## Returns
+
+A DataFrame of results including:
+- ATT(s)
+- Standard errors
+- p-values
