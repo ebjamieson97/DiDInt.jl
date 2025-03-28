@@ -101,11 +101,6 @@ function didint(outcome::AbstractString,
         error("Er01: The following columns could not be found in the data: ", join(missing_cols, ", "))
     end
 
-    # DEBUGGING LINE FOR STATA IGNORE
-    if stata_debug
-        error("106")
-    end 
-
     # Ensure the outcome variable is a numeric variable and create outcome column
     outcome_nonmissingtype = Base.nonmissingtype(eltype(data_copy[!, outcome]))
     if !(outcome_nonmissingtype <: Number)
@@ -194,7 +189,7 @@ function didint(outcome::AbstractString,
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
-        error("197")
+        error("asdf:192")
     end 
 
     # Ensure the state column is a string or number and that the nonmissingtype(treated_states) == nonmissingtype(state column)
@@ -307,7 +302,7 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
-        error("310")
+        error("ththth: 310")
     end 
 
     # Make sure the time column is a Date object, especially relevant for staggered adoption
@@ -400,7 +395,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
-        error("403")
+        error("fofofo: 403")
     end 
 
     # Create dummies for each time and state interaction 
@@ -491,7 +486,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
-        error("494")
+        error("fififi: 494")
     end 
 
     # Recover lambdas
@@ -568,7 +563,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
 
         # DEBUGGING LINE FOR STATA IGNORE
         if stata_debug
-            error("LINE 571")
+            error("sisisi: 571")
         end 
 
         # Run final regression to compute ATT based on weighting/aggregation method
