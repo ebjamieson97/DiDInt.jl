@@ -189,7 +189,7 @@ function didint(outcome::AbstractString,
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
-        error("asdf:192")
+        # out of bounds error is happening after here
     end 
 
     # Ensure the state column is a string or number and that the nonmissingtype(treated_states) == nonmissingtype(state column)
@@ -302,7 +302,7 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
-        error("ththth: 310")
+        error("Er42: blah blah blah.")
     end 
 
     # Make sure the time column is a Date object, especially relevant for staggered adoption
