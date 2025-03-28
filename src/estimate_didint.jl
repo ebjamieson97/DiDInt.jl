@@ -76,7 +76,8 @@ function didint(outcome::AbstractString,
                 freq_multiplier::Number = 1,
                 autoadjust::Bool = false,
                 nperm::Number = 1000,
-                verbose::Bool = true)
+                verbose::Bool = true,
+                stata_debug::Bool = false)
 
     # Check that agg args are passed correctly
     agg = lowercase(agg)
@@ -99,6 +100,11 @@ function didint(outcome::AbstractString,
     if !isempty(missing_cols)
         error("Er01: The following columns could not be found in the data: ", join(missing_cols, ", "))
     end
+
+    # DEBUGGING LINE FOR STATA IGNORE
+    if stata_debug
+        println("LINE 106")
+    end 
 
     # Ensure the outcome variable is a numeric variable and create outcome column
     outcome_nonmissingtype = Base.nonmissingtype(eltype(data_copy[!, outcome]))
@@ -184,6 +190,11 @@ function didint(outcome::AbstractString,
     missing_control_states = isempty(control_states)
     if missing_control_states
         error("Er22: No control states were found.")
+    end 
+
+    # DEBUGGING LINE FOR STATA IGNORE
+    if stata_debug
+        println("LINE 197")
     end 
 
     # Ensure the state column is a string or number and that the nonmissingtype(treated_states) == nonmissingtype(state column)
@@ -294,6 +305,11 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
         end
     end
 
+    # DEBUGGING LINE FOR STATA IGNORE
+    if stata_debug
+        println("LINE 310")
+    end 
+
     # Make sure the time column is a Date object, especially relevant for staggered adoption
     if nonmissing_time_type <: Number
         data_copy.time_71X9yTx = Date.(data_copy[!, time])
@@ -382,6 +398,11 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
         error("Er16: A non-common or non-staggered adoption scenario was discovered!?")
     end 
 
+    # DEBUGGING LINE FOR STATA IGNORE
+    if stata_debug
+        println("LINE 403")
+    end 
+
     # Create dummies for each time and state interaction 
     data_copy.state_time = categorical(data_copy.state_71X9yTx .* "0IQR7q6Wei7Ejp4e" .* data_copy.time_71X9yTx)
 
@@ -468,6 +489,11 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
     stage1 = reg(data_copy, formula; contrasts = Dict(:state_71X9yTx => DummyCoding(), :time_71X9yTx => DummyCoding()),
                  save = false)
 
+    # DEBUGGING LINE FOR STATA IGNORE
+    if stata_debug
+        println("LINE 494")
+    end 
+
     # Recover lambdas
     state_time = split.(replace.(coefnames(stage1), "state_time: " => ""), "0IQR7q6Wei7Ejp4e")
     lambda_df = DataFrame(state = first.(state_time), time = last.(state_time))
@@ -538,6 +564,11 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             temp_df = DataFrame(state = control_states[i], treated_time = trtd_time,
                                 t = ri_diffs.t, r1 = ri_diffs.r1, diff = diffs, treat = -1)
             ri_diff_df = vcat(ri_diff_df, temp_df)
+        end 
+
+        # DEBUGGING LINE FOR STATA IGNORE
+        if stata_debug
+            println("LINE 571")
         end 
 
         # Run final regression to compute ATT based on weighting/aggregation method
