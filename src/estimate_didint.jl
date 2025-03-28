@@ -103,7 +103,7 @@ function didint(outcome::AbstractString,
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
-        @info "LINE 106"
+        @warn"LINE 106"
     end 
 
     # Ensure the outcome variable is a numeric variable and create outcome column
@@ -194,7 +194,7 @@ function didint(outcome::AbstractString,
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
-        @info "LINE 197"
+        @warn"LINE 197"
     end 
 
     # Ensure the state column is a string or number and that the nonmissingtype(treated_states) == nonmissingtype(state column)
@@ -307,7 +307,7 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
-        @info "LINE 310"
+        @warn"LINE 310"
     end 
 
     # Make sure the time column is a Date object, especially relevant for staggered adoption
@@ -400,7 +400,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
-        @info "LINE 403"
+        @warn"LINE 403"
     end 
 
     # Create dummies for each time and state interaction 
@@ -491,7 +491,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
-        @info "LINE 494"
+        @warn"LINE 494"
     end 
 
     # Recover lambdas
@@ -568,7 +568,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
 
         # DEBUGGING LINE FOR STATA IGNORE
         if stata_debug
-            @info "LINE 571"
+            @warn"LINE 571"
         end 
 
         # Run final regression to compute ATT based on weighting/aggregation method
