@@ -302,7 +302,7 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
-        error("Er42: blah blah blah.")
+        # We are getting at least this far before the out of bounds error 
     end 
 
     # Make sure the time column is a Date object, especially relevant for staggered adoption
@@ -395,7 +395,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
-        error("fofofo: 403")
+        error("Er43: blah blah blah.")
     end 
 
     # Create dummies for each time and state interaction 
@@ -486,7 +486,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
-        error("fififi: 494")
+        error("Er44: blah blah blah.")
     end 
 
     # Recover lambdas
@@ -563,7 +563,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
 
         # DEBUGGING LINE FOR STATA IGNORE
         if stata_debug
-            error("sisisi: 571")
+            error("Er45: blah blah blah.")
         end 
 
         # Run final regression to compute ATT based on weighting/aggregation method
