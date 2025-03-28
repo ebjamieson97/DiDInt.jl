@@ -562,6 +562,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             results.ri_pval_agg_att[1] = randomization_inference_didint(vcat(diff_df, ri_diff_df), "cohort", 
                                                                         result_dict["beta_hat"], nperm, control_states,
                                                                         treated_states, verbose)
+            results.treatment_time = string.(results.treatment_time)
             return results
         elseif agg == "simple"
             # Run final regression -- weighted by time and r - 1 groups
@@ -606,6 +607,8 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             results.ri_pval_agg_att[1] = randomization_inference_didint(vcat(diff_df, ri_diff_df), "simple", 
                                                                         result_dict["beta_hat"], nperm, control_states,
                                                                         treated_states, verbose)
+            results.r1 = string.(results.r1)
+            results.time = string.(results.time)
             return results
         elseif agg == "state"
             # Run final regression -- weighted by state
