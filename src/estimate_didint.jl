@@ -284,15 +284,13 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
     # Make sure the time column is a Date object, especially relevant for staggered adoption
     if eltype(data_copy[!, time]) <: Number
         data_copy.time_71X9yTx = Date.(data_copy[!, time])
-    elseif eltype(data_copy[!, time]) <: AbstractString
-        if isnothing(date_format)
-            error("Er15: If 'time' column is a String column, must specify the 'date_format' argument.")
-        end 
-        data_copy.time_71X9yTx = parse_string_to_date_didint.(data_copy[!, time], date_format)
     elseif typeof(data_copy[!, time]) <: Date
         data_copy.time_71X9yTx = data_copy[!, time]
     else
-        error("Er10: 'time' column must be a String, Date, or Number column.")
+        if isnothing(date_format)
+            error("Er15: If 'time' column is a String column, must specify the 'date_format' argument.")
+        end 
+        data_copy.time_71X9yTx = parse_string_to_date_didint.(string.(data_copy[!, time]), date_format)
     end
 
     # Convert treatment_times to Date objects
