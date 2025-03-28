@@ -1,7 +1,7 @@
 """
     didint(outcome::AbstractString, state::AbstractString,
            time::AbstractString, data::DataFrame,
-           treated_states::Union{Vector{<:AbstractString}, AbstractString},
+           treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number},
            treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date};
            date_format::Union{AbstractString, Nothing} = nothing,
            covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing} = nothing,
@@ -28,7 +28,7 @@ in `treated_times`, and so on.
     Input the name of the column which identifies the date of the observation.
 - `data::DataFrame`
     The DataFrame to be used for the analysis.
-- `treated_states::Union{Vector{<:AbstractString}, AbstractString}`
+- `treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number}`
     A vector of strings (or a single string) noting the treated state(s).
 - `treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date}`
     A vector (or single entry) denoting the associated treatment times of the 'treated_states'.
