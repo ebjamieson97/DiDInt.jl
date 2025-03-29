@@ -76,8 +76,7 @@ function didint(outcome::AbstractString,
                 freq_multiplier::Number = 1,
                 autoadjust::Bool = false,
                 nperm::Number = 1000,
-                verbose::Bool = true,
-                stata_debug::Bool = false)
+                verbose::Bool = true)
 
     # Check that agg args are passed correctly
     agg = lowercase(agg)
@@ -185,11 +184,6 @@ function didint(outcome::AbstractString,
     missing_control_states = isempty(control_states)
     if missing_control_states
         error("Er22: No control states were found.")
-    end 
-
-    # DEBUGGING LINE FOR STATA IGNORE
-    if stata_debug
-        # out of bounds error is happening after here
     end 
 
     # Ensure the state column is a string or number and that the nonmissingtype(treated_states) == nonmissingtype(state column)
@@ -331,7 +325,6 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
     # In the case of staggered adoption, check if date matching procedure should be done
     if staggered_adoption
         if !isnothing(freq) || autoadjust
-            error("Er45: blah blah blah.")
             start_date = minimum(data_copy.time_71X9yTx)
             end_date   = maximum(data_copy.time_71X9yTx)
             if autoadjust
@@ -342,23 +335,15 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
                 date_interval = Day(round(mean([med, mea])))
                 match_to_these_dates = collect(start_date:date_interval:end_date)
             elseif !isnothing(freq)
-                error("Er46: blah blah blah.")
                 period = parse_freq(string(freq_multiplier)*" "*freq)
                 match_to_these_dates = collect(start_date:period:end_date)
             end
-            error("Er47: blah blah blah.")
             matched = [match_date(t, match_to_these_dates, treatment_times) for t in data_copy.time_71X9yTx]
             data_copy.time_71X9yTx = matched
             matched_treatment = [match_treatment_time(t, match_to_these_dates) for t in treatment_times]
             treatment_times = matched_treatment
         end 
     end
-
-    # DEBUGGING LINE FOR STATA IGNORE
-    if stata_debug
-        # Pretty sure out of bounds error is happening before here
-        error("Er44: blah blah blah.")
-    end 
 
     # Check that treatment_times actually exist in all_times from the data
     if staggered_adoption
@@ -492,11 +477,6 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
     stage1 = reg(data_copy, formula; contrasts = Dict(:state_71X9yTx => DummyCoding(), :time_71X9yTx => DummyCoding()),
                  save = false)
 
-    # DEBUGGING LINE FOR STATA IGNORE
-    if stata_debug
-        error("Er44: blah blah blah.")
-    end 
-
     # Recover lambdas
     state_time = split.(replace.(coefnames(stage1), "state_time: " => ""), "0IQR7q6Wei7Ejp4e")
     lambda_df = DataFrame(state = first.(state_time), time = last.(state_time))
@@ -567,11 +547,6 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             temp_df = DataFrame(state = control_states[i], treated_time = trtd_time,
                                 t = ri_diffs.t, r1 = ri_diffs.r1, diff = diffs, treat = -1)
             ri_diff_df = vcat(ri_diff_df, temp_df)
-        end 
-
-        # DEBUGGING LINE FOR STATA IGNORE
-        if stata_debug
-            error("Er45: blah blah blah.")
         end 
 
         # Run final regression to compute ATT based on weighting/aggregation method
