@@ -347,6 +347,11 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
         end 
     end
 
+    # DEBUGGING LINE FOR STATA IGNORE
+    if stata_debug
+        error("Er43: blah blah blah.")
+    end 
+
     # Check that treatment_times actually exist in all_times from the data
     if staggered_adoption
         all_times = sort(unique(data_copy.time_71X9yTx))
@@ -370,6 +375,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
+        # Pretty sure out of bounds error is happening before here
         error("Er46: blah blah blah.") 
     end 
 
@@ -396,12 +402,6 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
         data_copy.time_71X9yTx = string.(data_copy.time_71X9yTx)
     else
         error("Er16: A non-common or non-staggered adoption scenario was discovered!?")
-    end 
-
-    # DEBUGGING LINE FOR STATA IGNORE
-    if stata_debug
-        # Pretty sure out of bounds error is happening before here
-        error("Er43: blah blah blah.")
     end 
 
     # Create dummies for each time and state interaction 
