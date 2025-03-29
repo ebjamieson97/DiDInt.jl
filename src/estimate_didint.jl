@@ -324,6 +324,11 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
         treatment_times = parse_string_to_date_didint.(treatment_times, date_format)
     end 
 
+    # DEBUGGING LINE FOR STATA IGNORE
+    if stata_debug
+        error("Er46: blah blah blah.") 
+    end 
+
     # In the case of staggered adoption, check if date matching procedure should be done
     if staggered_adoption
         if !isnothing(freq) || autoadjust
@@ -349,6 +354,7 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
+        # Pretty sure out of bounds error is happening before here
         error("Er43: blah blah blah.")
     end 
 
@@ -371,12 +377,6 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
         end 
     elseif staggered_adoption && length(treatment_times) != length(treated_states)
         error("Er18: 'treatment_times' should be the same length as the 'treated_states'.")
-    end 
-
-    # DEBUGGING LINE FOR STATA IGNORE
-    if stata_debug
-        # Pretty sure out of bounds error is happening before here
-        error("Er46: blah blah blah.") 
     end 
 
     # Also need to make sure that start_times < treatment_times < end_times is true for each state
