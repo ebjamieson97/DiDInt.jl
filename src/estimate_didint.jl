@@ -300,11 +300,6 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
         end
     end
 
-    # DEBUGGING LINE FOR STATA IGNORE
-    if stata_debug
-        # We are getting at least this far before the out of bounds error 
-    end 
-
     # Make sure the time column is a Date object, especially relevant for staggered adoption
     if nonmissing_time_type <: Number
         data_copy.time_71X9yTx = Date.(data_copy[!, time])
@@ -324,14 +319,19 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
         treatment_times = parse_string_to_date_didint.(treatment_times, date_format)
     end 
 
-    # DEBUGGING LINE FOR STATA IGNORE
-    if stata_debug
-        error("Er46: blah blah blah.") 
+    # Check freq args
+    if !isnothing(freq)
+        freq = lowercase(freq)
+        freq_options = ["week", "weeks", "weekly", "day", "days", "daily", "month", "months", "monthly", "year", "years", "yearly"]
+        if !(freq in freq_options)
+            error("Er42: 'freq' was not set to a valid option. Try one of: $freq_options")
+        end 
     end 
 
     # In the case of staggered adoption, check if date matching procedure should be done
     if staggered_adoption
         if !isnothing(freq) || autoadjust
+            error("Er45: blah blah blah.")
             start_date = minimum(data_copy.time_71X9yTx)
             end_date   = maximum(data_copy.time_71X9yTx)
             if autoadjust
@@ -342,9 +342,11 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
                 date_interval = Day(round(mean([med, mea])))
                 match_to_these_dates = collect(start_date:date_interval:end_date)
             elseif !isnothing(freq)
+                error("Er46: blah blah blah.")
                 period = parse_freq(string(freq_multiplier)*" "*freq)
                 match_to_these_dates = collect(start_date:period:end_date)
             end
+            error("Er47: blah blah blah.")
             matched = [match_date(t, match_to_these_dates, treatment_times) for t in data_copy.time_71X9yTx]
             data_copy.time_71X9yTx = matched
             matched_treatment = [match_treatment_time(t, match_to_these_dates) for t in treatment_times]
@@ -355,7 +357,7 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
         # Pretty sure out of bounds error is happening before here
-        error("Er43: blah blah blah.")
+        error("Er44: blah blah blah.")
     end 
 
     # Check that treatment_times actually exist in all_times from the data
