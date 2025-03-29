@@ -368,6 +368,11 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
         error("Er18: 'treatment_times' should be the same length as the 'treated_states'.")
     end 
 
+    # DEBUGGING LINE FOR STATA IGNORE
+    if stata_debug
+        error("Er46: blah blah blah.") 
+    end 
+
     # Also need to make sure that start_times < treatment_times < end_times is true for each state
     for i in eachindex(treated_states)
         s = treated_states[i]
@@ -395,6 +400,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
 
     # DEBUGGING LINE FOR STATA IGNORE
     if stata_debug
+        # Pretty sure out of bounds error is happening before here
         error("Er43: blah blah blah.")
     end 
 
