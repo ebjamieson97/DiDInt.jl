@@ -29,7 +29,7 @@ function parse_string_to_date_didint(date::Union{Vector{<:AbstractString}, Abstr
         # Other formats are handled natively by Dates      
         output = Date(date, lowercase(date_format))
     else
-        error("Please specify a date_format listed here: $possible_formats. Format 'ddmonyyyy' should look like '25dec2020' and format yyyym00 should look like '2020m12'.")
+        error("Er01: Please specify a date_format listed here: $possible_formats. Format 'ddmonyyyy' should look like '25dec2020' and format yyyym00 should look like '2020m12'.")
     end 
 
     return output 
@@ -49,13 +49,16 @@ function parse_freq(period_str::AbstractString)
     elseif period_type in ["year", "years", "yearly"]
         return Year(value)
     else
-        throw(ArgumentError("Er11: Unsupported period type: $period_type, try day(s), week(s), month(s), or year(s)."))
+        error("Er02: Unsupported period type: $period_type, try day(s), week(s), month(s), or year(s).")
     end
 end
 
 function compute_jknife_se(X::Matrix{<:Number}, Y::Vector{<:Number}, original_att::Number)
     n = length(Y)
-    jknife_beta = Vector{Float64}(undef, length(Y))
+    if n == 1 
+        return missing
+    end 
+    jknife_beta = Vector{Float64}(undef, n)
     ncolx = size(X,2)
     for i in eachindex(Y)
         idx = [1:i-1; i+1:size(X, 1)]

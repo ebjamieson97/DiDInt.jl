@@ -82,13 +82,13 @@ function didint(outcome::AbstractString,
     agg = lowercase(agg)
     agg_options = ["cohort", "state", "simple", "unweighted"]
     if !(agg in agg_options)
-        error("Er21: 'agg' must be one of: $(agg_options)")
+        error("Er03: 'agg' must be one of: $(agg_options)")
     end 
 
     # Round nperm
     nperm = Int(round(nperm))
     if nperm < 1
-        error("Er23: 'nperm' must be a positive integer > 0.")
+        error("Er04: 'nperm' must be a positive integer > 0.")
     end 
 
     # Create data copy
@@ -97,13 +97,13 @@ function didint(outcome::AbstractString,
     # Ensure the specified outcome, state, and time columns exist in the data
     missing_cols = [col for col in [outcome, state, time] if !(col in names(data_copy))]
     if !isempty(missing_cols)
-        error("Er01: The following columns could not be found in the data: ", join(missing_cols, ", "))
+        error("Er05: The following columns could not be found in the data: ", join(missing_cols, ", "))
     end
 
     # Ensure the outcome variable is a numeric variable and create outcome column
     outcome_nonmissingtype = Base.nonmissingtype(eltype(data_copy[!, outcome]))
     if !(outcome_nonmissingtype <: Number)
-        error("Er02: Column '$outcome' must be numeric, but found $(eltype(data_copy[!, outcome]))")
+        error("Er06: Column '$outcome' must be numeric, but found $(eltype(data_copy[!, outcome]))")
     end
     data_copy.outcome_71X9yTx = data_copy[!, outcome]
 
@@ -114,7 +114,7 @@ function didint(outcome::AbstractString,
         end
         missing_cov = [col for col in covariates if !(col in names(data_copy))]
         if !isempty(missing_cov)
-            error("Er03$(join(missing_cov, ", ")): The preceding covariates could not be found in the data.")
+            error("Er07$(join(missing_cov, ", ")): The preceding covariates could not be found in the data.")
         end
     end
 
@@ -125,7 +125,7 @@ function didint(outcome::AbstractString,
             date_format = "yyyy"
         end 
         if lowercase(date_format) != "yyyy"
-            error("Er07: If 'treatment_times' are entered as a number, the 'date_format' must be \"yyyy\".")
+            error("Er08: If 'treatment_times' are entered as a number, the 'date_format' must be \"yyyy\".")
         end 
         if treatment_times isa AbstractVector
             unique_lengths = unique(length.(string.(treatment_times)))
@@ -135,10 +135,10 @@ function didint(outcome::AbstractString,
         end
         if length(unique_lengths) == 1
             if unique_lengths[1] != 4
-                error("Er08: If 'treatment_times' are entered as numbers, they must all be 4 digits long in 'yyyy' date_format.")
+                error("Er09: If 'treatment_times' are entered as numbers, they must all be 4 digits long in 'yyyy' date_format.")
             end 
         else
-            error("Er09: Detected multiple unique date_formats in 'treatment_times'.")
+            error("Er10: Detected multiple unique date_formats in 'treatment_times'.")
         end
         treatment_times = Date.(treatment_times)
     else 
@@ -149,13 +149,13 @@ function didint(outcome::AbstractString,
         time_column_numeric = true
         unique_time_lengths = unique(length.(string.(data_copy[!, time])))
         if length(unique_time_lengths) > 1 || unique_time_lengths[1] != 4
-            error("Er14: The 'time' column was found to be numeric but consisting of values of ambiguous date formatting (i.e. not consistent 4 digit entries.)")
+            error("Er11: The 'time' column was found to be numeric but consisting of values of ambiguous date formatting (i.e. not consistent 4 digit entries.)")
         end 
     else
         time_column_numeric = false
     end 
     if xor(time_column_numeric, treatment_times_numeric)
-        error("Er13: If 'time' column is numeric or 'treatment_times' is numeric, then both must be numeric.")
+        error("Er12: If 'time' column is numeric or 'treatment_times' is numeric, then both must be numeric.")
     end 
 
     # Detect if staggered adoption or common treatment time, also check if treatment_times is a vector
@@ -169,7 +169,7 @@ function didint(outcome::AbstractString,
         common_adoption = false
         staggered_adoption = true
     else
-        error("Er06: 'treatment_times' must have at least one entry.")
+        error("Er13: 'treatment_times' must have at least one entry.")
     end
     
     # Make sure treated_states and control_states are vectors, make sure control_states exist
@@ -183,7 +183,7 @@ function didint(outcome::AbstractString,
     end 
     missing_control_states = isempty(control_states)
     if missing_control_states
-        error("Er22: No control states were found.")
+        error("Er14: No control states were found.")
     end 
 
     # Ensure the state column is a string or number and that the nonmissingtype(treated_states) == nonmissingtype(state column)
@@ -191,30 +191,30 @@ function didint(outcome::AbstractString,
     state_column_type = Base.nonmissingtype(eltype(data_copy[!, state]))
     if !((treated_states_type <: Number && state_column_type <: Number) || 
         (treated_states_type <: AbstractString && state_column_type <: AbstractString))
-        error("Er40: 'treated_states' and the 'state' column ($state) must both be numerical or both be strings. \n 
+        error("Er15: 'treated_states' and the 'state' column ($state) must both be numerical or both be strings. \n 
 Instead, found: 'treated_states': $treated_states_type and '$state': $state_column_type.")
     end
     data_copy.state_71X9yTx = data_copy[!, state]
     missing_states = setdiff(treated_states, data_copy.state_71X9yTx)
     if !isempty(missing_states)
-        error("Er12: The following 'treated_states' could not be found in the data: $(missing_states). \n 
+        error("Er16: The following 'treated_states' could not be found in the data: $(missing_states). \n 
 Only found the following states: $(unique(data_copy.state_71X9yTx))")
     end
 
     # Check for missing/nothing/NaN values
     if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy.outcome_71X9yTx)
-        error("Er24: Found missing values in the 'outcome' column.")
+        error("Er17: Found missing values in the 'outcome' column.")
     end 
     if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, state])
-        error("Er25: Found missing values in the 'state' column.")
+        error("Er18: Found missing values in the 'state' column.")
     end 
     if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, time])
-        error("Er26: Found missing values in the 'time' column.")
+        error("Er19: Found missing values in the 'time' column.")
     end 
     if !(isnothing(covariates))
         for cov in covariates
             if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, cov])
-                error("Er26: Found missing values in the '$cov' column.")
+                error("Er20: Found missing values in the '$cov' column.")
             end 
         end
     end
@@ -227,30 +227,30 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
     if nonmissing_time_type <: AbstractString || nonmissing_time_type <:Number
         dates_str = string.(data_copy[!, time])
         if length(unique(length.(dates_str))) != 1
-            error("Er27: Dates in the 'time' column are not all the same length!")
+            error("Er21: Dates in the 'time' column are not all the same length!")
         end
         if unique(length.(dates_str))[1] != 4 && nonmissing_time_type <:Number
-            error("Er32: If 'time' is a numeric column, dates must be 4 digits long.")
+            error("Er22: If 'time' is a numeric column, dates must be 4 digits long.")
         end
     end
     
     if nonmissing_time_type <: AbstractString
         ref_positions, ref_sep_types = get_sep_info(dates_str[1])
         if length(ref_sep_types) > 1
-            error("Er28: First date in 'time' column uses mixed separators: - and /.")
+            error("Er23: First date in 'time' column uses mixed separators: - and /.")
         end
         i = 0
         for date in dates_str
             i += 1
             sep_positions, sep_types = get_sep_info(date)
             if sep_positions != ref_positions
-                error("Er29 $i: Separator positions differs from the first date in 'time' column in date entry $i: $date")
+                error("Er24 $i: Separator positions differs from the first date in 'time' column in date entry $i: $date")
             end
             if length(sep_types) > 1
-                error("Er30 $i: Date found in 'time' column (entry $i) which uses multiple separator types: $date")
+                error("Er25 $i: Date found in 'time' column (entry $i) which uses multiple separator types: $date")
             end
             if sep_types != ref_sep_types
-                error("Er31 $i: Date found in 'time' column (entry $i: $date) which uses different separator types from first date.")
+                error("Er26 $i: Date found in 'time' column (entry $i: $date) which uses different separator types from first date.")
             end
         end
     end
@@ -259,20 +259,20 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
     if eltype(treatment_times) <: AbstractString
         ref_positions, ref_sep_types = get_sep_info(treatment_times[1])
         if length(ref_sep_types) > 1
-            error("Er34: First date in 'treatment_times' uses mixed separators: - and /.")
+            error("Er27: First date in 'treatment_times' uses mixed separators: - and /.")
         end
         i = 0
         for date in treatment_times
             i += 1
             sep_positions, sep_types = get_sep_info(date)
             if sep_positions != ref_positions
-                error("Er35 $i: Separator positions differs from the first date in 'treatment_times' in the $i'th entry: $date")
+                error("Er28 $i: Separator positions differs from the first date in 'treatment_times' in the $i'th entry: $date")
             end
             if length(sep_types) > 1
-                error("Er36 $i: Date found in 'treatment_times' column (entry $i) which uses multiple separator types: $date")
+                error("Er29 $i: Date found in 'treatment_times' column (entry $i) which uses multiple separator types: $date")
             end
             if sep_types != ref_sep_types
-                error("Er37 $i: Date found in 'treatment_times' (entry $i: $date) which uses different separator types from first date.")
+                error("Er30 $i: Date found in 'treatment_times' (entry $i: $date) which uses different separator types from first date.")
             end
         end
     end
@@ -282,15 +282,15 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
         treatment_times_length = length(treatment_times[1])
         date_column_entry_length = length(data_copy[!, time][1])
         if treatment_times_length != date_column_entry_length
-            error("Er33: 'treatment_times' and 'time' column were found to have date strings with different lengths.")
+            error("Er31: 'treatment_times' and 'time' column were found to have date strings with different lengths.")
         end
         sep_positions_time, sep_types_time = get_sep_info(data_copy[!, time][1])
         sep_positions_treatment, sep_types_treatment = get_sep_info(treatment_times[1])
         if sep_positions_time != sep_positions_treatment
-            error("Er34: 'treatment_times' and 'time' column have different separator positions.")
+            error("Er32: 'treatment_times' and 'time' column have different separator positions.")
         end
         if sep_types_time != sep_types_treatment
-            error("Er35: 'treatment_times' and 'time' column have different separator types.")
+            error("Er33: 'treatment_times' and 'time' column have different separator types.")
         end
     end
 
@@ -299,13 +299,13 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
         data_copy.time_71X9yTx = Date.(data_copy[!, time])
     elseif nonmissing_time_type <: AbstractString
         if isnothing(date_format)
-            error("Er15: If 'time' column is a String column, must specify the 'date_format' argument.")
+            error("Er34: If 'time' column is a String column, must specify the 'date_format' argument.")
         end 
         data_copy.time_71X9yTx = parse_string_to_date_didint.(data_copy[!, time], date_format)
     elseif nonmissing_time_type <: Date
         data_copy.time_71X9yTx = data_copy[!, time]
     else
-        error("Er10: 'time' column must be a String, Date, or Number column.")
+        error("Er35: 'time' column must be a String, Date, or Number column.")
     end
 
     # Convert treatment_times to Date objects
@@ -318,7 +318,7 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
         freq = lowercase(freq)
         freq_options = ["week", "weeks", "weekly", "day", "days", "daily", "month", "months", "monthly", "year", "years", "yearly"]
         if !(freq in freq_options)
-            error("Er42: 'freq' was not set to a valid option. Try one of: $freq_options")
+            error("Er36: 'freq' was not set to a valid option. Try one of: $freq_options")
         end 
     end 
 
@@ -350,7 +350,7 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
         all_times = sort(unique(data_copy.time_71X9yTx))
         missing_dates = setdiff(treatment_times, all_times)
         if !isempty(missing_dates)
-            error("Er19: The following 'treatment_times' are not found in the data: $(missing_dates). \n 
+            error("Er37: The following 'treatment_times' are not found in the data: $(missing_dates). \n 
 Try defining an argument for 'freq' or set 'autoadjust = true' in order to activate the date matching procedure.")
         end
     end 
@@ -358,12 +358,12 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
     # Do some checks for treatment_times vector length
     if common_adoption && length(treatment_times) != length(treated_states)
         if length(treatment_times) != 1
-            error("Er17: 'treatment_times' should either be the same length as the 'treated_states' vector or of length 1.")
+            error("Er38: 'treatment_times' should either be the same length as the 'treated_states' vector or of length 1.")
         else
             treatment_times = fill(treatment_times[1], length(treated_states))
         end 
     elseif staggered_adoption && length(treatment_times) != length(treated_states)
-        error("Er18: 'treatment_times' should be the same length as the 'treated_states'.")
+        error("Er39: 'treatment_times' should be the same length as the 'treated_states'.")
     end 
 
     # Also need to make sure that start_times < treatment_times < end_times is true for each state
@@ -374,10 +374,10 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
         earliest = minimum(state_dates)
         latest = maximum(state_dates)
         if !(earliest < treat_time)
-            error("Er38 $s: For state $s, the earliest date ($earliest) is not strictly less than the treatment time ($treat_time).")
+            error("Er40 $s: For state $s, the earliest date ($earliest) is not strictly less than the treatment time ($treat_time).")
         end
         if !(treat_time <= latest)
-            error("Er39 $s: For state $s, the treatment time ($treat_time) is greater than the last date ($latest).")
+            error("Er41 $s: For state $s, the treatment time ($treat_time) is greater than the last date ($latest).")
         end
     end
 
@@ -388,7 +388,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
     elseif staggered_adoption
         data_copy.time_71X9yTx = string.(data_copy.time_71X9yTx)
     else
-        error("Er16: A non-common or non-staggered adoption scenario was discovered!?")
+        error("Er42: A non-common or non-staggered adoption scenario was discovered!?")
     end 
 
     # Create dummies for each time and state interaction 
@@ -406,7 +406,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                     if !isnothing(ref) && haskey(ref, cov)
                         refcat = ref[cov]
                         if !(refcat in unique_categories)
-                            error("Er04 $refcat $cov: Reference category '$refcat' not found in column '$cov'.")
+                            error("Er43 $refcat $cov: Reference category '$refcat' not found in column '$cov'.")
                         end
                     else
                         refcat = first(unique_categories)
@@ -426,13 +426,13 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                         push!(covariates_to_include, string(newcol))
                     end
                 else    
-                    error("Er05 $cov: Only detected one unique factor ($unique_categories) in factor variable $cov.")
+                    error("Er44 $cov: Only detected one unique factor ($unique_categories) in factor variable $cov.")
                 end 
             elseif cov_type <:Number
                 data_copy[!, cov] = convert(Vector{Float64}, data_copy[!, cov])
                 push!(covariates_to_include, cov)
             else
-                error("Er41 $cov: column was found to be ($cov_type) neither of type Number, AbstractString, nor CategoricalValue!")
+                error("Er45 $cov: column was found to be ($cov_type) neither of type Number, AbstractString, nor CategoricalValue!")
             end
         end
     end 
@@ -464,7 +464,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             formula_str *= " + $c"
         end
     else 
-        error("Er20: 'ccc' must be set to one of: \"int\", \"time\", \"state\", \"add\", or \"hom\".")
+        error("Er46: 'ccc' must be set to one of: \"int\", \"time\", \"state\", \"add\", or \"hom\".")
     end 
     formula_str *= ")"
     formula_expr = Meta.parse(formula_str)
