@@ -29,7 +29,7 @@ function parse_string_to_date_didint(date::Union{Vector{<:AbstractString}, Abstr
         # Other formats are handled natively by Dates      
         output = Date(date, lowercase(date_format))
     else
-        error("Er01: Please specify a date_format listed here: $possible_formats. Format 'ddmonyyyy' should look like '25dec2020' and format yyyym00 should look like '2020m12'.")
+        error("Er01: Please specify a date_format listed here: $possible_formats.")
     end 
 
     return output 
@@ -190,8 +190,8 @@ Setting 'nperm' to $n_unique_perms."
                 t = unique_diffs[i,"t"]
                 r1 = unique_diffs[i,"r1"]
                 temp = ri_df[(ri_df.t .== t) .& (ri_df.r1 .== r1), :]
-                X = convert(Matrix{Float64},(hcat(ones(nrow(temp)), temp.diff)))
-                Y = convert(Vector{Float64}, temp.treat)
+                X = convert(Matrix{Float64},(hcat(ones(nrow(temp)), temp.treat)))
+                Y = convert(Vector{Float64}, temp.diff)
                 β = nothing
                 try
                     β = (X \ Y) 
@@ -210,8 +210,8 @@ Setting 'nperm' to $n_unique_perms."
                 temp_treated = ri_df[ri_df.state .== state, :]
                 temp_control = ri_df[(ri_df.treat .== 0) .& (ri_df.treated_time .== trt), :]
                 temp = vcat(temp_control, temp_treated)
-                X = convert(Matrix{Float64}, hcat(ones(nrow(temp)), temp.diff))
-                Y = convert(Vector{Float64}, temp.treat)
+                X = convert(Matrix{Float64}, hcat(ones(nrow(temp)), temp.treat))
+                Y = convert(Vector{Float64}, temp.diff)
                 β = nothing
                 try
                     β = (X \ Y) 
@@ -223,8 +223,8 @@ Setting 'nperm' to $n_unique_perms."
             end
             ri_att[j] = mean(att_state)
         elseif agg == "unweighted"
-            X = convert(Matrix{Float64}, hcat(ones(nrow(ri_df)), ri_df.diff))
-            Y = convert(Vector{Float64}, ri_df.treat)
+            X = convert(Matrix{Float64}, hcat(ones(nrow(ri_df)), ri_df.treat))
+            Y = convert(Vector{Float64}, ri_df.diff)
             β = nothing
             try
                 β = (X \ Y) 
