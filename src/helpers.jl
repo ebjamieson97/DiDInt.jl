@@ -73,7 +73,7 @@ end
 function final_regression_results(X::Matrix{<:Number}, Y::Vector{<:Number})
     beta_hat = nothing
     try
-        beta_hat = (X \ Y) #
+        beta_hat = (X \ Y) 
     catch e
         @warn "Direct solve failed, using pseudoinverse: $e"
         beta_hat = pinv(X' * X) * X' * Y
@@ -102,18 +102,20 @@ end
 
 function randomization_inference_didint(diff_df::DataFrame, agg::AbstractString,
                                         original_att::Number, nperm::Integer, control_states::AbstractVector,
-                                        treated_states::AbstractVector, verbose::Bool)
+                                        treated_states::AbstractVector, verbose::Bool; warnings::Bool = true)
 
     # Check total number of possible permutations
     n = length(control_states) + length(treated_states)
     k = length(treated_states)
     n_unique_perms = binomial(n, k)
     if nperm > n_unique_perms
-        @warn "'nperm' was set to $nperm but only $n_unique_perms unique permutations exist. \n 
+        if warnings 
+            @warn "'nperm' was set to $nperm but only $n_unique_perms unique permutations exist. \n 
 Setting 'nperm' to $n_unique_perms."
+        end 
         nperm = n_unique_perms
     end 
-    if nperm < 500
+    if nperm < 500 && warnings
         @warn "'nperm' is less than 500!"
     end 
 
@@ -141,7 +143,7 @@ Setting 'nperm' to $n_unique_perms."
     # Create preallocation vector to store agg_ATT from each randomization
     ri_att = Vector{Float64}(undef, nperm - 1)
 
-    # Make sure unique_diffs is defined, no need to repeatedly redfine during the loop
+    # Make sure unique_diffs is defined, no need to repeatedly redefine during the loop
     if agg == "simple"
         unique_diffs = unique(select(diff_df, :t, :r1))
     end
@@ -239,8 +241,9 @@ Setting 'nperm' to $n_unique_perms."
             println("Completed $(j) of $(nperm - 1) permutations")
         end
     end
-      
-    return (sum(abs.(ri_att) .> abs(original_att)) / length(ri_att))
+    pval = (sum(abs.(ri_att) .> abs(original_att)) / length(ri_att))
+    result_dict = Dict("ri_pval" => pval, "ri_nperm" => nperm)
+    return result_dict
 end 
 
 function get_sep_info(date::String)

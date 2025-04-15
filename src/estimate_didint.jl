@@ -8,7 +8,8 @@
            ccc::AbstractString = "int", agg::AbstractString = "state",
            ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
            freq::Union{AbstractString, Nothing} = nothing, freq_multiplier::Number = 1,
-           autoadjust::Bool = false, nperm::Number = 1000, verbose::Bool = true)
+           autoadjust::Bool = false, nperm::Number = 1000, verbose::Bool = true,
+           seed::Number = rand(1:1000000))
 
 The `didint()` function estimates the average effect of treatment on the treated (ATT)
 while accounting for covariates that may vary by state, time, or by both state and time simultaneously.
@@ -57,6 +58,8 @@ in `treated_times`, and so on.
     The number of unique permutations to be considered when performing the randomization inference.
 - `verbose::Bool = true`
     A boolean option for displaying progress of the randomization procedure. 
+- `seed::Number = rand(1:1000000)`
+    An integer to set the random seed for the randomization inference procedure.
 
 # Returns
 A DataFrame of results including the estimate of the ATT as well as standard errors and p-values.
@@ -76,7 +79,14 @@ function didint(outcome::AbstractString,
                 freq_multiplier::Number = 1,
                 autoadjust::Bool = false,
                 nperm::Number = 1000,
-                verbose::Bool = true)
+                verbose::Bool = true,
+                seed::Number = rand(1:1000000))
+
+    # Check that seed is set correctly
+    seed = Int(round(seed))
+    if seed <= 0 
+        error("Er47: 'seed' must be a positive integer.")
+    end 
 
     # Check that agg args are passed correctly
     agg = lowercase(agg)
@@ -542,9 +552,9 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 t = unique_diffs[j,"t"]
                 r1 = unique_diffs[j,"r1"]
                 diffs[j] = temp[temp.time .== t, "lambda"][1] - temp[temp.time .== r1, "lambda"][1]
-            end 
+            end
             trtd_time = [all_times[findfirst(==(t), all_times) + 1] for t in ri_diffs.r1]
-            temp_df = DataFrame(state = control_states[i], treated_time = trtd_time,
+            temp_df = DataFrame(state = treated_states[i], treated_time = trtd_time,
                                 t = ri_diffs.t, r1 = ri_diffs.r1, diff = diffs, treat = -1)
             ri_diff_df = vcat(ri_diff_df, temp_df)
         end 
@@ -561,13 +571,18 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                                 jknifese_agg_att = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
                                 jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
                                 ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
+                                nperm_ri_agg_att = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
                                 se_att_cohort = Vector{Float64}(undef, length(unique_treatment_times)),
                                 pval_att_cohort = Vector{Float64}(undef, length(unique_treatment_times)),
                                 jknifese_att_cohort = Vector{Float64}(undef, length(unique_treatment_times)),
-                                jknifepval_att_cohort = Vector{Float64}(undef, length(unique_treatment_times)))
+                                jknifepval_att_cohort = Vector{Float64}(undef, length(unique_treatment_times)),
+                                ri_pval_att_cohort = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
+                                nperm_ri_att_cohort = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)))
             for i in eachindex(unique_treatment_times)
                 trt = unique_treatment_times[i]
                 temp = diff_df[diff_df.treated_time .== trt, :]
+                treated_states_cohort = unique(temp[temp.treat .== 1, "state"])
+                control_states_cohort = unique(temp[temp.treat .== 0, "state"])
                 X = convert(Matrix{Float64},(hcat(ones(nrow(temp)), temp.treat)))
                 Y = convert(Vector{Float64}, temp.diff)            
                 results.treatment_time[i] = trt
@@ -577,6 +592,11 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 results.pval_att_cohort[i] = result_dict["pval_att"] 
                 results.jknifese_att_cohort[i] = result_dict["beta_hat_se_jknife"]
                 results.jknifepval_att_cohort[i] = result_dict["pval_att_jknife"]
+                sub_agg_att_ri_results = randomization_inference_didint(temp, "cohort", result_dict["beta_hat"],
+                                                                        nperm, control_states_cohort, treated_states_cohort,
+                                                                        false, warnings = false)
+                results.ri_pval_att_cohort[i] = sub_agg_att_ri_results["ri_pval"]
+                results.nperm_ri_att_cohort[i] = sub_agg_att_ri_results["ri_nperm"]
             end
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_cohort)
@@ -586,9 +606,11 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            results.ri_pval_agg_att[1] = randomization_inference_didint(vcat(diff_df, ri_diff_df), "cohort", 
-                                                                        result_dict["beta_hat"], nperm, control_states,
-                                                                        treated_states, verbose)
+            agg_att_ri_results = randomization_inference_didint(vcat(diff_df, ri_diff_df), "cohort", 
+                                                                result_dict["beta_hat"], nperm, control_states,
+                                                                treated_states, verbose)
+            results.ri_pval_agg_att[1] = agg_att_ri_results["ri_pval"]
+            results.nperm_ri_agg_att[1] = agg_att_ri_results["ri_nperm"]
             results.treatment_time = string.(results.treatment_time)
             return results
         elseif agg == "simple"
@@ -602,16 +624,21 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                                 jknifese_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
                                 jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
                                 ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
+                                nperm_ri_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
                                 se_att_rt = Vector{Float64}(undef, nrow(unique_diffs)),
                                 pval_att_rt = Vector{Float64}(undef, nrow(unique_diffs)),
                                 jknifese_att_rt = Vector{Float64}(undef, nrow(unique_diffs)),
-                                jknifepval_att_rt = Vector{Float64}(undef, nrow(unique_diffs)))
+                                jknifepval_att_rt = Vector{Float64}(undef, nrow(unique_diffs)),
+                                ri_pval_att_rt = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
+                                nperm_ri_att_rt = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),)
             for i in 1:nrow(unique_diffs)
                 t = unique_diffs[i,"t"]
                 r1 = unique_diffs[i,"r1"]
                 temp = diff_df[(diff_df.t .== t) .& (diff_df.r1 .== r1), :]
                 X = convert(Matrix{Float64},(hcat(ones(nrow(temp)), temp.treat)))
                 Y = convert(Vector{Float64}, temp.diff)
+                treated_states_simple = unique(temp[temp.treat .== 1, "state"])
+                control_states_simple = unique(temp[temp.treat .== 0, "state"])
                 results.time[i] = t
                 results.r1[i] = r1
                 result_dict = final_regression_results(X, Y)
@@ -620,6 +647,11 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 results.pval_att_rt[i] = result_dict["pval_att"] 
                 results.jknifese_att_rt[i] = result_dict["beta_hat_se_jknife"]
                 results.jknifepval_att_rt[i] = result_dict["pval_att_jknife"]
+                sub_agg_att_ri_results = randomization_inference_didint(temp, "simple", result_dict["beta_hat"],
+                                                                        nperm, control_states_simple, treated_states_simple,
+                                                                        false, warnings = false)
+                results.ri_pval_att_rt[i] = sub_agg_att_ri_results["ri_pval"]
+                results.nperm_ri_att_rt[i] = sub_agg_att_ri_results["ri_nperm"]
             end
             sort!(results, [:time])
             sort!(results, [:r1])
@@ -631,9 +663,11 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            results.ri_pval_agg_att[1] = randomization_inference_didint(vcat(diff_df, ri_diff_df), "simple", 
-                                                                        result_dict["beta_hat"], nperm, control_states,
-                                                                        treated_states, verbose)
+            agg_att_ri_results = randomization_inference_didint(vcat(diff_df, ri_diff_df), "simple", 
+                                                                result_dict["beta_hat"], nperm, control_states,
+                                                                treated_states, verbose)
+            results.ri_pval_agg_att[1] = agg_att_ri_results["ri_pval"]
+            results.nperm_ri_agg_att[1] = agg_att_ri_results["ri_nperm"]
             results.r1 = string.(results.r1)
             results.time = string.(results.time)
             return results
@@ -647,16 +681,21 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                                 jknifese_agg_att = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
                                 jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
                                 ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
+                                nperm_ri_agg_att = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
                                 se_att_s = Vector{Float64}(undef, length(treated_states)),
                                 pval_att_s = Vector{Float64}(undef, length(treated_states)),
                                 jknifese_att_s = Vector{Float64}(undef, length(treated_states)),
-                                jknifepval_att_s = Vector{Float64}(undef, length(treated_states)))
+                                jknifepval_att_s = Vector{Float64}(undef, length(treated_states)),
+                                ri_pval_att_s = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
+                                nperm_ri_att_s = Vector{Union{Missing, Float64}}(missing, length(treated_states)))
             for i in eachindex(treated_states)
                 state = treated_states[i]
                 trt = treatment_times[i]
                 temp_treated = diff_df[diff_df.state .== state, :]
                 temp_control = diff_df[(diff_df.treat .== 0) .& (diff_df.treated_time .== trt), :]
                 temp = vcat(temp_control, temp_treated)
+                treated_states_state = unique(temp[temp.treat .== 1, "state"])
+                control_states_state = unique(temp[temp.treat .== 0, "state"])
                 X = convert(Matrix{Float64}, hcat(ones(nrow(temp)), temp.treat))
                 Y = convert(Vector{Float64}, temp.diff)
                 results.state[i] = state
@@ -666,6 +705,12 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 results.pval_att_s[i] = result_dict["pval_att"] 
                 results.jknifese_att_s[i] = result_dict["beta_hat_se_jknife"]
                 results.jknifepval_att_s[i] = result_dict["pval_att_jknife"]
+                sub_agg_att_ri_results = randomization_inference_didint(temp, "state", result_dict["beta_hat"],
+                                                                        nperm, control_states_state, treated_states_state,
+                                                                        false, warnings = false)
+                results.ri_pval_att_s[i] = sub_agg_att_ri_results["ri_pval"]
+                results.nperm_ri_att_s[i] = sub_agg_att_ri_results["ri_nperm"]
+
             end
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_s)
@@ -675,9 +720,11 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            results.ri_pval_agg_att[1] = randomization_inference_didint(vcat(diff_df, ri_diff_df), "state", 
-                                                                        result_dict["beta_hat"], nperm, control_states,
-                                                                        treated_states, verbose)
+            agg_att_ri_results = randomization_inference_didint(vcat(diff_df, ri_diff_df), "state", 
+                                                                result_dict["beta_hat"], nperm, control_states,
+                                                                treated_states, verbose)
+            results.ri_pval_agg_att[1] = agg_att_ri_results["ri_pval"]
+            results.nperm_ri_agg_att[1] = agg_att_ri_results["ri_nperm"]
             return results
         elseif agg == "unweighted"  
             # Run final regrsesion -- each diff weighted equally
