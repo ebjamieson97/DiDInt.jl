@@ -336,3 +336,201 @@ Setting 'nperm' to $n_unique_perms."
     end
     return (sum(abs.(ri_att) .> abs(original_att)) / length(ri_att))
 end
+
+function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::DataFrame,
+                                    agg::AbstractString, verbose::Bool, seed::Number)
+    
+    # PART ONE: CREATE RANDOMIZED TREATMENT COLUMNS
+    original_treated = unique(diff_df[diff_df.treat .== 1, [:state, :treated_time]])
+    k = nrow(original_treated)  
+    treatment_times = original_treated.treated_time
+    treatment_states = original_treated.state
+    all_states = unique(diff_df.state)
+
+    n_unique_perms = compute_n_unique_assignments(treatment_times, length(all_states))
+    if nperm > n_unique_perms
+        @warn "'nperm' was set to $nperm but only $n_unique_perms unique permutations exist. \n 
+                Setting 'nperm' to $n_unique_perms."
+        nperm = n_unique_perms
+    end 
+    if nperm < 500
+        @warn "'nperm' is less than 500!"
+    end 
+
+    randomized_diff_df = diff_df
+    Random.seed!(seed)
+    
+    i = 1
+    seen = Set{String}()
+    pairs = zip(original_treated.state, original_treated.treated_time)
+    key = join(sort([string(s, "-", t) for (s, t) in pairs]), "")
+    push!(seen, key)
+    while i < nperm
+        shuffled_states = shuffle(all_states)
+        new_treated_states = shuffled_states[1:k]
+        new_treated_times = treatment_times[randperm(k)]
+        pairs = zip(new_treated_states, new_treated_times)
+        key = join(sort([string(s, "-", t) for (s, t) in pairs]), "")
+        if key in seen
+            continue
+        end 
+        assigned_tt = Dict(new_treated_states[j] => new_treated_times[j] for j in 1:k)
+        new_treat = Vector{Int}(undef, nrow(diff_df))
+        for row_idx in 1:nrow(diff_df)
+            state = diff_df[row_idx, :state]
+            trt_time = diff_df[row_idx, :treated_time]
+            if haskey(assigned_tt, state)
+                if trt_time == assigned_tt[state]
+                    new_treat[row_idx] = 1
+                else 
+                    new_treat[row_idx] = -1
+                end
+            else
+                new_treat[row_idx] = 0
+            end
+        end
+        randomized_diff_df[!, Symbol("treat_random_", i)] = new_treat
+        i += 1
+    end
+
+    # PART TWO: COMPUTE RI_ATT & RI_ATT_SUBGROUP
+    if length(unique(treatment_times)) == 1
+        if agg in ["cohort", "simple"]
+            agg = "unweighted"
+        end
+    end 
+    att_ri = Vector{Float64}(undef, nperm - 1)
+    if agg == "cohort" 
+        att_ri_cohort = Matrix{Float64}(undef, nperm - 1, length(treatment_times))
+        for j in 1:nperm - 1 
+            colname = Symbol("treat_random_$(j)")
+            for i in eachindex(treatment_times)
+                trt = treatment_times[i]
+                temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.treated_time .== trt), :]
+                X = convert(Vector{Float64}, temp[!, colname])
+                Y = convert(Vector{Float64}, temp.diff)
+                att_ri_cohort[j,i] = mean(Y[X .== 1]) - mean(Y[X .== 0])
+            end
+            att_ri[j] = mean(att_ri_cohort[j,:])
+            if verbose && j % 100 == 0
+                println("Completed $(j) of $(nperm - 1) permutations")
+            end
+        end 
+    elseif agg == "state"
+        att_ri_state = Matrix{Float64}(undef, nperm - 1, length(treatment_times))
+        for j in 1:nperm - 1 
+            colname = Symbol("treat_random_$(j)")
+            for i in eachindex(treatment_states)
+                trt = treatment_times[i]
+                temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.treated_time .== trt), :]
+                temp_treated_silos = unique(temp[temp[!, colname] .== 1, "state"])
+                temp_treated_silo = shuffle(temp_treated_silos)[1]
+                temp = temp[(temp.state .== temp_treated_silo) .|| (temp[!, colname] .== 0), :]
+                X = convert(Vector{Float64}, temp[!, colname])
+                Y = convert(Vector{Float64}, temp.diff)
+                att_ri_state[j,i] = mean(Y[X .== 1]) - mean(Y[X .== 0])
+            end
+            att_ri[j] = mean(att_ri_state[j,:])
+            if verbose && j % 100 == 0
+                println("Completed $(j) of $(nperm - 1) permutations")
+            end 
+        end 
+    elseif agg == "simple"
+        unique_diffs = unique(select(diff_df[diff_df.treat .== 1,:], :t, :r1, :treated_time))
+        att_ri_simple = Matrix{Float64}(undef, nperm - 1, nrow(unique_diffs))
+        for j in 1:nperm - 1
+            colname = Symbol("treat_random_$(j)")
+            for i in 1:nrow(unique_diffs)
+                t = unique_diffs[i,"t"]
+                r1 = unique_diffs[i,"r1"]
+                temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.t .== t) .&& (diff_df.r1 .== r1), :]
+                X = convert(Vector{Float64}, temp[!, colname])
+                Y = convert(Vector{Float64}, temp.diff)
+                att_ri_simple[j,i] = mean(Y[X .== 1]) - mean(Y[X .== 0])
+            end
+            att_ri[j] = mean(att_ri_simple[j,:])
+            if verbose && j % 100 == 0
+                println("Completed $(j) of $(nperm - 1) permutations")
+            end
+        end 
+    elseif agg == "sgt"
+        unique_diffs = unique(select(diff_df[diff_df.treat .== 1,:], :state, :t, :r1, :treated_time))
+        att_ri_sgt = Matrix{Float64}(undef, nperm - 1, nrow(unique_diffs))
+        for j in 1:nperm - 1
+            colname = Symbol("treat_random_$(j)")
+            for i in 1:nrow(unique_diffs)
+                t = unique_diffs[i,"t"]
+                r1 = unique_diffs[i,"r1"]
+                temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.t .== t) .&& (diff_df.r1 .== r1), :]
+                temp_treated_silos = unique(temp[temp[!, colname] .== 1, "state"])
+                temp_treated_silo = shuffle(temp_treated_silos)[1]
+                temp = temp[(temp.state .== temp_treated_silo) .|| (temp[!, colname] .== 0), :]
+                X = convert(Vector{Float64}, temp[!, colname])
+                Y = convert(Vector{Float64}, temp.diff)
+                att_ri_sgt[j,i] = mean(Y[X .== 1]) - mean(Y[X .== 0])
+            end
+            att_ri[j] = mean(att_ri_sgt[j,:])
+            if verbose && j % 100 == 0
+                println("Completed $(j) of $(nperm - 1) permutations")
+            end
+        end 
+    elseif agg == "unweighted"
+        for j in 1:nperm - 1
+            colname = Symbol("treat_random_$(j)")
+            temp = diff_df[diff_df[!, colname] .!= -1,:]
+            X = convert(Vector{Float64}, temp[!, colname])
+            Y = convert(Vector{Float64}, temp.diff)
+            att_ri[j] = mean(Y[X .== 1]) - mean(Y[X .== 0])
+            if verbose && j % 100 == 0
+                println("Completed $(j) of $(nperm - 1) permutations")
+            end
+        end 
+    end
+
+    # PART THREE: COMPUTE P-VALS BASED ON RI_ATT & RI_ATT_SUBGROUP
+    agg_att = results.agg_att[1]
+    if agg == "cohort"
+        for i in eachindex(treatment_times)
+            sub_agg_att = results[results.treatment_time .== treatment_times[i], "att_cohort"][1]
+            results[results.treatment_time .== treatment_times[i], "ri_pval_att_cohort"] .= (sum(abs.(att_ri_cohort[:,i]) .> abs(sub_agg_att))) / length(att_ri_cohort[:,i])
+        end
+    elseif agg == "state"
+        for i in eachindex(treatment_states)
+            sub_agg_att = results[results.state .== treatment_states[i], "att_s"][1]
+            results[results.state .== treatment_states[i], "ri_pval_att_s"] .= (sum(abs.(att_ri_state[:,i]) .> abs(sub_agg_att))) / length(att_ri_state[:,i])
+        end 
+    elseif agg == "simple"
+        for i in 1:nrow(unique_diffs)
+            t = unique_diffs[i,"t"]
+            r1 = unique_diffs[i,"r1"]
+            gvar = unique_diffs[i, "treated_time"]
+            sub_agg_att = results[(results.time .== t) .&& (results.r1 .== r1) .&& (results.gvar .== gvar), "att_gt"][1]
+            results[(results.time .== t) .&& (results.r1 .== r1) .&& (results.gvar .== gvar), "ri_pval_att_gt"] .= (sum(abs.(att_ri_simple[:,i]) .> abs(sub_agg_att))) / length(att_ri_simple[:,i])
+        end
+    elseif agg == "sgt"
+        for i in 1:nrow(unique_diffs)
+            t = unique_diffs[i,"t"]
+            gvar = unique_diffs[i, "treated_time"]
+            state = unique_diffs[i, "state"]
+            sub_agg_att = results[(results.t .== t) .&& (results.gvar .== gvar) .&& (results.state .== state), "att_sgt"][1]
+            results[(results.t .== t) .&& (results.gvar .== gvar) .&& (results.state .== state), "ri_pval_att_sgt"] .= (sum(abs.(att_ri_sgt[:,i]) .> abs(sub_agg_att))) / length(att_ri_sgt[:,i])
+        end 
+    end
+    results.ri_pval_agg_att[1] = ((sum(abs.(att_ri) .> abs(agg_att))) / length(att_ri))
+    results.nperm[1] = nperm - 1
+    return results
+end
+
+function compute_n_unique_assignments(treatment_times::Vector, total_n_states::Number)
+    # This computes the combinations formula * the multinomial coefficient
+    n_assignments = length(treatment_times)
+    unique_assignments = unique(treatment_times)
+    num = factorial(big(total_n_states))           
+    den = factorial(big(total_n_states - n_assignments))
+    for m in unique_assignments
+        n_m = sum(treatment_times .== m)
+        den *= factorial(big(n_m))
+    end
+    return num ÷ den                  
+end
+

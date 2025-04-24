@@ -78,7 +78,7 @@ function didint(outcome::AbstractString,
                 freq::Union{AbstractString, Nothing} = nothing,
                 freq_multiplier::Number = 1,
                 autoadjust::Bool = false,
-                nperm::Number = 1000,
+                nperm::Number = 1001,
                 verbose::Bool = true,
                 seed::Number = rand(1:1000000))
 
@@ -90,7 +90,7 @@ function didint(outcome::AbstractString,
 
     # Check that agg args are passed correctly
     agg = lowercase(agg)
-    agg_options = ["cohort", "state", "simple", "unweighted"]
+    agg_options = ["cohort", "state", "simple", "unweighted", "sgt"]
     if !(agg in agg_options)
         error("Er03: 'agg' must be one of: $(agg_options)")
     end 
@@ -525,7 +525,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
         end
         
         # Compute diffs for control states
-        unique_diffs = unique(select(diff_df, :t, :r1))
+        unique_diffs = unique(select(diff_df, :t, :r1, :treated_time))
         control_states = setdiff(unique_states, treated_states)     
         for i in eachindex(control_states)
             temp = lambda_df[(lambda_df.state .== control_states[i]), :]
@@ -557,8 +557,8 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             temp_df = DataFrame(state = treated_states[i], treated_time = trtd_time,
                                 t = ri_diffs.t, r1 = ri_diffs.r1, diff = diffs, treat = -1)
             ri_diff_df = vcat(ri_diff_df, temp_df)
-        end 
-
+        end
+        
         # Run final regression to compute ATT based on weighting/aggregation method
         if agg == "cohort"
             # Run final regression -- weighted by treatment time
@@ -571,18 +571,15 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                                 jknifese_agg_att = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
                                 jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
                                 ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
-                                nperm_ri_agg_att = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
+                                nperm = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
                                 se_att_cohort = Vector{Float64}(undef, length(unique_treatment_times)),
                                 pval_att_cohort = Vector{Float64}(undef, length(unique_treatment_times)),
                                 jknifese_att_cohort = Vector{Float64}(undef, length(unique_treatment_times)),
                                 jknifepval_att_cohort = Vector{Float64}(undef, length(unique_treatment_times)),
-                                ri_pval_att_cohort = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
-                                nperm_ri_att_cohort = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)))
+                                ri_pval_att_cohort = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)))
             for i in eachindex(unique_treatment_times)
                 trt = unique_treatment_times[i]
                 temp = diff_df[diff_df.treated_time .== trt, :]
-                treated_states_cohort = unique(temp[temp.treat .== 1, "state"])
-                control_states_cohort = unique(temp[temp.treat .== 0, "state"])
                 X = convert(Matrix{Float64},(hcat(ones(nrow(temp)), temp.treat)))
                 Y = convert(Vector{Float64}, temp.diff)            
                 results.treatment_time[i] = trt
@@ -592,11 +589,6 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 results.pval_att_cohort[i] = result_dict["pval_att"] 
                 results.jknifese_att_cohort[i] = result_dict["beta_hat_se_jknife"]
                 results.jknifepval_att_cohort[i] = result_dict["pval_att_jknife"]
-                sub_agg_att_ri_results = randomization_inference_didint(temp, "cohort", result_dict["beta_hat"],
-                                                                        nperm, control_states_cohort, treated_states_cohort,
-                                                                        false, warnings = false)
-                results.ri_pval_att_cohort[i] = sub_agg_att_ri_results["ri_pval"]
-                results.nperm_ri_att_cohort[i] = sub_agg_att_ri_results["ri_nperm"]
             end
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_cohort)
@@ -606,70 +598,54 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            agg_att_ri_results = randomization_inference_didint(vcat(diff_df, ri_diff_df), "cohort", 
-                                                                result_dict["beta_hat"], nperm, control_states,
-                                                                treated_states, verbose)
-            results.ri_pval_agg_att[1] = agg_att_ri_results["ri_pval"]
-            results.nperm_ri_agg_att[1] = agg_att_ri_results["ri_nperm"]
-            results.treatment_time = string.(results.treatment_time)
+            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "cohort", verbose, seed)
             return results
         elseif agg == "simple"
             # Run final regression -- weighted by time and r - 1 groups
             results = DataFrame(r1 = Vector{Date}(undef, nrow(unique_diffs)),
                                 time = Vector{Date}(undef, nrow(unique_diffs)),
-                                att_rt = Vector{Float64}(undef, nrow(unique_diffs)),
+                                gvar = Vector{Date}(undef, nrow(unique_diffs)),
+                                att_gt = Vector{Float64}(undef, nrow(unique_diffs)),
                                 agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
                                 se_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
                                 pval_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
                                 jknifese_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
                                 jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
                                 ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
-                                nperm_ri_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
-                                se_att_rt = Vector{Float64}(undef, nrow(unique_diffs)),
-                                pval_att_rt = Vector{Float64}(undef, nrow(unique_diffs)),
-                                jknifese_att_rt = Vector{Float64}(undef, nrow(unique_diffs)),
-                                jknifepval_att_rt = Vector{Float64}(undef, nrow(unique_diffs)),
-                                ri_pval_att_rt = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
-                                nperm_ri_att_rt = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),)
+                                nperm = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
+                                se_att_gt = Vector{Float64}(undef, nrow(unique_diffs)),
+                                pval_att_gt = Vector{Float64}(undef, nrow(unique_diffs)),
+                                jknifese_att_gt = Vector{Float64}(undef, nrow(unique_diffs)),
+                                jknifepval_att_gt = Vector{Float64}(undef, nrow(unique_diffs)),
+                                ri_pval_att_gt = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)))
             for i in 1:nrow(unique_diffs)
                 t = unique_diffs[i,"t"]
                 r1 = unique_diffs[i,"r1"]
+                gvar = unique_diffs[i, "treated_time"]
                 temp = diff_df[(diff_df.t .== t) .& (diff_df.r1 .== r1), :]
                 X = convert(Matrix{Float64},(hcat(ones(nrow(temp)), temp.treat)))
                 Y = convert(Vector{Float64}, temp.diff)
-                treated_states_simple = unique(temp[temp.treat .== 1, "state"])
-                control_states_simple = unique(temp[temp.treat .== 0, "state"])
                 results.time[i] = t
                 results.r1[i] = r1
+                results.gvar[i] = gvar
                 result_dict = final_regression_results(X, Y)
-                results.att_rt[i] = result_dict["beta_hat"]
-                results.se_att_rt[i] = result_dict["beta_hat_se"]
-                results.pval_att_rt[i] = result_dict["pval_att"] 
-                results.jknifese_att_rt[i] = result_dict["beta_hat_se_jknife"]
-                results.jknifepval_att_rt[i] = result_dict["pval_att_jknife"]
-                sub_agg_att_ri_results = randomization_inference_didint(temp, "simple", result_dict["beta_hat"],
-                                                                        nperm, control_states_simple, treated_states_simple,
-                                                                        false, warnings = false)
-                results.ri_pval_att_rt[i] = sub_agg_att_ri_results["ri_pval"]
-                results.nperm_ri_att_rt[i] = sub_agg_att_ri_results["ri_nperm"]
+                results.att_gt[i] = result_dict["beta_hat"]
+                results.se_att_gt[i] = result_dict["beta_hat_se"]
+                results.pval_att_gt[i] = result_dict["pval_att"] 
+                results.jknifese_att_gt[i] = result_dict["beta_hat_se_jknife"]
+                results.jknifepval_att_gt[i] = result_dict["pval_att_jknife"]
             end
             sort!(results, [:time])
             sort!(results, [:r1])
             X = ones(nrow(results), 1)
-            Y = convert(Vector{Float64}, results.att_rt)
+            Y = convert(Vector{Float64}, results.att_gt)
             result_dict = final_regression_results(X, Y)
             results.agg_att[1] = result_dict["beta_hat"]
             results.se_agg_att[1] = result_dict["beta_hat_se"]
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            agg_att_ri_results = randomization_inference_didint(vcat(diff_df, ri_diff_df), "simple", 
-                                                                result_dict["beta_hat"], nperm, control_states,
-                                                                treated_states, verbose)
-            results.ri_pval_agg_att[1] = agg_att_ri_results["ri_pval"]
-            results.nperm_ri_agg_att[1] = agg_att_ri_results["ri_nperm"]
-            results.r1 = string.(results.r1)
-            results.time = string.(results.time)
+            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "simple", verbose, seed)
             return results
         elseif agg == "state"
             # Run final regression -- weighted by state
@@ -681,18 +657,17 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                                 jknifese_agg_att = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
                                 jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
                                 ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
-                                nperm_ri_agg_att = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
+                                nperm = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
                                 se_att_s = Vector{Float64}(undef, length(treated_states)),
                                 pval_att_s = Vector{Float64}(undef, length(treated_states)),
                                 jknifese_att_s = Vector{Float64}(undef, length(treated_states)),
                                 jknifepval_att_s = Vector{Float64}(undef, length(treated_states)),
-                                ri_pval_att_s = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
-                                nperm_ri_att_s = Vector{Union{Missing, Float64}}(missing, length(treated_states)))
+                                ri_pval_att_s = Vector{Union{Missing, Float64}}(missing, length(treated_states)))
             for i in eachindex(treated_states)
                 state = treated_states[i]
                 trt = treatment_times[i]
                 temp_treated = diff_df[diff_df.state .== state, :]
-                temp_control = diff_df[(diff_df.treat .== 0) .& (diff_df.treated_time .== trt), :]
+                temp_control = diff_df[(diff_df.treat .== 0) .&& (diff_df.treated_time .== trt), :]
                 temp = vcat(temp_control, temp_treated)
                 treated_states_state = unique(temp[temp.treat .== 1, "state"])
                 control_states_state = unique(temp[temp.treat .== 0, "state"])
@@ -705,12 +680,6 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 results.pval_att_s[i] = result_dict["pval_att"] 
                 results.jknifese_att_s[i] = result_dict["beta_hat_se_jknife"]
                 results.jknifepval_att_s[i] = result_dict["pval_att_jknife"]
-                sub_agg_att_ri_results = randomization_inference_didint(temp, "state", result_dict["beta_hat"],
-                                                                        nperm, control_states_state, treated_states_state,
-                                                                        false, warnings = false)
-                results.ri_pval_att_s[i] = sub_agg_att_ri_results["ri_pval"]
-                results.nperm_ri_att_s[i] = sub_agg_att_ri_results["ri_nperm"]
-
             end
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_s)
@@ -720,11 +689,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            agg_att_ri_results = randomization_inference_didint(vcat(diff_df, ri_diff_df), "state", 
-                                                                result_dict["beta_hat"], nperm, control_states,
-                                                                treated_states, verbose)
-            results.ri_pval_agg_att[1] = agg_att_ri_results["ri_pval"]
-            results.nperm_ri_agg_att[1] = agg_att_ri_results["ri_nperm"]
+            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "state", verbose, seed)
             return results
         elseif agg == "unweighted"  
             # Run final regrsesion -- each diff weighted equally
@@ -733,7 +698,8 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                                 pval_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
                                 jknifese_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
                                 jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
-                                ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, 1))
+                                ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
+                                nperm = Vector{Union{Missing, Float64}}(missing, 1))
             X = convert(Matrix{Float64}, hcat(ones(nrow(diff_df)), diff_df.treat))
             Y = convert(Vector{Float64}, diff_df.diff)
             result_dict = final_regression_results(X, Y)
@@ -742,16 +708,63 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            results.ri_pval_agg_att[1] = randomization_inference_didint(vcat(diff_df, ri_diff_df), "unweighted", 
-                                                                        result_dict["beta_hat"], nperm, control_states,
-                                                                        treated_states, verbose)
+            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "unweighted", verbose, seed)
             return results
+        elseif agg == "sgt"
+            # Run final regrsesion -- each ATT_sgt weighted equally
+            unique_sgt = unique(select(diff_df[diff_df.treat .== 1,:], :state, :t, :treated_time))
+            treated_states = unique(unique_sgt.state)
+            results = DataFrame(state = Vector{String}(undef, nrow(unique_sgt)),
+                                gvar = Vector{Date}(undef, nrow(unique_sgt)),
+                                t = Vector{Date}(undef, nrow(unique_sgt)),
+                                att_sgt = Vector{Float64}(undef, nrow(unique_sgt)),
+                                agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)),
+                                se_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)),
+                                pval_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)),
+                                jknifese_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)),
+                                jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)),
+                                ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)),
+                                nperm = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)),
+                                se_att_sgt = Vector{Float64}(undef, nrow(unique_sgt)),
+                                pval_att_sgt = Vector{Float64}(undef, nrow(unique_sgt)),
+                                jknifese_att_sgt = Vector{Float64}(undef, nrow(unique_sgt)),
+                                jknifepval_att_sgt = Vector{Float64}(undef, nrow(unique_sgt)),
+                                ri_pval_att_sgt = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)))
+            for i in 1:nrow(unique_sgt)
+                state = unique_sgt[i, "state"]
+                gvar = unique_sgt[i, "treated_time"]
+                t = unique_sgt[i, "t"]
+                temp_treated = diff_df[(diff_df.state .== state) .&& (diff_df.treated_time .== gvar) .&& (diff_df.t .== t),:]
+                temp_control = diff_df[(diff_df.treat .== 0) .&& (diff_df.treated_time .== gvar) .&& (diff_df.t .== t),:]
+                temp = vcat(temp_treated, temp_control)
+                X = convert(Matrix{Float64}, hcat(ones(nrow(temp)), temp.treat))
+                Y = convert(Vector{Float64}, temp.diff)
+                results.state[i] = state
+                results.gvar[i] = gvar
+                results.t[i] = t
+                result_dict = final_regression_results(X, Y)
+                results.att_sgt[i] = result_dict["beta_hat"]
+                results.se_att_sgt[i] = result_dict["beta_hat_se"]
+                results.pval_att_sgt[i] = result_dict["pval_att"] 
+                results.jknifese_att_sgt[i] = result_dict["beta_hat_se_jknife"]
+                results.jknifepval_att_sgt[i] = result_dict["pval_att_jknife"]
+            end 
+            X = ones(nrow(results), 1)
+            Y = convert(Vector{Float64}, results.att_sgt)
+            result_dict = final_regression_results(X, Y)
+            results.agg_att[1] = result_dict["beta_hat"]
+            results.se_agg_att[1] = result_dict["beta_hat_se"]
+            results.pval_agg_att[1] = result_dict["pval_att"]
+            results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
+            results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
+            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "sgt", verbose, seed)
         end
     elseif common_adoption
         states = unique(lambda_df.state)
         diff_df = DataFrame(state = states,
                             diff = Vector{Float64}(undef, length(states)),
-                            trt = Vector{Float64}(undef, length(states)))
+                            treat = Vector{Float64}(undef, length(states)),
+                            treated_time = fill(unique(treatment_times)[1], length(states)))
         for i in eachindex(states)
             state = states[i]
             if state in treated_states
@@ -761,7 +774,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             end 
             diff = lambda_df[(lambda_df.state .== state) .&& (lambda_df.time .== "post"), "lambda"][1] - lambda_df[(lambda_df.state .== state) .&& (lambda_df.time .== "pre"), "lambda"][1]
             diff_df.diff[i] = diff
-            diff_df.trt[i] = trt
+            diff_df.treat[i] = trt
         end 
         results = DataFrame(agg_att = Vector{Union{Missing, Float64}}(missing, 1),
                             se_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
