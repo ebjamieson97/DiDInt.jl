@@ -681,6 +681,9 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 results.jknifese_att_s[i] = result_dict["beta_hat_se_jknife"]
                 results.jknifepval_att_s[i] = result_dict["pval_att_jknife"]
             end
+            results.tuple_state = custom_sort_order.(results.state)
+            sort!(results,[order(:tuple_state)])
+            select!(results, Not([:tuple_state]))
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_s)
             result_dict = final_regression_results(X, Y)

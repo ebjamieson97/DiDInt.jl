@@ -534,3 +534,11 @@ function compute_n_unique_assignments(treatment_times::Vector, total_n_states::N
     return num ÷ den                  
 end
 
+function custom_sort_order(s)
+    parsed = tryparse(Int, s)
+    if isnothing(parsed)
+        (0, lowercase(s))
+    else
+        (1, parsed)
+    end 
+end 
