@@ -41,7 +41,7 @@ in `treated_times`, and so on.
     Options are: `"hom"`, `"time"`, `"state"`, "`add`", and `"int"` (default). 
 - `agg::AbstractString = "cohort"` 
     Enter the weighting method as a string.
-    Options are: `"cohort"` (default), `"simple"`, `"state"`, `"unweighted"`.
+    Options are: `"cohort"` (default), `"simple"`, `"state"`, `"sgt"`, `"none"`.
 - `ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing`
     A dictionary specifying which category in a categorical variable should be used
     as the reference (baseline) category.
@@ -74,6 +74,7 @@ function didint(outcome::AbstractString,
                 date_format::Union{AbstractString, Nothing} = nothing,
                 covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing} = nothing,
                 ccc::AbstractString = "int", agg::AbstractString = "cohort",
+                weighting::AbstractString = "default",
                 ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
                 freq::Union{AbstractString, Nothing} = nothing,
                 freq_multiplier::Number = 1,
@@ -90,10 +91,17 @@ function didint(outcome::AbstractString,
 
     # Check that agg args are passed correctly
     agg = lowercase(agg)
-    agg_options = ["cohort", "state", "simple", "unweighted", "sgt"]
+    agg_options = ["cohort", "state", "simple", "none", "sgt"]
     if !(agg in agg_options)
         error("Er03: 'agg' must be one of: $(agg_options)")
     end 
+
+    # Check that weighting arg is passed correctly
+    weighting = lowercase(weighting)
+    weighting_options = ["default", "equal"]
+    if !(weighting in weighting_options) 
+        error("Er99: 'weighting must be one of: $(weighting_options)'")
+    end
 
     # Round nperm
     nperm = Int(round(nperm))
@@ -391,7 +399,18 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
         end
     end
 
+    # Ensure state column is a string (as are treated_states)
+    data_copy.state_71X9yTx = string.(data_copy.state_71X9yTx)
+    treated_states = string.(treated_states)
+    check_states = unique(data_copy.state_71X9yTx)
+    missing_states = setdiff(treated_states, check_states)
+    if !isempty(missing_states)
+        error("Er88: The states: $missing_states could not be found among the states in the data: $check_states")
+    end
+
     # Once any date matching procedures are done, convert time_71X9yTx back to a string for processing in `categorical()`
+    # Also keep a column vector copy as a date
+    data_copy.time_dmG5fpM = data_copy.time_71X9yTx
     if common_adoption
         data_copy.time_71X9yTx = ifelse.(data_copy.time_71X9yTx .>= treatment_times[1], "post", "pre")
         data_copy.time_71X9yTx = string.(data_copy.time_71X9yTx)
@@ -590,15 +609,18 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 results.jknifese_att_cohort[i] = result_dict["beta_hat_se_jknife"]
                 results.jknifepval_att_cohort[i] = result_dict["pval_att_jknife"]
             end
+            results = compute_weights(results, data_copy, "cohort", weighting, treated_states, treatment_times)
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_cohort)
-            result_dict = final_regression_results(X, Y)
+            W = results.weights
+            result_dict = final_regression_results(X, Y, W = W)
             results.agg_att[1] = result_dict["beta_hat"]
             results.se_agg_att[1] = result_dict["beta_hat_se"]
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "cohort", verbose, seed)
+            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "cohort",
+                                                      verbose, seed, data_copy, weighting)
             return results
         elseif agg == "simple"
             # Run final regression -- weighted by time and r - 1 groups
@@ -637,15 +659,18 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             end
             sort!(results, [:time])
             sort!(results, [:r1])
+            results = compute_weights(results, data_copy, "simple", weighting, treated_states, treatment_times)
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_gt)
-            result_dict = final_regression_results(X, Y)
+            W = results.weights
+            result_dict = final_regression_results(X, Y, W = W)
             results.agg_att[1] = result_dict["beta_hat"]
             results.se_agg_att[1] = result_dict["beta_hat_se"]
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "simple", verbose, seed)
+            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "simple",
+                                                 verbose, seed, data_copy, weighting)
             return results
         elseif agg == "state"
             # Run final regression -- weighted by state
@@ -684,17 +709,20 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             results.tuple_state = custom_sort_order.(results.state)
             sort!(results,[order(:tuple_state)])
             select!(results, Not([:tuple_state]))
+            results = compute_weights(results, data_copy, "state", weighting, treated_states, treatment_times)
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_s)
-            result_dict = final_regression_results(X, Y)
+            W = results.weights
+            result_dict = final_regression_results(X, Y, W = W)
             results.agg_att[1] = result_dict["beta_hat"]
             results.se_agg_att[1] = result_dict["beta_hat_se"]
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "state", verbose, seed)
+            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "state",
+                                                 verbose, seed, data_copy, weighting)
             return results
-        elseif agg == "unweighted"  
+        elseif agg == "none"  
             # Run final regrsesion -- each diff weighted equally
             results = DataFrame(agg_att = Vector{Union{Missing, Float64}}(missing, 1),
                                 se_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
@@ -711,12 +739,13 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "unweighted", verbose, seed)
+            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "none",
+                                                 verbose, seed, data_copy, "equal")
             return results
         elseif agg == "sgt"
             # Run final regrsesion -- each ATT_sgt weighted equally
             unique_sgt = unique(select(diff_df[diff_df.treat .== 1,:], :state, :t, :treated_time))
-            treated_states = unique(unique_sgt.state)
+            #treated_states = unique(unique_sgt.state)
             results = DataFrame(state = Vector{String}(undef, nrow(unique_sgt)),
                                 gvar = Vector{Date}(undef, nrow(unique_sgt)),
                                 t = Vector{Date}(undef, nrow(unique_sgt)),
@@ -752,15 +781,18 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 results.jknifese_att_sgt[i] = result_dict["beta_hat_se_jknife"]
                 results.jknifepval_att_sgt[i] = result_dict["pval_att_jknife"]
             end 
+            results = compute_weights(results, data_copy, "sgt", weighting, treated_states, treatment_times)
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_sgt)
-            result_dict = final_regression_results(X, Y)
+            W = results.weights
+            result_dict = final_regression_results(X, Y, W = W)
             results.agg_att[1] = result_dict["beta_hat"]
             results.se_agg_att[1] = result_dict["beta_hat_se"]
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "sgt", verbose, seed)
+            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "sgt",
+                                                 verbose, seed, data_copy, weighting)
         end
     elseif common_adoption
         states = unique(lambda_df.state)

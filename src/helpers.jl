@@ -54,6 +54,7 @@ function parse_freq(period_str::AbstractString)
 end
 
 function compute_jknife_se(X::Matrix{<:Number}, Y::Vector{<:Number}, original_att::Number)
+    
     n = length(Y)
     if n == 1 
         return missing
@@ -70,30 +71,53 @@ function compute_jknife_se(X::Matrix{<:Number}, Y::Vector{<:Number}, original_at
     return jknife_se
 end 
 
-function final_regression_results(X::Matrix{<:Number}, Y::Vector{<:Number})
+function final_regression_results(X::Matrix{<:Number}, Y::Vector{<:Number};
+                                  W::Vector{T} where T <: Union{Nothing, Number} = [nothing])
     beta_hat = nothing
-    try
-        beta_hat = (X \ Y) 
-    catch e
-        @warn "Direct solve failed, using pseudoinverse: $e"
-        beta_hat = pinv(X' * X) * X' * Y
-    end 
-    ncolx = size(X, 2)
-    resid = Y - X * beta_hat
-    sigma_sq = resid .^ 2
-    omega = Diagonal(sigma_sq)
     beta_hat_cov = nothing
-    try
-        beta_hat_cov = inv(X' * X) * (X' * omega * X) * inv(X' * X)
-    catch e
-        @warn "Direct solve failed, using pseudoinverse: $e"
-        beta_hat_cov = pinv(X' * X) * (X' * omega * X) * pinv(X' * X)
+    ncolx = size(X, 2)
+
+    # Run OLS (normally if weights aren't provided, and scale (X,Y) -> (Xw,Yw) otherwise)
+    if eltype(W) <: Nothing
+        try
+            beta_hat = (X \ Y) 
+        catch e
+            @warn "Direct solve failed, using pseudoinverse: $e"
+            beta_hat = pinv(X' * X) * X' * Y
+        end
+        resid = Y - X * beta_hat
+        omega = Diagonal(resid .^ 2)
+        try
+            beta_hat_cov = inv(X' * X) * (X' * omega * X) * inv(X' * X)
+        catch e
+            @warn "Direct solve failed, using pseudoinverse: $e"
+            beta_hat_cov = pinv(X' * X) * (X' * omega * X) * pinv(X' * X)
+        end 
+        beta_hat_se_jknife = compute_jknife_se(X, Y, beta_hat[ncolx]) 
+    elseif eltype(W) <: Number
+        sw = sqrt.(W)           
+        Xw = X .* sw            
+        Yw = Y .* sw
+        try
+            beta_hat = (Xw'Xw) \ (Xw'Yw) 
+        catch e
+            @warn "Direct solve failed, using pseudoinverse: $e"
+            beta_hat = pinv(Xw' * Xw) * Xw' * Yw
+        end
+        resid_w = Yw - Xw * beta_hat
+        Ωw = Diagonal(resid_w.^2)
+        try
+            beta_hat_cov = inv(Xw'Xw) * (Xw' * Ωw * Xw) * inv(Xw'Xw)
+        catch e 
+            @warn "Direct solve failed, using pseudoinverse: $e"
+            beta_hat_cov = pinv(Xw'Xw) * (Xw' * Ωw * Xw) * pinv(Xw'Xw)
+        end 
+        beta_hat_se_jknife = compute_jknife_se(Xw, Yw, beta_hat[ncolx]) 
     end 
     beta_hat_var = diag(beta_hat_cov)
-    beta_hat_se = sqrt(beta_hat_var[ncolx]) #
+    beta_hat_se = sqrt(beta_hat_var[ncolx]) 
     dof = length(Y) - ncolx
-    pval_att = dof > 0 ? 2 * (1 - cdf(TDist(dof), abs(beta_hat[ncolx] / beta_hat_se))) : missing #
-    beta_hat_se_jknife = compute_jknife_se(X, Y, beta_hat[ncolx]) #
+    pval_att = dof > 0 ? 2 * (1 - cdf(TDist(dof), abs(beta_hat[ncolx] / beta_hat_se))) : missing 
     pval_att_jknife = dof > 0 ? 2 * (1 - cdf(TDist(dof), abs(beta_hat[ncolx] / beta_hat_se_jknife))) : missing
     result_dict = Dict("beta_hat" => beta_hat[ncolx], "beta_hat_se" => beta_hat_se, "pval_att" => pval_att,
                        "beta_hat_se_jknife" => beta_hat_se_jknife, "pval_att_jknife" => pval_att_jknife)
@@ -224,7 +248,7 @@ Setting 'nperm' to $n_unique_perms."
                 att_state[i] = β[2]
             end
             ri_att[j] = mean(att_state)
-        elseif agg == "unweighted"
+        elseif agg == "none"
             X = convert(Matrix{Float64}, hcat(ones(nrow(ri_df)), ri_df.treat))
             Y = convert(Vector{Float64}, ri_df.diff)
             β = nothing
@@ -338,7 +362,8 @@ Setting 'nperm' to $n_unique_perms."
 end
 
 function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::DataFrame,
-                                    agg::AbstractString, verbose::Bool, seed::Number)
+                                    agg::AbstractString, verbose::Bool, seed::Number,
+                                    data::DataFrame, weighting::AbstractString)
     
     # PART ONE: CREATE RANDOMIZED TREATMENT COLUMNS
     original_treated = unique(diff_df[diff_df.treat .== 1, [:state, :treated_time]])
@@ -396,7 +421,7 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
     # PART TWO: COMPUTE RI_ATT & RI_ATT_SUBGROUP
     if length(unique(treatment_times)) == 1
         if agg in ["cohort", "simple"]
-            agg = "unweighted"
+            agg = "none"
         end
     end 
     att_ri = Vector{Float64}(undef, nperm - 1)
@@ -404,14 +429,30 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
         att_ri_cohort = Matrix{Float64}(undef, nperm - 1, length(treatment_times))
         for j in 1:nperm - 1 
             colname = Symbol("treat_random_$(j)")
+            W = Vector{Float64}(undef, length(treatment_times))
             for i in eachindex(treatment_times)
+                # Compute sub aggregate ATT
                 trt = treatment_times[i]
                 temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.treated_time .== trt), :]
                 X = convert(Vector{Float64}, temp[!, colname])
                 Y = convert(Vector{Float64}, temp.diff)
                 att_ri_cohort[j,i] = mean(Y[X .== 1]) - mean(Y[X .== 0])
+                
+                # Compute weights
+                if weighting == "default"
+                    matched_states = Set(temp[(temp[!, colname] .== 1) .&& (temp.treated_time .== trt), :].state)
+                    count = sum((data.time_dmG5fpM .>= trt) .&& in.(data.state_71X9yTx, Ref(matched_states)))
+                    W[i] = count
+                end 
             end
-            att_ri[j] = mean(att_ri_cohort[j,:])
+
+            # Compute aggregate ATT
+            if weighting == "default"
+                W ./= sum(W)
+            elseif weighting == "equal"
+                W .= (1 / length(treatment_times))
+            end 
+            att_ri[j] = dot(W, att_ri_cohort[j,:])
             if verbose && j % 100 == 0
                 println("Completed $(j) of $(nperm - 1) permutations")
             end
@@ -420,7 +461,9 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
         att_ri_state = Matrix{Float64}(undef, nperm - 1, length(treatment_times))
         for j in 1:nperm - 1 
             colname = Symbol("treat_random_$(j)")
+            W = Vector{Float64}(undef, length(treatment_states))
             for i in eachindex(treatment_states)
+                # Compute sub aggregate ATT
                 trt = treatment_times[i]
                 temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.treated_time .== trt), :]
                 temp_treated_silos = unique(temp[temp[!, colname] .== 1, "state"])
@@ -429,8 +472,21 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
                 X = convert(Vector{Float64}, temp[!, colname])
                 Y = convert(Vector{Float64}, temp.diff)
                 att_ri_state[j,i] = mean(Y[X .== 1]) - mean(Y[X .== 0])
+
+                # Compute weights
+                if weighting == "default"
+                    count = sum((data.time_dmG5fpM .>= trt) .&& (data.state_71X9yTx .== temp_treated_silo))
+                    W[i] = count
+                end 
             end
-            att_ri[j] = mean(att_ri_state[j,:])
+
+            # Compute aggregate ATT
+            if weighting == "default"
+                W ./= sum(W)
+            elseif weighting == "equal"
+                W .= (1 / length(treatment_states))
+            end 
+            att_ri[j] = dot(W, att_ri_state[j,:])
             if verbose && j % 100 == 0
                 println("Completed $(j) of $(nperm - 1) permutations")
             end 
@@ -440,15 +496,31 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
         att_ri_simple = Matrix{Float64}(undef, nperm - 1, nrow(unique_diffs))
         for j in 1:nperm - 1
             colname = Symbol("treat_random_$(j)")
+            W = Vector{Float64}(undef, nrow(unique_diffs))
             for i in 1:nrow(unique_diffs)
+                # Compute sub aggregate ATT
                 t = unique_diffs[i,"t"]
                 r1 = unique_diffs[i,"r1"]
                 temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.t .== t) .&& (diff_df.r1 .== r1), :]
                 X = convert(Vector{Float64}, temp[!, colname])
                 Y = convert(Vector{Float64}, temp.diff)
                 att_ri_simple[j,i] = mean(Y[X .== 1]) - mean(Y[X .== 0])
+
+                # Compute weights
+                if weighting == "default"
+                    matched_states = Set(temp[(temp[!, colname] .== 1) .&& (temp.t .== t) .&& (temp.r1 .== r1), :].state)
+                    count = sum((data.time_dmG5fpM .== t) .&& in.(data.state_71X9yTx, Ref(matched_states)))
+                    W[i] = count
+                end 
             end
-            att_ri[j] = mean(att_ri_simple[j,:])
+
+            # Compute aggregate ATT
+            if weighting == "default"
+                W ./= sum(W)
+            elseif weighting == "equal"
+                W .= (1 / nrow(unique_diffs))
+            end 
+            att_ri[j] = dot(W, att_ri_simple[j,:])
             if verbose && j % 100 == 0
                 println("Completed $(j) of $(nperm - 1) permutations")
             end
@@ -458,7 +530,9 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
         att_ri_sgt = Matrix{Float64}(undef, nperm - 1, nrow(unique_diffs))
         for j in 1:nperm - 1
             colname = Symbol("treat_random_$(j)")
+            W = Vector{Float64}(undef, nrow(unique_diffs))
             for i in 1:nrow(unique_diffs)
+                # Compute sub aggregate ATT
                 t = unique_diffs[i,"t"]
                 r1 = unique_diffs[i,"r1"]
                 temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.t .== t) .&& (diff_df.r1 .== r1), :]
@@ -468,13 +542,26 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
                 X = convert(Vector{Float64}, temp[!, colname])
                 Y = convert(Vector{Float64}, temp.diff)
                 att_ri_sgt[j,i] = mean(Y[X .== 1]) - mean(Y[X .== 0])
+                
+                # Compute weights
+                if weighting == "default"
+                    count = sum((data.time_dmG5fpM .== t) .&& (data.state_71X9yTx .== temp_treated_silo))
+                    W[i] = count
+                end 
             end
-            att_ri[j] = mean(att_ri_sgt[j,:])
+
+            # Compute aggregate ATT
+            if weighting == "default"
+                W ./= sum(W)
+            elseif weighting == "equal"
+                W .= (1 / nrow(unique_diffs))
+            end 
+            att_ri[j] = dot(W, att_ri_sgt[j,:])
             if verbose && j % 100 == 0
                 println("Completed $(j) of $(nperm - 1) permutations")
             end
         end 
-    elseif agg == "unweighted"
+    elseif agg == "none"
         for j in 1:nperm - 1
             colname = Symbol("treat_random_$(j)")
             temp = diff_df[diff_df[!, colname] .!= -1,:]
@@ -541,4 +628,73 @@ function custom_sort_order(s)
     else
         (1, parsed)
     end 
+end 
+
+function compute_weights(results::DataFrame, data::DataFrame,
+                         agg::AbstractString, weighting::AbstractString,
+                         treated_states::Vector{<:AbstractString},
+                         treatment_times::Vector{Date})
+    
+    if weighting == "equal"
+        results.weights .= nothing
+    elseif weighting == "default"
+        results = compute_default_weights(results, data, agg, treated_states, treatment_times)
+    end 
+
+    return results
+end 
+
+function compute_default_weights(results::DataFrame, data::DataFrame, agg::AbstractString,
+                                 treated_states::Vector{<:AbstractString},
+                                 treatment_times::Vector{Date})
+
+    if agg == "sgt"
+        states = results.state
+        times = results.t
+        sgt_weights = Vector{Float64}(undef, length(states))
+        for (i, s) in enumerate(states)
+            t = times[i]
+            count = sum((data.time_dmG5fpM .== t) .&& (data.state_71X9yTx .== s))
+            sgt_weights[i] = count
+        end 
+        sgt_weights ./= sum(sgt_weights)
+        results.weights = sgt_weights
+    elseif agg == "state"
+        states = results.state
+        state_weights = Vector{Float64}(undef, length(states))
+        for (i, s) in enumerate(states)
+            idx = findall(x -> x == s, treated_states)
+            matched_time = treatment_times[idx]
+            count = sum((data.time_dmG5fpM .>= matched_time) .&& (data.state_71X9yTx .== s))
+            state_weights[i] = count
+        end 
+        state_weights ./= sum(state_weights)
+        results.weights = state_weights
+    elseif agg == "cohort"
+        unique_treatment_times = results.treatment_time
+        unique_treatment_weights = Vector{Float64}(undef, length(unique_treatment_times))
+        for (i, t) in enumerate(unique_treatment_times)
+            idxs = findall(x -> x == t, treatment_times)
+            matched_states = Set(treated_states[idxs])
+            count = sum((data.time_dmG5fpM .>= t) .&& in.(data.state_71X9yTx, Ref(matched_states)))
+            unique_treatment_weights[i] = count
+        end
+        unique_treatment_weights ./= sum(unique_treatment_weights)
+        results.weights = unique_treatment_weights
+    elseif agg == "simple"
+        gt_weights = Vector{Float64}(undef, nrow(results))
+        gvars = results.gvar
+        times = results.time
+        for (i, g) in enumerate(gvars)
+            t = times[i]
+            idxs = findall(x -> x == g, treatment_times)
+            matched_states = Set(treated_states[idxs])
+            count = sum((data.time_dmG5fpM .== t) .&& in.(data.state_71X9yTx, Ref(matched_states)))
+            gt_weights[i] = count
+        end 
+        gt_weights ./= sum(gt_weights)
+        results.weights = gt_weights
+    end 
+
+    return results
 end 
