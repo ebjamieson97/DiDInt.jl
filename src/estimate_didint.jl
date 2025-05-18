@@ -74,7 +74,7 @@ function didint(outcome::AbstractString,
                 date_format::Union{AbstractString, Nothing} = nothing,
                 covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing} = nothing,
                 ccc::AbstractString = "int", agg::AbstractString = "cohort",
-                weighting::AbstractString = "default",
+                weighting::AbstractString = "att",
                 ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
                 freq::Union{AbstractString, Nothing} = nothing,
                 freq_multiplier::Number = 1,
@@ -98,7 +98,7 @@ function didint(outcome::AbstractString,
 
     # Check that weighting arg is passed correctly
     weighting = lowercase(weighting)
-    weighting_options = ["default", "equal"]
+    weighting_options = ["both", "none", "att", "diff"]
     if !(weighting in weighting_options) 
         error("Er99: 'weighting must be one of: $(weighting_options)'")
     end
@@ -510,11 +510,28 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
     state_time = split.(replace.(coefnames(stage1), "state_time: " => ""), "0IQR7q6Wei7Ejp4e")
     lambda_df = DataFrame(state = first.(state_time), time = last.(state_time))
     lambda_df.lambda = coef(stage1)
+    cornercase = false
+    if common_adoption && length(unique(lambda_df.state)) == 2
+        lambda_df.stderr = stderror(stage1)
+
+        cornercase = true
+        treat_post_var = (lambda_df[lambda_df.state .== treated_states[1] .&& lambda_df.time .== "post", "stderr"][1])^2
+        treat_pre_var = (lambda_df[lambda_df.state .== treated_states[1] .&& lambda_df.time .== "pre", "stderr"][1])^2
+        control_post_var = (lambda_df[lambda_df.state .!= treated_states[1] .&& lambda_df.time .== "post", "stderr"][1])^2
+        control_pre_var = (lambda_df[lambda_df.state .!= treated_states[1] .&& lambda_df.time .== "pre", "stderr"][1])^2
+
+        # using fixedeffectsmodels means the off-diagonal entries of the covariance matrix will all be zero
+        # so when covariates are included this estimate will not be accurate! fix later
+        cornercase_se = sqrt(treat_post_var + treat_pre_var + control_post_var + control_pre_var)
+
+        select!(lambda_df, Not(:stderr))
+    end 
 
     # Compute diff for each treated state
     unique_states = unique(lambda_df.state)
-    diff_df = DataFrame(state = [], treated_time = [],
-                        t = [], r1 = [], diff = [], treat = [])
+    diff_df = DataFrame(state = String[], treated_time = Date[],
+                        t = Date[], r1 = Date[], diff = Float64[],
+                        treat = Int[], n = Int[])
 
     # Parse the treatment_times and the time column to dates for staggered adoption
     if staggered_adoption
@@ -534,12 +551,16 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             sort!(temp, :time)
             years = temp.time
             diffs = Vector{Float64}(undef, nrow(temp))
+            n = Vector{Int}(undef, nrow(temp))
             for j in eachindex(diffs)
                 diffs[j] = temp[j, "lambda"][1] - lambda_r1
+                post = temp[j, "time"]
+                pre = one_period_prior_treatment
+                n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([post, pre])) .&& (data_copy.state_71X9yTx .== treated_states[i]))
             end 
-
             temp_df = DataFrame(state = treated_states[i], treated_time = treatment_times[i],
-                                t = years, r1 = one_period_prior_treatment, diff = diffs, treat = 1)
+                                t = years, r1 = one_period_prior_treatment, diff = diffs, treat = 1,
+                                n = n)
             diff_df = vcat(diff_df, temp_df) 
         end
         
@@ -549,32 +570,39 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
         for i in eachindex(control_states)
             temp = lambda_df[(lambda_df.state .== control_states[i]), :]
             diffs = Vector{Float64}(undef, nrow(unique_diffs))
+            n = Vector{Int}(undef, nrow(unique_diffs))
             for j in 1:nrow(unique_diffs)
                 t = unique_diffs[j,"t"]
                 r1 = unique_diffs[j,"r1"]
                 diffs[j] = temp[temp.time .== t, "lambda"][1] - temp[temp.time .== r1, "lambda"][1]
+                n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([t, r1])) .&& (data_copy.state_71X9yTx .== control_states[i]))
             end 
             trtd_time = [all_times[findfirst(==(t), all_times) + 1] for t in unique_diffs.r1]
             temp_df = DataFrame(state = control_states[i], treated_time = trtd_time,
-                                t = unique_diffs.t, r1 = unique_diffs.r1, diff = diffs, treat = 0)
+                                t = unique_diffs.t, r1 = unique_diffs.r1, diff = diffs, treat = 0,
+                                n = n)
             diff_df = vcat(diff_df, temp_df)
         end
 
         # Compute diffs for randomization inference
-        ri_diff_df = DataFrame(state = [], treated_time = [],
-                               t = [], r1 = [], diff = [], treat = [])
+        ri_diff_df = DataFrame(state = String[], treated_time = Date[],
+                               t = Date[], r1 = Date[], diff = Float64[],
+                               treat = Int[], n = Int[])
         for i in eachindex(treated_states)
             ri_diffs = unique(select(diff_df[(diff_df.state .!= treated_states[i]) .& (diff_df.treated_time .!= treatment_times[i]), :], :t, :r1))
             temp = lambda_df[(lambda_df.state .== treated_states[i]), :]
             diffs = Vector{Float64}(undef, nrow(ri_diffs))
+            n = Vector{Int}(undef, nrow(ri_diffs))
             for j in 1:nrow(ri_diffs)
                 t = unique_diffs[j,"t"]
                 r1 = unique_diffs[j,"r1"]
                 diffs[j] = temp[temp.time .== t, "lambda"][1] - temp[temp.time .== r1, "lambda"][1]
+                n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([t, r1])) .&& (data_copy.state_71X9yTx .== treated_states[i]))
             end
             trtd_time = [all_times[findfirst(==(t), all_times) + 1] for t in ri_diffs.r1]
             temp_df = DataFrame(state = treated_states[i], treated_time = trtd_time,
-                                t = ri_diffs.t, r1 = ri_diffs.r1, diff = diffs, treat = -1)
+                                t = ri_diffs.t, r1 = ri_diffs.r1, diff = diffs, treat = -1,
+                                n = n)
             ri_diff_df = vcat(ri_diff_df, temp_df)
         end
         
@@ -593,16 +621,22 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                                 nperm = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
                                 se_att_cohort = Vector{Float64}(undef, length(unique_treatment_times)),
                                 pval_att_cohort = Vector{Float64}(undef, length(unique_treatment_times)),
-                                jknifese_att_cohort = Vector{Float64}(undef, length(unique_treatment_times)),
-                                jknifepval_att_cohort = Vector{Float64}(undef, length(unique_treatment_times)),
+                                jknifese_att_cohort = Vector{Union{Missing, Float64}}(undef, length(unique_treatment_times)),
+                                jknifepval_att_cohort = Vector{Union{Missing, Float64}}(undef, length(unique_treatment_times)),
                                 ri_pval_att_cohort = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)))
             for i in eachindex(unique_treatment_times)
                 trt = unique_treatment_times[i]
                 temp = diff_df[diff_df.treated_time .== trt, :]
                 X = convert(Matrix{Float64},(hcat(ones(nrow(temp)), temp.treat)))
-                Y = convert(Vector{Float64}, temp.diff)            
+                Y = convert(Vector{Float64}, temp.diff)
+                if in(weighting, ["diff", "both"])
+                    W = convert(Vector{Float64}, temp.n)
+                    W ./= sum(W)
+                else
+                    W = fill(nothing, nrow(temp))
+                end            
                 results.treatment_time[i] = trt
-                result_dict = final_regression_results(X, Y)
+                result_dict = final_regression_results(X, Y, W = W)
                 results.att_cohort[i] = result_dict["beta_hat"]
                 results.se_att_cohort[i] = result_dict["beta_hat_se"]
                 results.pval_att_cohort[i] = result_dict["pval_att"] 
@@ -647,10 +681,16 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 temp = diff_df[(diff_df.t .== t) .& (diff_df.r1 .== r1), :]
                 X = convert(Matrix{Float64},(hcat(ones(nrow(temp)), temp.treat)))
                 Y = convert(Vector{Float64}, temp.diff)
+                if in(weighting, ["diff", "both"])
+                    W = convert(Vector{Float64}, temp.n)
+                    W ./= sum(W)
+                else
+                    W = fill(nothing, nrow(temp))
+                end 
                 results.time[i] = t
                 results.r1[i] = r1
                 results.gvar[i] = gvar
-                result_dict = final_regression_results(X, Y)
+                result_dict = final_regression_results(X, Y, W = W)
                 results.att_gt[i] = result_dict["beta_hat"]
                 results.se_att_gt[i] = result_dict["beta_hat_se"]
                 results.pval_att_gt[i] = result_dict["pval_att"] 
@@ -694,12 +734,16 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 temp_treated = diff_df[diff_df.state .== state, :]
                 temp_control = diff_df[(diff_df.treat .== 0) .&& (diff_df.treated_time .== trt), :]
                 temp = vcat(temp_control, temp_treated)
-                treated_states_state = unique(temp[temp.treat .== 1, "state"])
-                control_states_state = unique(temp[temp.treat .== 0, "state"])
                 X = convert(Matrix{Float64}, hcat(ones(nrow(temp)), temp.treat))
                 Y = convert(Vector{Float64}, temp.diff)
+                if in(weighting, ["diff", "both"])
+                    W = convert(Vector{Float64}, temp.n)
+                    W ./= sum(W)
+                else
+                    W = fill(nothing, nrow(temp))
+                end 
                 results.state[i] = state
-                result_dict = final_regression_results(X, Y)
+                result_dict = final_regression_results(X, Y, W = W)
                 results.att_s[i] = result_dict["beta_hat"]
                 results.se_att_s[i] = result_dict["beta_hat_se"]
                 results.pval_att_s[i] = result_dict["pval_att"] 
@@ -733,14 +777,20 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                                 nperm = Vector{Union{Missing, Float64}}(missing, 1))
             X = convert(Matrix{Float64}, hcat(ones(nrow(diff_df)), diff_df.treat))
             Y = convert(Vector{Float64}, diff_df.diff)
-            result_dict = final_regression_results(X, Y)
+            if in(weighting, ["diff", "both"])
+                    W = convert(Vector{Float64}, diff_df.n)
+                    W ./= sum(W)
+            else
+                    W = fill(nothing, nrow(diff_df))
+            end 
+            result_dict = final_regression_results(X, Y, W = W)
             results.agg_att[1] = result_dict["beta_hat"]
             results.se_agg_att[1] = result_dict["beta_hat_se"]
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
             results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "none",
-                                                 verbose, seed, data_copy, "equal")
+                                                 verbose, seed, data_copy, weighting)
             return results
         elseif agg == "sgt"
             # Run final regrsesion -- each ATT_sgt weighted equally
@@ -771,10 +821,16 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 temp = vcat(temp_treated, temp_control)
                 X = convert(Matrix{Float64}, hcat(ones(nrow(temp)), temp.treat))
                 Y = convert(Vector{Float64}, temp.diff)
+                if in(weighting, ["diff", "both"])
+                    W = convert(Vector{Float64}, temp.n)
+                    W ./= sum(W)
+                else
+                    W = fill(nothing, nrow(temp))
+                end 
                 results.state[i] = state
                 results.gvar[i] = gvar
                 results.t[i] = t
-                result_dict = final_regression_results(X, Y)
+                result_dict = final_regression_results(X, Y, W = W)
                 results.att_sgt[i] = result_dict["beta_hat"]
                 results.se_att_sgt[i] = result_dict["beta_hat_se"]
                 results.pval_att_sgt[i] = result_dict["pval_att"] 
@@ -799,7 +855,8 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
         diff_df = DataFrame(state = states,
                             diff = Vector{Float64}(undef, length(states)),
                             treat = Vector{Float64}(undef, length(states)),
-                            treated_time = fill(unique(treatment_times)[1], length(states)))
+                            treated_time = fill(unique(treatment_times)[1], length(states)),
+                            n = Vector{Float64}(undef, length(states)))
         for i in eachindex(states)
             state = states[i]
             if state in treated_states
@@ -810,23 +867,35 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             diff = lambda_df[(lambda_df.state .== state) .&& (lambda_df.time .== "post"), "lambda"][1] - lambda_df[(lambda_df.state .== state) .&& (lambda_df.time .== "pre"), "lambda"][1]
             diff_df.diff[i] = diff
             diff_df.treat[i] = trt
+            diff_df.n[i] = sum(data_copy.state_71X9yTx .== state)
         end 
         results = DataFrame(agg_att = Vector{Union{Missing, Float64}}(missing, 1),
                             se_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
                             pval_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
                             jknifese_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
                             jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
-                            ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, 1))
-        X = convert(Matrix{Float64}, hcat(ones(nrow(diff_df)), diff_df.trt))
+                            ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
+                            nperm = Vector{Union{Missing, Float64}}(missing, 1))
+        X = convert(Matrix{Float64}, hcat(ones(nrow(diff_df)), diff_df.treat))
         Y = convert(Vector{Float64}, diff_df.diff)
-        result_dict = final_regression_results(X, Y)
+        if in(weighting, ["diff", "both"])
+            W = convert(Vector{Float64}, diff_df.n)
+            W ./= sum(W)
+        else
+            W = fill(nothing, nrow(diff_df))
+        end 
+        result_dict = final_regression_results(X, Y, W = W)
         results.agg_att[1] = result_dict["beta_hat"]
-        results.se_agg_att[1] = result_dict["beta_hat_se"]
+        if cornercase
+            results.se_agg_att[1] = cornercase_se
+        else
+            results.se_agg_att[1] = result_dict["beta_hat_se"]
+        end 
         results.pval_agg_att[1] = result_dict["pval_att"]
         results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
         results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-        results.ri_pval_agg_att[1] = ri_common_adoption(diff_df, result_dict["beta_hat"],
-                                                        nperm, verbose)
+        results = randomization_inference_v2(diff_df, nperm, results, agg,
+                                             verbose, seed, data_copy, weighting)
 
         return results
     end 

@@ -61,6 +61,11 @@ function compute_jknife_se(X::Matrix{<:Number}, Y::Vector{<:Number}, original_at
     end 
     jknife_beta = Vector{Float64}(undef, n)
     ncolx = size(X,2)
+    treat_count = sum(X[:,ncolx] .== 1)
+    control_count = sum(X[:,ncolx] .== 0)
+    if (treat_count < 2 || control_count < 2) & ncolx > 1
+        return missing
+    end
     for i in eachindex(Y)
         idx = [1:i-1; i+1:size(X, 1)]
         X_sub = X[idx, :]
@@ -99,7 +104,7 @@ function final_regression_results(X::Matrix{<:Number}, Y::Vector{<:Number};
         Xw = X .* sw            
         Yw = Y .* sw
         try
-            beta_hat = (Xw'Xw) \ (Xw'Yw) 
+            beta_hat = (Xw) \ (Yw) 
         catch e
             @warn "Direct solve failed, using pseudoinverse: $e"
             beta_hat = pinv(Xw' * Xw) * Xw' * Yw
@@ -118,12 +123,13 @@ function final_regression_results(X::Matrix{<:Number}, Y::Vector{<:Number};
     beta_hat_se = sqrt(beta_hat_var[ncolx]) 
     dof = length(Y) - ncolx
     pval_att = dof > 0 ? 2 * (1 - cdf(TDist(dof), abs(beta_hat[ncolx] / beta_hat_se))) : missing 
-    pval_att_jknife = dof > 0 ? 2 * (1 - cdf(TDist(dof), abs(beta_hat[ncolx] / beta_hat_se_jknife))) : missing
+    pval_att_jknife = dof > 0 && !ismissing(beta_hat_se_jknife) ? 2 * (1 - cdf(TDist(dof), abs(beta_hat[ncolx] / beta_hat_se_jknife))) : missing
     result_dict = Dict("beta_hat" => beta_hat[ncolx], "beta_hat_se" => beta_hat_se, "pval_att" => pval_att,
                        "beta_hat_se_jknife" => beta_hat_se_jknife, "pval_att_jknife" => pval_att_jknife)
     return result_dict
 end 
 
+# This function is deprecated
 function randomization_inference_didint(diff_df::DataFrame, agg::AbstractString,
                                         original_att::Number, nperm::Integer, control_states::AbstractVector,
                                         treated_states::AbstractVector, verbose::Bool; warnings::Bool = true)
@@ -132,10 +138,11 @@ function randomization_inference_didint(diff_df::DataFrame, agg::AbstractString,
     n = length(control_states) + length(treated_states)
     k = length(treated_states)
     n_unique_perms = binomial(n, k)
+    n_unique_perms_minus_one = n_unique_perms - 1
     if nperm > n_unique_perms
         if warnings 
             @warn "'nperm' was set to $nperm but only $n_unique_perms unique permutations exist. \n 
-Setting 'nperm' to $n_unique_perms."
+Setting 'nperm' to $(n_unique_perms_minus_one)."
         end 
         nperm = n_unique_perms
     end 
@@ -310,6 +317,7 @@ function match_treatment_time(t::Date, periods::Vector{Date})
     end
 end
 
+# This function is deprecated
 function ri_common_adoption(diff_df::DataFrame, original_att::Number,
                             nperm::Integer, verbose::Bool)
 
@@ -375,7 +383,7 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
     n_unique_perms = compute_n_unique_assignments(treatment_times, length(all_states))
     if nperm > n_unique_perms
         @warn "'nperm' was set to $nperm but only $n_unique_perms unique permutations exist. \n 
-                Setting 'nperm' to $n_unique_perms."
+                Setting 'nperm' to $(n_unique_perms - 1)."
         nperm = n_unique_perms
     end 
     if nperm < 500
@@ -420,9 +428,7 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
 
     # PART TWO: COMPUTE RI_ATT & RI_ATT_SUBGROUP
     if length(unique(treatment_times)) == 1
-        if agg in ["cohort", "simple"]
-            agg = "none"
-        end
+        agg = "none"
     end 
     att_ri = Vector{Float64}(undef, nperm - 1)
     if agg == "cohort" 
@@ -434,12 +440,10 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
                 # Compute sub aggregate ATT
                 trt = treatment_times[i]
                 temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.treated_time .== trt), :]
-                X = convert(Vector{Float64}, temp[!, colname])
-                Y = convert(Vector{Float64}, temp.diff)
-                att_ri_cohort[j,i] = mean(Y[X .== 1]) - mean(Y[X .== 0])
+                att_ri_cohort[j,i] = compute_ri_sub_agg_att(temp, weighting, colname)
                 
                 # Compute weights
-                if weighting == "default"
+                if in(weighting, ["att", "both"])
                     matched_states = Set(temp[(temp[!, colname] .== 1) .&& (temp.treated_time .== trt), :].state)
                     count = sum((data.time_dmG5fpM .>= trt) .&& in.(data.state_71X9yTx, Ref(matched_states)))
                     W[i] = count
@@ -447,9 +451,9 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
             end
 
             # Compute aggregate ATT
-            if weighting == "default"
+            if in(weighting, ["att", "both"])
                 W ./= sum(W)
-            elseif weighting == "equal"
+            elseif in(weighting, ["none", "diff"])
                 W .= (1 / length(treatment_times))
             end 
             att_ri[j] = dot(W, att_ri_cohort[j,:])
@@ -469,21 +473,19 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
                 temp_treated_silos = unique(temp[temp[!, colname] .== 1, "state"])
                 temp_treated_silo = shuffle(temp_treated_silos)[1]
                 temp = temp[(temp.state .== temp_treated_silo) .|| (temp[!, colname] .== 0), :]
-                X = convert(Vector{Float64}, temp[!, colname])
-                Y = convert(Vector{Float64}, temp.diff)
-                att_ri_state[j,i] = mean(Y[X .== 1]) - mean(Y[X .== 0])
+                att_ri_state[j,i] = compute_ri_sub_agg_att(temp, weighting, colname)
 
                 # Compute weights
-                if weighting == "default"
+                if in(weighting, ["att", "both"])
                     count = sum((data.time_dmG5fpM .>= trt) .&& (data.state_71X9yTx .== temp_treated_silo))
                     W[i] = count
                 end 
             end
 
             # Compute aggregate ATT
-            if weighting == "default"
+            if in(weighting, ["att", "both"])
                 W ./= sum(W)
-            elseif weighting == "equal"
+            elseif in(weighting, ["none", "diff"])
                 W .= (1 / length(treatment_states))
             end 
             att_ri[j] = dot(W, att_ri_state[j,:])
@@ -502,12 +504,10 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
                 t = unique_diffs[i,"t"]
                 r1 = unique_diffs[i,"r1"]
                 temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.t .== t) .&& (diff_df.r1 .== r1), :]
-                X = convert(Vector{Float64}, temp[!, colname])
-                Y = convert(Vector{Float64}, temp.diff)
-                att_ri_simple[j,i] = mean(Y[X .== 1]) - mean(Y[X .== 0])
+                att_ri_simple[j,i] = compute_ri_sub_agg_att(temp, weighting, colname)
 
                 # Compute weights
-                if weighting == "default"
+                if in(weighting, ["att", "both"])
                     matched_states = Set(temp[(temp[!, colname] .== 1) .&& (temp.t .== t) .&& (temp.r1 .== r1), :].state)
                     count = sum((data.time_dmG5fpM .== t) .&& in.(data.state_71X9yTx, Ref(matched_states)))
                     W[i] = count
@@ -515,9 +515,9 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
             end
 
             # Compute aggregate ATT
-            if weighting == "default"
+            if in(weighting, ["att", "both"])
                 W ./= sum(W)
-            elseif weighting == "equal"
+            elseif in(weighting, ["none", "diff"])
                 W .= (1 / nrow(unique_diffs))
             end 
             att_ri[j] = dot(W, att_ri_simple[j,:])
@@ -539,21 +539,19 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
                 temp_treated_silos = unique(temp[temp[!, colname] .== 1, "state"])
                 temp_treated_silo = shuffle(temp_treated_silos)[1]
                 temp = temp[(temp.state .== temp_treated_silo) .|| (temp[!, colname] .== 0), :]
-                X = convert(Vector{Float64}, temp[!, colname])
-                Y = convert(Vector{Float64}, temp.diff)
-                att_ri_sgt[j,i] = mean(Y[X .== 1]) - mean(Y[X .== 0])
+                att_ri_sgt[j,i] = compute_ri_sub_agg_att(temp, weighting, colname)
                 
                 # Compute weights
-                if weighting == "default"
+                if in(weighting, ["att", "both"])
                     count = sum((data.time_dmG5fpM .== t) .&& (data.state_71X9yTx .== temp_treated_silo))
                     W[i] = count
                 end 
             end
 
             # Compute aggregate ATT
-            if weighting == "default"
+            if in(weighting, ["att", "both"])
                 W ./= sum(W)
-            elseif weighting == "equal"
+            elseif in(weighting, ["none", "diff"])
                 W .= (1 / nrow(unique_diffs))
             end 
             att_ri[j] = dot(W, att_ri_sgt[j,:])
@@ -565,9 +563,7 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
         for j in 1:nperm - 1
             colname = Symbol("treat_random_$(j)")
             temp = diff_df[diff_df[!, colname] .!= -1,:]
-            X = convert(Vector{Float64}, temp[!, colname])
-            Y = convert(Vector{Float64}, temp.diff)
-            att_ri[j] = mean(Y[X .== 1]) - mean(Y[X .== 0])
+            att_ri[j] = compute_ri_sub_agg_att(temp, weighting, colname)
             if verbose && j % 100 == 0
                 println("Completed $(j) of $(nperm - 1) permutations")
             end
@@ -635,16 +631,16 @@ function compute_weights(results::DataFrame, data::DataFrame,
                          treated_states::Vector{<:AbstractString},
                          treatment_times::Vector{Date})
     
-    if weighting == "equal"
+    if in(weighting, ["none", "diff"])
         results.weights .= nothing
-    elseif weighting == "default"
-        results = compute_default_weights(results, data, agg, treated_states, treatment_times)
+    elseif in(weighting, ["both", "att"])
+        results = compute_att_level_weights(results, data, agg, treated_states, treatment_times)
     end 
 
     return results
 end 
 
-function compute_default_weights(results::DataFrame, data::DataFrame, agg::AbstractString,
+function compute_att_level_weights(results::DataFrame, data::DataFrame, agg::AbstractString,
                                  treated_states::Vector{<:AbstractString},
                                  treatment_times::Vector{Date})
 
@@ -697,4 +693,19 @@ function compute_default_weights(results::DataFrame, data::DataFrame, agg::Abstr
     end 
 
     return results
+end 
+
+function compute_ri_sub_agg_att(temp::DataFrame, weighting::AbstractString, colname::Symbol)
+
+    X = convert(Vector{Float64}, temp[!, colname])
+    Y = convert(Vector{Float64}, temp.diff)
+    if in(weighting, ["both", "diff"])
+        W_diff  = convert(Vector{Float64}, temp.n)
+        W_diff ./= sum(W_diff)
+        sub_agg_att = (dot(W_diff[X .== 1], Y[X .== 1]) / sum(W_diff[X .== 1])) - 
+                             (dot(W_diff[X .== 0], Y[X .== 0]) / sum(W_diff[X .== 0]))
+    elseif in(weighting, ["att", "none"])
+        sub_agg_att = mean(Y[X .== 1]) - mean(Y[X .== 0])
+    end 
+    return sub_agg_att
 end 
