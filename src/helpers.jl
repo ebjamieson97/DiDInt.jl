@@ -29,7 +29,7 @@ function parse_string_to_date_didint(date::Union{Vector{<:AbstractString}, Abstr
         # Other formats are handled natively by Dates      
         output = Date(date, lowercase(date_format))
     else
-        error("Er01: Please specify a date_format listed here: $possible_formats.")
+        error("Please specify a date_format listed here $possible_formats.")
     end 
 
     return output 
@@ -49,7 +49,7 @@ function parse_freq(period_str::AbstractString)
     elseif period_type in ["year", "years", "yearly"]
         return Year(value)
     else
-        error("Er02: Unsupported period type: $period_type, try day(s), week(s), month(s), or year(s).")
+        error("Unsupported period type $period_type, try day(s), week(s), month(s), or year(s).")
     end
 end
 
@@ -61,9 +61,9 @@ function compute_jknife_se(X::Matrix{<:Number}, Y::Vector{<:Number}, original_at
     end 
     jknife_beta = Vector{Float64}(undef, n)
     ncolx = size(X,2)
-    treat_count = sum(X[:,ncolx] .== 1)
+    treat_count = sum(X[:,ncolx] .!= 0)
     control_count = sum(X[:,ncolx] .== 0)
-    if (treat_count < 2 || control_count < 2) & ncolx > 1
+    if (treat_count < 2 || control_count < 2) & (ncolx > 1)
         return missing
     end
     for i in eachindex(Y)
@@ -371,7 +371,9 @@ end
 
 function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::DataFrame,
                                     agg::AbstractString, verbose::Bool, seed::Number,
-                                    data::DataFrame, weighting::AbstractString)
+                                    data::DataFrame, weighting::AbstractString,
+                                    use_pre_controls::Bool;
+                                    dummy_cols::Union{Vector{Symbol}, Nothing} = nothing)
     
     # PART ONE: CREATE RANDOMIZED TREATMENT COLUMNS
     original_treated = unique(diff_df[diff_df.treat .== 1, [:state, :treated_time]])
@@ -416,7 +418,16 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
                 if trt_time == assigned_tt[state]
                     new_treat[row_idx] = 1
                 else 
-                    new_treat[row_idx] = -1
+                    if use_pre_controls
+                        t = diff_df[row_idx, :t]
+                        if t < assigned_tt[state]
+                            new_treat[row_idx] = 0
+                        else
+                            new_treat[row_idx] = -1
+                        end 
+                    else
+                        new_treat[row_idx] = -1
+                    end
                 end
             else
                 new_treat[row_idx] = 0
@@ -427,9 +438,14 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
     end
 
     # PART TWO: COMPUTE RI_ATT & RI_ATT_SUBGROUP
-    if length(unique(treatment_times)) == 1
+    # Force agg arguments for common adoption to either none or state
+    if (length(unique(treatment_times)) == 1 && in(agg, ["cohort", "gt"])) || (length(unique(treatment_times)) == 1 && length(unique(treatment_states)) == 1)
         agg = "none"
     end 
+    if length(unique(treatment_times)) == 1 && agg == "sgt"
+        agg = "state"
+    end 
+
     att_ri = Vector{Float64}(undef, nperm - 1)
     if agg == "cohort" 
         att_ri_cohort = Matrix{Float64}(undef, nperm - 1, length(treatment_times))
@@ -444,9 +460,7 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
                 
                 # Compute weights
                 if in(weighting, ["att", "both"])
-                    matched_states = Set(temp[(temp[!, colname] .== 1) .&& (temp.treated_time .== trt), :].state)
-                    count = sum((data.time_dmG5fpM .>= trt) .&& in.(data.state_71X9yTx, Ref(matched_states)))
-                    W[i] = count
+                    W[i] = sum(temp[temp[!, colname] .== 1, "n_t"])
                 end 
             end
 
@@ -454,7 +468,7 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
             if in(weighting, ["att", "both"])
                 W ./= sum(W)
             elseif in(weighting, ["none", "diff"])
-                W .= (1 / length(treatment_times))
+                W .= (1 / length(W))
             end 
             att_ri[j] = dot(W, att_ri_cohort[j,:])
             if verbose && j % 100 == 0
@@ -477,8 +491,7 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
 
                 # Compute weights
                 if in(weighting, ["att", "both"])
-                    count = sum((data.time_dmG5fpM .>= trt) .&& (data.state_71X9yTx .== temp_treated_silo))
-                    W[i] = count
+                    W[i] = sum(temp[temp[!, colname] .== 1, "n_t"])
                 end 
             end
 
@@ -508,9 +521,7 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
 
                 # Compute weights
                 if in(weighting, ["att", "both"])
-                    matched_states = Set(temp[(temp[!, colname] .== 1) .&& (temp.t .== t) .&& (temp.r1 .== r1), :].state)
-                    count = sum((data.time_dmG5fpM .== t) .&& in.(data.state_71X9yTx, Ref(matched_states)))
-                    W[i] = count
+                    W[i] = sum(temp[temp[!, colname] .== 1, "n_t"])
                 end 
             end
 
@@ -543,8 +554,7 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
                 
                 # Compute weights
                 if in(weighting, ["att", "both"])
-                    count = sum((data.time_dmG5fpM .== t) .&& (data.state_71X9yTx .== temp_treated_silo))
-                    W[i] = count
+                    W[i] = sum(temp[temp[!, colname] .== 1, "n_t"])
                 end 
             end
 
@@ -568,6 +578,44 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
                 println("Completed $(j) of $(nperm - 1) permutations")
             end
         end 
+    elseif agg == "time"
+        times = results.periods_post_treat
+        att_ri_time = Matrix{Float64}(undef, nperm - 1, length(times))
+        for j in 1:nperm - 1
+            colname = Symbol("treat_random_$(j)")
+            W = Vector{Float64}(undef, length(times))
+            for i in eachindex(times)
+                # Compute sub aggregate ATT
+                t = times[i]
+                temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.time_since_treatment .== t), :]
+                Y = convert(Vector{Float64}, temp.diff)
+                X = design_matrix_time_agg(temp, dummy_cols)
+                if in(weighting, ["diff", "both"]) 
+                    W_diff = convert(Vector{Float64}, temp.n)
+                    W_diff ./= sum(W_diff) 
+                    sw = sqrt.(W_diff)           
+                    X = X .* sw            
+                    Y = Y .* sw
+                end 
+                att_ri_time[j,i] = (X \ Y)[end]
+                
+                # Compute weights
+                if in(weighting, ["att", "both"])
+                    W[i] = sum(temp[temp[!, colname] .== 1, "n_t"])
+                end 
+            end
+
+            # Compute aggregate ATT
+            if in(weighting, ["att", "both"])
+                W ./= sum(W)
+            elseif in(weighting, ["none", "diff"])
+                W .= (1 / length(times))
+            end 
+            att_ri[j] = dot(W, att_ri_time[j,:])
+            if verbose && j % 100 == 0
+                println("Completed $(j) of $(nperm - 1) permutations")
+            end
+        end
     end
 
     # PART THREE: COMPUTE P-VALS BASED ON RI_ATT & RI_ATT_SUBGROUP
@@ -598,6 +646,11 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
             sub_agg_att = results[(results.t .== t) .&& (results.gvar .== gvar) .&& (results.state .== state), "att_sgt"][1]
             results[(results.t .== t) .&& (results.gvar .== gvar) .&& (results.state .== state), "ri_pval_att_sgt"] .= (sum(abs.(att_ri_sgt[:,i]) .> abs(sub_agg_att))) / length(att_ri_sgt[:,i])
         end 
+    elseif agg == "time"
+        for i in eachindex(times)
+            sub_agg_att = results[results.periods_post_treat .== times[i], "att_t"][1]
+            results[results.periods_post_treat .== times[i], "ri_pval_att_t"] .= (sum(abs.(att_ri_time[:,i]) .> abs(sub_agg_att))) / length(att_ri_time[:,i])
+        end 
     end
     results.ri_pval_agg_att[1] = ((sum(abs.(att_ri) .> abs(agg_att))) / length(att_ri))
     results.nperm[1] = nperm - 1
@@ -626,75 +679,6 @@ function custom_sort_order(s)
     end 
 end 
 
-function compute_weights(results::DataFrame, data::DataFrame,
-                         agg::AbstractString, weighting::AbstractString,
-                         treated_states::Vector{<:AbstractString},
-                         treatment_times::Vector{Date})
-    
-    if in(weighting, ["none", "diff"])
-        results.weights .= nothing
-    elseif in(weighting, ["both", "att"])
-        results = compute_att_level_weights(results, data, agg, treated_states, treatment_times)
-    end 
-
-    return results
-end 
-
-function compute_att_level_weights(results::DataFrame, data::DataFrame, agg::AbstractString,
-                                 treated_states::Vector{<:AbstractString},
-                                 treatment_times::Vector{Date})
-
-    if agg == "sgt"
-        states = results.state
-        times = results.t
-        sgt_weights = Vector{Float64}(undef, length(states))
-        for (i, s) in enumerate(states)
-            t = times[i]
-            count = sum((data.time_dmG5fpM .== t) .&& (data.state_71X9yTx .== s))
-            sgt_weights[i] = count
-        end 
-        sgt_weights ./= sum(sgt_weights)
-        results.weights = sgt_weights
-    elseif agg == "state"
-        states = results.state
-        state_weights = Vector{Float64}(undef, length(states))
-        for (i, s) in enumerate(states)
-            idx = findall(x -> x == s, treated_states)
-            matched_time = treatment_times[idx]
-            count = sum((data.time_dmG5fpM .>= matched_time) .&& (data.state_71X9yTx .== s))
-            state_weights[i] = count
-        end 
-        state_weights ./= sum(state_weights)
-        results.weights = state_weights
-    elseif agg == "cohort"
-        unique_treatment_times = results.treatment_time
-        unique_treatment_weights = Vector{Float64}(undef, length(unique_treatment_times))
-        for (i, t) in enumerate(unique_treatment_times)
-            idxs = findall(x -> x == t, treatment_times)
-            matched_states = Set(treated_states[idxs])
-            count = sum((data.time_dmG5fpM .>= t) .&& in.(data.state_71X9yTx, Ref(matched_states)))
-            unique_treatment_weights[i] = count
-        end
-        unique_treatment_weights ./= sum(unique_treatment_weights)
-        results.weights = unique_treatment_weights
-    elseif agg == "simple"
-        gt_weights = Vector{Float64}(undef, nrow(results))
-        gvars = results.gvar
-        times = results.time
-        for (i, g) in enumerate(gvars)
-            t = times[i]
-            idxs = findall(x -> x == g, treatment_times)
-            matched_states = Set(treated_states[idxs])
-            count = sum((data.time_dmG5fpM .== t) .&& in.(data.state_71X9yTx, Ref(matched_states)))
-            gt_weights[i] = count
-        end 
-        gt_weights ./= sum(gt_weights)
-        results.weights = gt_weights
-    end 
-
-    return results
-end 
-
 function compute_ri_sub_agg_att(temp::DataFrame, weighting::AbstractString, colname::Symbol)
 
     X = convert(Vector{Float64}, temp[!, colname])
@@ -709,3 +693,46 @@ function compute_ri_sub_agg_att(temp::DataFrame, weighting::AbstractString, coln
     end 
     return sub_agg_att
 end 
+
+function scale_weights_final(results::DataFrame, weighting::AbstractString)
+    
+    # Scale weights and convert to either Float64 or Nothing
+    if weighting in ["att", "both"]
+        results.weights ./= sum(results.weights)
+        results.weights = convert(Vector{Float64}, results.weights)
+    elseif weighting in ["diff", "none"]
+        results.weights = convert(Vector{Nothing}, results.weights)
+    end
+    return results
+end 
+
+function design_matrix_time_agg(temp::DataFrame, dummy_cols::Vector{Symbol})
+    
+    # Only keep the dummy columns where at least one row is 1
+    active = [c for c in dummy_cols if any(temp[!, c] .== 1)]
+
+    # Drop the first of the kept dummies to avoid perfect multicollinearity with intercept
+    dummies_keep = length(active) ≤ 1 ? Symbol[] : active[2:end]
+
+    # If no kept dummy, just omit 
+    if isempty(dummies_keep)
+        X = hcat(ones(nrow(temp)), temp.treat)               
+    else 
+        X = hcat(ones(nrow(temp)), Matrix(temp[:, dummies_keep]), temp.treat)            
+    end
+    return X
+end
+
+function check_dates_by_state(df::DataFrame; state::Symbol = :state_71X9yTx,
+                              time::Symbol = :time_71X9yTx)
+
+    states  = unique(df[!, state])
+    ref  = Set(df[df[!, state] .== states[1], time])   
+    for s in states[2:end]                                
+        if Set(df[df[!, state] .== s, time]) ≠ ref
+            @warn "State $s has a different set of time values than $(states[1]). Consider setting options for \n'freq', 'start_time', and 'end_time'."
+            return false
+        end
+    end
+    return true
+end

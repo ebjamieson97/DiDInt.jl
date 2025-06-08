@@ -74,39 +74,66 @@ function didint(outcome::AbstractString,
                 date_format::Union{AbstractString, Nothing} = nothing,
                 covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing} = nothing,
                 ccc::AbstractString = "int", agg::AbstractString = "cohort",
-                weighting::AbstractString = "att",
+                weighting::AbstractString = "both",
                 ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
                 freq::Union{AbstractString, Nothing} = nothing,
                 freq_multiplier::Number = 1,
-                autoadjust::Bool = false,
+                start_date::Union{AbstractString, Number, Date, Nothing} = nothing,
+                end_date::Union{AbstractString, Number, Date, Nothing} = nothing,
                 nperm::Number = 1001,
                 verbose::Bool = true,
-                seed::Number = rand(1:1000000))
+                seed::Number = rand(1:1000000),
+                use_pre_controls::Bool = true)
+
+
+    # Do checks for start_date and end_date
+    if !isnothing(start_date)
+        if eltype(start_date) <: Number
+            if length(string(start_date)) != 4
+                error("If 'start_date' is a number it must be 4 digits long.")
+            else 
+                start_date = Date(start_date)
+            end 
+        elseif start_date isa String 
+            start_date = parse_string_to_date_didint(start_date, date_format)
+        end 
+    end
+    if !isnothing(end_date)
+        if eltype(end_date) <: Number
+            if length(string(end_date)) != 4
+                error("If 'end_date' is a number it must be 4 digits long.")
+            else 
+                end_date = Date(end_date)
+            end 
+        elseif end_date isa String
+            end_date = parse_string_to_date_didint(end_date, date_format)
+        end 
+    end            
 
     # Check that seed is set correctly
     seed = Int(round(seed))
     if seed <= 0 
-        error("Er47: 'seed' must be a positive integer.")
+        error("'seed' must be a positive integer.")
     end 
 
     # Check that agg args are passed correctly
     agg = lowercase(agg)
-    agg_options = ["cohort", "state", "simple", "none", "sgt"]
+    agg_options = ["cohort", "state", "simple", "none", "sgt", "time"]
     if !(agg in agg_options)
-        error("Er03: 'agg' must be one of: $(agg_options)")
+        error("'agg' must be one of $(agg_options)")
     end 
 
     # Check that weighting arg is passed correctly
     weighting = lowercase(weighting)
     weighting_options = ["both", "none", "att", "diff"]
     if !(weighting in weighting_options) 
-        error("Er99: 'weighting must be one of: $(weighting_options)'")
+        error("'weighting' must be one of $(weighting_options)")
     end
 
     # Round nperm
     nperm = Int(round(nperm))
     if nperm < 1
-        error("Er04: 'nperm' must be a positive integer > 0.")
+        error("'nperm' must be a positive integer > 0.")
     end 
 
     # Create data copy
@@ -115,13 +142,13 @@ function didint(outcome::AbstractString,
     # Ensure the specified outcome, state, and time columns exist in the data
     missing_cols = [col for col in [outcome, state, time] if !(col in names(data_copy))]
     if !isempty(missing_cols)
-        error("Er05: The following columns could not be found in the data: ", join(missing_cols, ", "))
+        error("The following columns could not be found in the data ", join(missing_cols, ", "))
     end
 
     # Ensure the outcome variable is a numeric variable and create outcome column
     outcome_nonmissingtype = Base.nonmissingtype(eltype(data_copy[!, outcome]))
     if !(outcome_nonmissingtype <: Number)
-        error("Er06: Column '$outcome' must be numeric, but found $(eltype(data_copy[!, outcome]))")
+        error("Column '$outcome' must be numeric, but found $(eltype(data_copy[!, outcome]))")
     end
     data_copy.outcome_71X9yTx = data_copy[!, outcome]
 
@@ -132,7 +159,7 @@ function didint(outcome::AbstractString,
         end
         missing_cov = [col for col in covariates if !(col in names(data_copy))]
         if !isempty(missing_cov)
-            error("Er07$(join(missing_cov, ", ")): The preceding covariates could not be found in the data.")
+            error("$(join(missing_cov, ", ")) The preceding covariates could not be found in the data.")
         end
     end
 
@@ -143,7 +170,7 @@ function didint(outcome::AbstractString,
             date_format = "yyyy"
         end 
         if lowercase(date_format) != "yyyy"
-            error("Er08: If 'treatment_times' are entered as a number, the 'date_format' must be \"yyyy\".")
+            error("If 'treatment_times' are entered as a number, the 'date_format' must be \"yyyy\".")
         end 
         if treatment_times isa AbstractVector
             unique_lengths = unique(length.(string.(treatment_times)))
@@ -153,10 +180,10 @@ function didint(outcome::AbstractString,
         end
         if length(unique_lengths) == 1
             if unique_lengths[1] != 4
-                error("Er09: If 'treatment_times' are entered as numbers, they must all be 4 digits long in 'yyyy' date_format.")
+                error("If 'treatment_times' are entered as numbers, they must all be 4 digits long in 'yyyy' date_format.")
             end 
         else
-            error("Er10: Detected multiple unique date_formats in 'treatment_times'.")
+            error("Detected multiple unique date_formats in 'treatment_times'.")
         end
         treatment_times = Date.(treatment_times)
     else 
@@ -167,13 +194,13 @@ function didint(outcome::AbstractString,
         time_column_numeric = true
         unique_time_lengths = unique(length.(string.(data_copy[!, time])))
         if length(unique_time_lengths) > 1 || unique_time_lengths[1] != 4
-            error("Er11: The 'time' column was found to be numeric but consisting of values of ambiguous date formatting (i.e. not consistent 4 digit entries.)")
+            error("The 'time' column was found to be numeric but consisting of values of ambiguous date formatting (i.e. not consistent 4 digit entries.)")
         end 
     else
         time_column_numeric = false
     end 
     if xor(time_column_numeric, treatment_times_numeric)
-        error("Er12: If 'time' column is numeric or 'treatment_times' is numeric, then both must be numeric.")
+        error("If 'time' column is numeric or 'treatment_times' is numeric, then both must be numeric.")
     end 
 
     # Detect if staggered adoption or common treatment time, also check if treatment_times is a vector
@@ -187,7 +214,7 @@ function didint(outcome::AbstractString,
         common_adoption = false
         staggered_adoption = true
     else
-        error("Er13: 'treatment_times' must have at least one entry.")
+        error("'treatment_times' must have at least one entry.")
     end
     
     # Make sure treated_states and control_states are vectors, make sure control_states exist
@@ -201,7 +228,7 @@ function didint(outcome::AbstractString,
     end 
     missing_control_states = isempty(control_states)
     if missing_control_states
-        error("Er14: No control states were found.")
+        error("No control states were found.")
     end 
 
     # Ensure the state column is a string or number and that the nonmissingtype(treated_states) == nonmissingtype(state column)
@@ -209,30 +236,30 @@ function didint(outcome::AbstractString,
     state_column_type = Base.nonmissingtype(eltype(data_copy[!, state]))
     if !((treated_states_type <: Number && state_column_type <: Number) || 
         (treated_states_type <: AbstractString && state_column_type <: AbstractString))
-        error("Er15: 'treated_states' and the 'state' column ($state) must both be numerical or both be strings. \n 
-Instead, found: 'treated_states': $treated_states_type and '$state': $state_column_type.")
+        error("'treated_states' and the 'state' column ($state) must both be numerical or both be strings. \n 
+Instead, found 'treated_states' $treated_states_type and '$state' $state_column_type.")
     end
     data_copy.state_71X9yTx = data_copy[!, state]
     missing_states = setdiff(treated_states, data_copy.state_71X9yTx)
     if !isempty(missing_states)
-        error("Er16: The following 'treated_states' could not be found in the data: $(missing_states). \n 
-Only found the following states: $(unique(data_copy.state_71X9yTx))")
+        error("The following 'treated_states' could not be found in the data $(missing_states). \n 
+Only found the following states $(unique(data_copy.state_71X9yTx))")
     end
 
     # Check for missing/nothing/NaN values
     if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy.outcome_71X9yTx)
-        error("Er17: Found missing values in the 'outcome' column.")
+        error("Found missing values in the 'outcome' column.")
     end 
     if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, state])
-        error("Er18: Found missing values in the 'state' column.")
+        error("Found missing values in the 'state' column.")
     end 
     if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, time])
-        error("Er19: Found missing values in the 'time' column.")
+        error("Found missing values in the 'time' column.")
     end 
     if !(isnothing(covariates))
         for cov in covariates
             if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, cov])
-                error("Er20: Found missing values in the '$cov' column.")
+                error("Found missing values in the '$cov' column.")
             end 
         end
     end
@@ -245,30 +272,30 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
     if nonmissing_time_type <: AbstractString || nonmissing_time_type <:Number
         dates_str = string.(data_copy[!, time])
         if length(unique(length.(dates_str))) != 1
-            error("Er21: Dates in the 'time' column are not all the same length!")
+            error("Dates in the 'time' column are not all the same length!")
         end
         if unique(length.(dates_str))[1] != 4 && nonmissing_time_type <:Number
-            error("Er22: If 'time' is a numeric column, dates must be 4 digits long.")
+            error("If 'time' is a numeric column, dates must be 4 digits long.")
         end
     end
     
     if nonmissing_time_type <: AbstractString
         ref_positions, ref_sep_types = get_sep_info(dates_str[1])
         if length(ref_sep_types) > 1
-            error("Er23: First date in 'time' column uses mixed separators: - and /.")
+            error("First date in 'time' column uses mixed separators: - and /.")
         end
         i = 0
         for date in dates_str
             i += 1
             sep_positions, sep_types = get_sep_info(date)
             if sep_positions != ref_positions
-                error("Er24 $i: Separator positions differs from the first date in 'time' column in date entry $i: $date")
+                error("$i Separator positions differs from the first date in 'time' column in date entry $i $date")
             end
             if length(sep_types) > 1
-                error("Er25 $i: Date found in 'time' column (entry $i) which uses multiple separator types: $date")
+                error("$i Date found in 'time' column (entry $i) which uses multiple separator types $date")
             end
             if sep_types != ref_sep_types
-                error("Er26 $i: Date found in 'time' column (entry $i: $date) which uses different separator types from first date.")
+                error("$i Date found in 'time' column (entry $i $date) which uses different separator types from first date.")
             end
         end
     end
@@ -277,20 +304,20 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
     if eltype(treatment_times) <: AbstractString
         ref_positions, ref_sep_types = get_sep_info(treatment_times[1])
         if length(ref_sep_types) > 1
-            error("Er27: First date in 'treatment_times' uses mixed separators: - and /.")
+            error("First date in 'treatment_times' uses mixed separators - and /.")
         end
         i = 0
         for date in treatment_times
             i += 1
             sep_positions, sep_types = get_sep_info(date)
             if sep_positions != ref_positions
-                error("Er28 $i: Separator positions differs from the first date in 'treatment_times' in the $i'th entry: $date")
+                error("$i Separator positions differs from the first date in 'treatment_times' in the $i'th entry $date")
             end
             if length(sep_types) > 1
-                error("Er29 $i: Date found in 'treatment_times' column (entry $i) which uses multiple separator types: $date")
+                error("$i Date found in 'treatment_times' column (entry $i) which uses multiple separator types $date")
             end
             if sep_types != ref_sep_types
-                error("Er30 $i: Date found in 'treatment_times' (entry $i: $date) which uses different separator types from first date.")
+                error("$i Date found in 'treatment_times' (entry $i $date) which uses different separator types from first date.")
             end
         end
     end
@@ -300,15 +327,15 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
         treatment_times_length = length(treatment_times[1])
         date_column_entry_length = length(data_copy[!, time][1])
         if treatment_times_length != date_column_entry_length
-            error("Er31: 'treatment_times' and 'time' column were found to have date strings with different lengths.")
+            error("'treatment_times' and 'time' column were found to have date strings with different lengths.")
         end
         sep_positions_time, sep_types_time = get_sep_info(data_copy[!, time][1])
         sep_positions_treatment, sep_types_treatment = get_sep_info(treatment_times[1])
         if sep_positions_time != sep_positions_treatment
-            error("Er32: 'treatment_times' and 'time' column have different separator positions.")
+            error("'treatment_times' and 'time' column have different separator positions.")
         end
         if sep_types_time != sep_types_treatment
-            error("Er33: 'treatment_times' and 'time' column have different separator types.")
+            error("'treatment_times' and 'time' column have different separator types.")
         end
     end
 
@@ -317,13 +344,13 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
         data_copy.time_71X9yTx = Date.(data_copy[!, time])
     elseif nonmissing_time_type <: AbstractString
         if isnothing(date_format)
-            error("Er34: If 'time' column is a String column, must specify the 'date_format' argument.")
+            error("If 'time' column is a String column, must specify the 'date_format' argument.")
         end 
         data_copy.time_71X9yTx = parse_string_to_date_didint.(data_copy[!, time], date_format)
     elseif nonmissing_time_type <: Date
         data_copy.time_71X9yTx = data_copy[!, time]
     else
-        error("Er35: 'time' column must be a String, Date, or Number column.")
+        error("'time' column must be a String, Date, or Number column.")
     end
 
     # Convert treatment_times to Date objects
@@ -336,30 +363,27 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
         freq = lowercase(freq)
         freq_options = ["week", "weeks", "weekly", "day", "days", "daily", "month", "months", "monthly", "year", "years", "yearly"]
         if !(freq in freq_options)
-            error("Er36: 'freq' was not set to a valid option. Try one of: $freq_options")
+            error("'freq' was not set to a valid option. Try one of $freq_options")
         end 
     end 
 
     # In the case of staggered adoption, check if date matching procedure should be done
     if staggered_adoption
-        if !isnothing(freq) || autoadjust
-            start_date = minimum(data_copy.time_71X9yTx)
-            end_date   = maximum(data_copy.time_71X9yTx)
-            if autoadjust
-                intervals = diff([start_date; sort(treatment_times); end_date])
-                days_int = map(Dates.value, intervals)
-                med = median(days_int)
-                mea = mean(days_int)
-                date_interval = Day(round(mean([med, mea])))
-                match_to_these_dates = collect(start_date:date_interval:end_date)
-            elseif !isnothing(freq)
-                period = parse_freq(string(freq_multiplier)*" "*freq)
-                match_to_these_dates = collect(start_date:period:end_date)
+        if !isnothing(freq)
+            if isnothing(start_date) 
+                start_date = minimum(data_copy.time_71X9yTx)
             end
+            if isnothing(end_date)
+                end_date   = maximum(data_copy.time_71X9yTx)
+            end
+            period = parse_freq(string(freq_multiplier)*" "*freq)
+            match_to_these_dates = collect(start_date:period:end_date)
             matched = [match_date(t, match_to_these_dates, treatment_times) for t in data_copy.time_71X9yTx]
             data_copy.time_71X9yTx = matched
             matched_treatment = [match_treatment_time(t, match_to_these_dates) for t in treatment_times]
             treatment_times = matched_treatment
+        else
+            should_you_specify_freq_and_start_end_dates = check_dates_by_state(data_copy)
         end 
     end
 
@@ -368,20 +392,20 @@ Only found the following states: $(unique(data_copy.state_71X9yTx))")
         all_times = sort(unique(data_copy.time_71X9yTx))
         missing_dates = setdiff(treatment_times, all_times)
         if !isempty(missing_dates)
-            error("Er37: The following 'treatment_times' are not found in the data: $(missing_dates). \n 
-Try defining an argument for 'freq' or set 'autoadjust = true' in order to activate the date matching procedure.")
+            error("The following 'treatment_times' are not found in the data $(missing_dates). \n 
+Try defining an argument for 'freq' (and 'start_date' and 'end_date') in order to activate the date matching procedure.")
         end
     end 
 
     # Do some checks for treatment_times vector length
     if common_adoption && length(treatment_times) != length(treated_states)
         if length(treatment_times) != 1
-            error("Er38: 'treatment_times' should either be the same length as the 'treated_states' vector or of length 1.")
+            error("'treatment_times' should either be the same length as the 'treated_states' vector or of length 1.")
         else
             treatment_times = fill(treatment_times[1], length(treated_states))
         end 
     elseif staggered_adoption && length(treatment_times) != length(treated_states)
-        error("Er39: 'treatment_times' should be the same length as the 'treated_states'.")
+        error("'treatment_times' should be the same length as the 'treated_states'.")
     end 
 
     # Also need to make sure that start_times < treatment_times < end_times is true for each state
@@ -392,10 +416,10 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
         earliest = minimum(state_dates)
         latest = maximum(state_dates)
         if !(earliest < treat_time)
-            error("Er40 $s: For state $s, the earliest date ($earliest) is not strictly less than the treatment time ($treat_time).")
+            error("$s For state $s, the earliest date ($earliest) is not strictly less than the treatment time ($treat_time).")
         end
         if !(treat_time <= latest)
-            error("Er41 $s: For state $s, the treatment time ($treat_time) is greater than the last date ($latest).")
+            error("$s For state $s, the treatment time ($treat_time) is greater than the last date ($latest).")
         end
     end
 
@@ -405,7 +429,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
     check_states = unique(data_copy.state_71X9yTx)
     missing_states = setdiff(treated_states, check_states)
     if !isempty(missing_states)
-        error("Er88: The states: $missing_states could not be found among the states in the data: $check_states")
+        error("The states $missing_states could not be found among the states in the data $check_states")
     end
 
     # Once any date matching procedures are done, convert time_71X9yTx back to a string for processing in `categorical()`
@@ -417,7 +441,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
     elseif staggered_adoption
         data_copy.time_71X9yTx = string.(data_copy.time_71X9yTx)
     else
-        error("Er42: A non-common or non-staggered adoption scenario was discovered!?")
+        error("A non-common or non-staggered adoption scenario was discovered!?")
     end 
 
     # Create dummies for each time and state interaction 
@@ -435,7 +459,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                     if !isnothing(ref) && haskey(ref, cov)
                         refcat = ref[cov]
                         if !(refcat in unique_categories)
-                            error("Er43 $refcat $cov: Reference category '$refcat' not found in column '$cov'.")
+                            error("$refcat $cov Reference category '$refcat' not found in column '$cov'.")
                         end
                     else
                         refcat = first(unique_categories)
@@ -455,13 +479,13 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                         push!(covariates_to_include, string(newcol))
                     end
                 else    
-                    error("Er44 $cov: Only detected one unique factor ($unique_categories) in factor variable $cov.")
+                    error("$cov Only detected one unique factor ($unique_categories) in factor variable $cov.")
                 end 
             elseif cov_type <:Number
                 data_copy[!, cov] = convert(Vector{Float64}, data_copy[!, cov])
                 push!(covariates_to_include, cov)
             else
-                error("Er45 $cov: column was found to be ($cov_type) neither of type Number, AbstractString, nor CategoricalValue!")
+                error("$cov column was found to be ($cov_type) neither of type Number, AbstractString, nor CategoricalValue!")
             end
         end
     end 
@@ -493,7 +517,7 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             formula_str *= " + $c"
         end
     else 
-        error("Er46: 'ccc' must be set to one of: \"int\", \"time\", \"state\", \"add\", or \"hom\".")
+        error("'ccc' must be set to one of \"int\", \"time\", \"state\", \"add\", or \"hom\".")
     end 
     formula_str *= ")"
     formula_expr = Meta.parse(formula_str)
@@ -502,42 +526,58 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
     # Call GC.gc() before running big FixedEffectsModels regression
     GC.gc()
 
+    # Determine if corner case 
+    cornercase = false
+    if common_adoption && length(unique(data_copy.state_71X9yTx)) == 2
+        cornercase = true
+    end 
+
     # Run FixedEffectsModels regression (stage 1)
-    stage1 = reg(data_copy, formula; contrasts = Dict(:state_71X9yTx => DummyCoding(), :time_71X9yTx => DummyCoding()),
-                 save = false)
+    if cornercase
+        stage1 = reg(data_copy, formula, Vcov.robust(), contrasts = Dict(:state_71X9yTx => DummyCoding(), :time_71X9yTx => DummyCoding()),
+                     save = false)
+    else
+        stage1 = reg(data_copy, formula, contrasts = Dict(:state_71X9yTx => DummyCoding(), :time_71X9yTx => DummyCoding()),
+                     save = false)
+    end
 
     # Recover lambdas
     state_time = split.(replace.(coefnames(stage1), "state_time: " => ""), "0IQR7q6Wei7Ejp4e")
+    coefs = coef(stage1)
+    if ccc == "hom"
+        state_time = state_time[1:end - length(covariates_to_include)]
+        coefs = coefs[1:end - length(covariates_to_include)]
+    end 
     lambda_df = DataFrame(state = first.(state_time), time = last.(state_time))
-    lambda_df.lambda = coef(stage1)
-    cornercase = false
-    if common_adoption && length(unique(lambda_df.state)) == 2
-        lambda_df.stderr = stderror(stage1)
+    lambda_df.lambda = coefs
+    if cornercase
+        vcov_matrix = vcov(stage1)[1:4,1:4]
 
-        cornercase = true
-        treat_post_var = (lambda_df[lambda_df.state .== treated_states[1] .&& lambda_df.time .== "post", "stderr"][1])^2
-        treat_pre_var = (lambda_df[lambda_df.state .== treated_states[1] .&& lambda_df.time .== "pre", "stderr"][1])^2
-        control_post_var = (lambda_df[lambda_df.state .!= treated_states[1] .&& lambda_df.time .== "post", "stderr"][1])^2
-        control_pre_var = (lambda_df[lambda_df.state .!= treated_states[1] .&& lambda_df.time .== "pre", "stderr"][1])^2
+        treat_post_var = vcov_matrix[1,1]
+        treat_pre_var = vcov_matrix[2,2]
+        treat_cov = vcov_matrix[2,1]
+        control_post_var = vcov_matrix[3,3]
+        control_pre_var = vcov_matrix[4,4]
+        control_cov = vcov_matrix[4,3]
 
-        # using fixedeffectsmodels means the off-diagonal entries of the covariance matrix will all be zero
-        # so when covariates are included this estimate will not be accurate! fix later
-        cornercase_se = sqrt(treat_post_var + treat_pre_var + control_post_var + control_pre_var)
+        cornercase_se = sqrt(treat_post_var + treat_pre_var + control_post_var + control_pre_var - 2*treat_cov - 2*control_cov)
 
-        select!(lambda_df, Not(:stderr))
     end 
 
     # Compute diff for each treated state
     unique_states = unique(lambda_df.state)
     diff_df = DataFrame(state = String[], treated_time = Date[],
                         t = Date[], r1 = Date[], diff = Float64[],
-                        treat = Int[], n = Int[])
+                        treat = Int[], n = Int[], n_t = Int[])
 
     # Parse the treatment_times and the time column to dates for staggered adoption
     if staggered_adoption
         lambda_df.time = Date.(lambda_df.time)
         time_to_index = Dict(time => idx for (idx, time) in enumerate(all_times))
     end    
+
+    # Define a function that initializes the results dataframe columns
+    init_column() = Vector{Union{Missing, Float64}}(missing, nrows)
 
     # Compute ATT
     if staggered_adoption
@@ -552,15 +592,17 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             years = temp.time
             diffs = Vector{Float64}(undef, nrow(temp))
             n = Vector{Int}(undef, nrow(temp))
+            n_t = Vector{Int}(undef, nrow(temp))
             for j in eachindex(diffs)
                 diffs[j] = temp[j, "lambda"][1] - lambda_r1
                 post = temp[j, "time"]
                 pre = one_period_prior_treatment
                 n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([post, pre])) .&& (data_copy.state_71X9yTx .== treated_states[i]))
+                n_t[j] = sum((data_copy.time_dmG5fpM .== post) .&& (data_copy.state_71X9yTx .== treated_states[i]))
             end 
             temp_df = DataFrame(state = treated_states[i], treated_time = treatment_times[i],
                                 t = years, r1 = one_period_prior_treatment, diff = diffs, treat = 1,
-                                n = n)
+                                n = n, n_t = n_t)
             diff_df = vcat(diff_df, temp_df) 
         end
         
@@ -571,59 +613,89 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             temp = lambda_df[(lambda_df.state .== control_states[i]), :]
             diffs = Vector{Float64}(undef, nrow(unique_diffs))
             n = Vector{Int}(undef, nrow(unique_diffs))
+            n_t = Vector{Int}(undef, nrow(unique_diffs))
             for j in 1:nrow(unique_diffs)
                 t = unique_diffs[j,"t"]
                 r1 = unique_diffs[j,"r1"]
                 diffs[j] = temp[temp.time .== t, "lambda"][1] - temp[temp.time .== r1, "lambda"][1]
                 n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([t, r1])) .&& (data_copy.state_71X9yTx .== control_states[i]))
+                n_t[j] = sum((data_copy.time_dmG5fpM .== t) .&& (data_copy.state_71X9yTx .== control_states[i]))
             end 
             trtd_time = [all_times[findfirst(==(t), all_times) + 1] for t in unique_diffs.r1]
             temp_df = DataFrame(state = control_states[i], treated_time = trtd_time,
                                 t = unique_diffs.t, r1 = unique_diffs.r1, diff = diffs, treat = 0,
-                                n = n)
+                                n = n, n_t = n_t)
             diff_df = vcat(diff_df, temp_df)
         end
 
         # Compute diffs for randomization inference
         ri_diff_df = DataFrame(state = String[], treated_time = Date[],
                                t = Date[], r1 = Date[], diff = Float64[],
-                               treat = Int[], n = Int[])
+                               treat = Int[], n = Int[], n_t = Int[])
         for i in eachindex(treated_states)
             ri_diffs = unique(select(diff_df[(diff_df.state .!= treated_states[i]) .& (diff_df.treated_time .!= treatment_times[i]), :], :t, :r1))
             temp = lambda_df[(lambda_df.state .== treated_states[i]), :]
             diffs = Vector{Float64}(undef, nrow(ri_diffs))
             n = Vector{Int}(undef, nrow(ri_diffs))
+            n_t = Vector{Int}(undef, nrow(ri_diffs))
             for j in 1:nrow(ri_diffs)
                 t = unique_diffs[j,"t"]
                 r1 = unique_diffs[j,"r1"]
                 diffs[j] = temp[temp.time .== t, "lambda"][1] - temp[temp.time .== r1, "lambda"][1]
                 n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([t, r1])) .&& (data_copy.state_71X9yTx .== treated_states[i]))
+                n_t[j] = sum((data_copy.time_dmG5fpM .== t) .&& (data_copy.state_71X9yTx .== treated_states[i]))
             end
             trtd_time = [all_times[findfirst(==(t), all_times) + 1] for t in ri_diffs.r1]
             temp_df = DataFrame(state = treated_states[i], treated_time = trtd_time,
                                 t = ri_diffs.t, r1 = ri_diffs.r1, diff = diffs, treat = -1,
-                                n = n)
+                                n = n, n_t = n_t)
             ri_diff_df = vcat(ri_diff_df, temp_df)
         end
-        
+
+        # Add the periods since treatment column to ri_diff_df and diff_df
+        ordered_t = sort(unique(diff_df.t))        
+        t_period = indexin(diff_df.t, ordered_t)             
+        treated_time_period = indexin(diff_df.treated_time, ordered_t) 
+        diff_df.time_since_treatment = t_period .- treated_time_period 
+        t_period = indexin(ri_diff_df.t, ordered_t)             
+        treated_time_period = indexin(ri_diff_df.treated_time, ordered_t) 
+        ri_diff_df.time_since_treatment = t_period .- treated_time_period 
+
+        # If use_pre_controls is true (default) re-structure the ri_diff_df and diff_df
+        # to add the pre-treatment periods from treated silos as control contrasts
+        if use_pre_controls
+            for (t,s) in zip(treatment_times, treated_states)
+                ri_diff_df[ri_diff_df.state .== s .&& ri_diff_df.t .< t, "treat"] .= 0
+            end
+            diff_df = vcat(diff_df, ri_diff_df[ri_diff_df.treat .== 0,:])
+            ri_diff_df = ri_diff_df[ri_diff_df.treat .== -1,:]
+        end 
+
         # Run final regression to compute ATT based on weighting/aggregation method
         if agg == "cohort"
-            # Run final regression -- weighted by treatment time
+
+            # Define nrows and vector to iterate through for sub aggregate ATTs
             unique_treatment_times = sort!(unique(diff_df.treated_time))
-            results = DataFrame(treatment_time = Vector{Date}(undef, length(unique_treatment_times)),
-                                att_cohort = Vector{Float64}(undef, length(unique_treatment_times)),
-                                agg_att = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
-                                se_agg_att = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
-                                pval_agg_att = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
-                                jknifese_agg_att = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
-                                jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
-                                ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
-                                nperm = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)),
-                                se_att_cohort = Vector{Float64}(undef, length(unique_treatment_times)),
-                                pval_att_cohort = Vector{Float64}(undef, length(unique_treatment_times)),
-                                jknifese_att_cohort = Vector{Union{Missing, Float64}}(undef, length(unique_treatment_times)),
-                                jknifepval_att_cohort = Vector{Union{Missing, Float64}}(undef, length(unique_treatment_times)),
-                                ri_pval_att_cohort = Vector{Union{Missing, Float64}}(missing, length(unique_treatment_times)))
+            nrows = length(unique_treatment_times)
+
+            # Create results df
+            results = DataFrame(treatment_time = Vector{Date}(undef, nrows),
+                                att_cohort = init_column(),
+                                agg_att = init_column(),
+                                se_agg_att = init_column(),
+                                pval_agg_att = init_column(),
+                                jknifese_agg_att = init_column(),
+                                jknifepval_agg_att = init_column(),
+                                ri_pval_agg_att = init_column(),
+                                nperm = init_column(),
+                                se_att_cohort = init_column(),
+                                pval_att_cohort = init_column(),
+                                jknifese_att_cohort = init_column(),
+                                jknifepval_att_cohort = init_column(),
+                                ri_pval_att_cohort = init_column(),
+                                weights = Vector{Union{Nothing, Float64}}(nothing, nrows))
+
+            # Compute the sub aggregate ATTs
             for i in eachindex(unique_treatment_times)
                 trt = unique_treatment_times[i]
                 temp = diff_df[diff_df.treated_time .== trt, :]
@@ -642,8 +714,13 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 results.pval_att_cohort[i] = result_dict["pval_att"] 
                 results.jknifese_att_cohort[i] = result_dict["beta_hat_se_jknife"]
                 results.jknifepval_att_cohort[i] = result_dict["pval_att_jknife"]
+                if weighting in ["att", "both"]
+                    results.weights[i] = sum(temp[temp.treat .== 1, "n_t"])
+                end
             end
-            results = compute_weights(results, data_copy, "cohort", weighting, treated_states, treatment_times)
+
+            # Compute aggregate ATT and return results
+            results = scale_weights_final(results, weighting)
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_cohort)
             W = results.weights
@@ -654,26 +731,34 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
             results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "cohort",
-                                                      verbose, seed, data_copy, weighting)
+                                                      verbose, seed, data_copy, weighting, use_pre_controls)
             return results
+
         elseif agg == "simple"
-            # Run final regression -- weighted by time and r - 1 groups
-            results = DataFrame(r1 = Vector{Date}(undef, nrow(unique_diffs)),
-                                time = Vector{Date}(undef, nrow(unique_diffs)),
-                                gvar = Vector{Date}(undef, nrow(unique_diffs)),
-                                att_gt = Vector{Float64}(undef, nrow(unique_diffs)),
-                                agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
-                                se_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
-                                pval_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
-                                jknifese_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
-                                jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
-                                ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
-                                nperm = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)),
-                                se_att_gt = Vector{Float64}(undef, nrow(unique_diffs)),
-                                pval_att_gt = Vector{Float64}(undef, nrow(unique_diffs)),
-                                jknifese_att_gt = Vector{Float64}(undef, nrow(unique_diffs)),
-                                jknifepval_att_gt = Vector{Float64}(undef, nrow(unique_diffs)),
-                                ri_pval_att_gt = Vector{Union{Missing, Float64}}(missing, nrow(unique_diffs)))
+
+            # Define nrows and object to iterate through for sub aggregate ATTs (unique_diffs)
+            nrows = nrow(unique_diffs)
+
+            # Create results df
+            results = DataFrame(r1 = Vector{Date}(undef, nrows),
+                                time = Vector{Date}(undef, nrows),
+                                gvar = Vector{Date}(undef, nrows),
+                                att_gt = init_column(),
+                                agg_att = init_column(),
+                                se_agg_att = init_column(),
+                                pval_agg_att = init_column(),
+                                jknifese_agg_att = init_column(),
+                                jknifepval_agg_att = init_column(),
+                                ri_pval_agg_att = init_column(),
+                                nperm = init_column(),
+                                se_att_gt = init_column(),
+                                pval_att_gt = init_column(),
+                                jknifese_att_gt = init_column(),
+                                jknifepval_att_gt = init_column(),
+                                ri_pval_att_gt = init_column(),
+                                weights = Vector{Union{Nothing, Float64}}(nothing, nrows))
+            
+            # Compute the sub aggregate ATTs
             for i in 1:nrow(unique_diffs)
                 t = unique_diffs[i,"t"]
                 r1 = unique_diffs[i,"r1"]
@@ -696,10 +781,15 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 results.pval_att_gt[i] = result_dict["pval_att"] 
                 results.jknifese_att_gt[i] = result_dict["beta_hat_se_jknife"]
                 results.jknifepval_att_gt[i] = result_dict["pval_att_jknife"]
+                if weighting in ["att", "both"]
+                    results.weights[i] = sum(temp[temp.treat .== 1, "n_t"])
+                end
             end
+
+            # Sort results dataframe and compute aggregate ATT, return results
             sort!(results, [:time])
             sort!(results, [:r1])
-            results = compute_weights(results, data_copy, "simple", weighting, treated_states, treatment_times)
+            results = scale_weights_final(results, weighting)
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_gt)
             W = results.weights
@@ -710,24 +800,32 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
             results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "simple",
-                                                 verbose, seed, data_copy, weighting)
+                                                 verbose, seed, data_copy, weighting, use_pre_controls)
             return results
+
         elseif agg == "state"
-            # Run final regression -- weighted by state
-            results = DataFrame(state = Vector{String}(undef, length(treated_states)),
-                                att_s = Vector{Float64}(undef, length(treated_states)),
-                                agg_att = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
-                                se_agg_att = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
-                                pval_agg_att = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
-                                jknifese_agg_att = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
-                                jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
-                                ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
-                                nperm = Vector{Union{Missing, Float64}}(missing, length(treated_states)),
-                                se_att_s = Vector{Float64}(undef, length(treated_states)),
-                                pval_att_s = Vector{Float64}(undef, length(treated_states)),
-                                jknifese_att_s = Vector{Float64}(undef, length(treated_states)),
-                                jknifepval_att_s = Vector{Float64}(undef, length(treated_states)),
-                                ri_pval_att_s = Vector{Union{Missing, Float64}}(missing, length(treated_states)))
+
+            # Define nrows and identify object to iterate thru for the sub aggregate ATTs
+            nrows = length(treated_states)
+
+            # Create results df
+            results = DataFrame(state = Vector{String}(undef, nrows),
+                                att_s = init_column(),
+                                agg_att = init_column(),
+                                se_agg_att = init_column(),
+                                pval_agg_att = init_column(),
+                                jknifese_agg_att = init_column(),
+                                jknifepval_agg_att = init_column(),
+                                ri_pval_agg_att = init_column(),
+                                nperm = init_column(),
+                                se_att_s = init_column(),
+                                pval_att_s = init_column(),
+                                jknifese_att_s = init_column(),
+                                jknifepval_att_s = init_column(),
+                                ri_pval_att_s = init_column(),
+                                weights = Vector{Union{Nothing, Float64}}(nothing, nrows))
+
+            # Compute sub aggregate ATTs
             for i in eachindex(treated_states)
                 state = treated_states[i]
                 trt = treatment_times[i]
@@ -749,11 +847,16 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 results.pval_att_s[i] = result_dict["pval_att"] 
                 results.jknifese_att_s[i] = result_dict["beta_hat_se_jknife"]
                 results.jknifepval_att_s[i] = result_dict["pval_att_jknife"]
+                if weighting in ["att", "both"]
+                    results.weights[i] = sum(temp[temp.treat .== 1, "n_t"])
+                end
             end
+
+            # Sort results dataframe and compute aggregate ATT, return results
             results.tuple_state = custom_sort_order.(results.state)
             sort!(results,[order(:tuple_state)])
             select!(results, Not([:tuple_state]))
-            results = compute_weights(results, data_copy, "state", weighting, treated_states, treatment_times)
+            results = scale_weights_final(results, weighting)
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_s)
             W = results.weights
@@ -764,10 +867,12 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
             results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "state",
-                                                 verbose, seed, data_copy, weighting)
+                                                 verbose, seed, data_copy, weighting, use_pre_controls)
             return results
+
         elseif agg == "none"  
-            # Run final regrsesion -- each diff weighted equally
+            
+            # Create results df
             results = DataFrame(agg_att = Vector{Union{Missing, Float64}}(missing, 1),
                                 se_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
                                 pval_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
@@ -775,13 +880,15 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                                 jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
                                 ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
                                 nperm = Vector{Union{Missing, Float64}}(missing, 1))
+            
+            # Compute aggregate ATT, return results
             X = convert(Matrix{Float64}, hcat(ones(nrow(diff_df)), diff_df.treat))
             Y = convert(Vector{Float64}, diff_df.diff)
             if in(weighting, ["diff", "both"])
-                    W = convert(Vector{Float64}, diff_df.n)
-                    W ./= sum(W)
+                W = convert(Vector{Float64}, diff_df.n)
+                W ./= sum(W)
             else
-                    W = fill(nothing, nrow(diff_df))
+                W = fill(nothing, nrow(diff_df))
             end 
             result_dict = final_regression_results(X, Y, W = W)
             results.agg_att[1] = result_dict["beta_hat"]
@@ -790,28 +897,35 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
             results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "none",
-                                                 verbose, seed, data_copy, weighting)
+                                                 verbose, seed, data_copy, weighting, use_pre_controls)
             return results
+
         elseif agg == "sgt"
-            # Run final regrsesion -- each ATT_sgt weighted equally
+            
+            # Compute nrows and define object to iterate thru for the sub aggregate ATTs
             unique_sgt = unique(select(diff_df[diff_df.treat .== 1,:], :state, :t, :treated_time))
-            #treated_states = unique(unique_sgt.state)
-            results = DataFrame(state = Vector{String}(undef, nrow(unique_sgt)),
-                                gvar = Vector{Date}(undef, nrow(unique_sgt)),
-                                t = Vector{Date}(undef, nrow(unique_sgt)),
-                                att_sgt = Vector{Float64}(undef, nrow(unique_sgt)),
-                                agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)),
-                                se_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)),
-                                pval_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)),
-                                jknifese_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)),
-                                jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)),
-                                ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)),
-                                nperm = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)),
-                                se_att_sgt = Vector{Float64}(undef, nrow(unique_sgt)),
-                                pval_att_sgt = Vector{Float64}(undef, nrow(unique_sgt)),
-                                jknifese_att_sgt = Vector{Float64}(undef, nrow(unique_sgt)),
-                                jknifepval_att_sgt = Vector{Float64}(undef, nrow(unique_sgt)),
-                                ri_pval_att_sgt = Vector{Union{Missing, Float64}}(missing, nrow(unique_sgt)))
+            nrows = nrow(unique_sgt)
+
+            # Create results df
+            results = DataFrame(state = Vector{String}(undef, nrows),
+                                gvar = Vector{Date}(undef, nrows),
+                                t = Vector{Date}(undef, nrows),
+                                att_sgt = init_column(),
+                                agg_att = init_column(),
+                                se_agg_att = init_column(),
+                                pval_agg_att = init_column(),
+                                jknifese_agg_att = init_column(),
+                                jknifepval_agg_att = init_column(),
+                                ri_pval_agg_att = init_column(),
+                                nperm = init_column(),
+                                se_att_sgt = init_column(),
+                                pval_att_sgt = init_column(),
+                                jknifese_att_sgt = init_column(),
+                                jknifepval_att_sgt = init_column(),
+                                ri_pval_att_sgt = init_column(),
+                                weights = Vector{Union{Nothing, Float64}}(nothing, nrows))
+            
+            # Compute the sub aggregate ATTs 
             for i in 1:nrow(unique_sgt)
                 state = unique_sgt[i, "state"]
                 gvar = unique_sgt[i, "treated_time"]
@@ -836,8 +950,13 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
                 results.pval_att_sgt[i] = result_dict["pval_att"] 
                 results.jknifese_att_sgt[i] = result_dict["beta_hat_se_jknife"]
                 results.jknifepval_att_sgt[i] = result_dict["pval_att_jknife"]
+                if weighting in ["att", "both"]
+                    results.weights[i] = sum(temp[temp.treat .== 1, "n_t"])
+                end
             end 
-            results = compute_weights(results, data_copy, "sgt", weighting, treated_states, treatment_times)
+
+            # Compute aggregate ATT, return results
+            results = scale_weights_final(results, weighting)
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_sgt)
             W = results.weights
@@ -848,15 +967,95 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
             results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "sgt",
-                                                 verbose, seed, data_copy, weighting)
+                                                 verbose, seed, data_copy, weighting, use_pre_controls)
+            return results
+
+        elseif agg == "time"
+
+            # Compute nrows, define times to iterate thru to get sub aggregate ATTs
+            nrows = length(unique(diff_df.time_since_treatment))
+            times = sort(unique(diff_df.time_since_treatment))
+
+            # Create results df
+            results = DataFrame(periods_post_treat = init_column(),
+                                att_t = init_column(),
+                                agg_att = init_column(),
+                                se_agg_att = init_column(),
+                                pval_agg_att = init_column(),
+                                jknifese_agg_att = init_column(),
+                                jknifepval_agg_att = init_column(),
+                                ri_pval_agg_att = init_column(),
+                                nperm = init_column(),
+                                se_att_t = init_column(),
+                                pval_att_t = init_column(),
+                                jknifese_att_t = init_column(),
+                                jknifepval_att_t = init_column(),
+                                ri_pval_att_t = init_column(),
+                                weights = Vector{Union{Nothing, Float64}}(nothing, nrows))
+
+            # Special procedure for adding time or gvar dummies (yields equivalent results)
+            diff = vcat(diff_df, ri_diff_df)
+            treated_category = categorical(string.(diff.treated_time); ordered = true)
+            levels_tt   = levels(treated_category)         
+            dummy_cols  = Symbol[]                         
+            for i in eachindex(levels_tt) 
+                tt = levels_tt[i]                    
+                colname = Symbol("tt_", i)
+                diff[!, colname] = Int.(treated_category .== tt)
+                push!(dummy_cols, colname)
+            end
+
+            # Compute sub aggregate ATTs
+            for i in eachindex(times)
+                t = times[i]
+                temp = diff[(diff.time_since_treatment .== t) .&& (diff.treat .!= -1), :]
+                X = design_matrix_time_agg(temp, dummy_cols)
+                Y = convert(Vector{Float64}, temp.diff)
+                if in(weighting, ["diff", "both"])
+                    W = convert(Vector{Float64}, temp.n)
+                    W ./= sum(W)
+                else
+                    W = fill(nothing, nrow(temp))
+                end 
+                results.periods_post_treat[i] = t
+                result_dict = final_regression_results(X, Y, W = W)
+                results.att_t[i] = result_dict["beta_hat"]
+                results.se_att_t[i] = result_dict["beta_hat_se"]
+                results.pval_att_t[i] = result_dict["pval_att"] 
+                results.jknifese_att_t[i] = result_dict["beta_hat_se_jknife"]
+                results.jknifepval_att_t[i] = result_dict["pval_att_jknife"]
+                if weighting in ["att", "both"]
+                    results.weights[i] = sum(temp[temp.treat .== 1, "n_t"])
+                end
+            end
+
+            # Compute aggregate ATT, return results
+            results = scale_weights_final(results, weighting)
+            X = ones(nrow(results), 1)
+            Y = convert(Vector{Float64}, results.att_t)
+            W = results.weights
+            result_dict = final_regression_results(X, Y, W = W)
+            results.agg_att[1] = result_dict["beta_hat"]
+            results.se_agg_att[1] = result_dict["beta_hat_se"]
+            results.pval_agg_att[1] = result_dict["pval_att"]
+            results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
+            results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
+            results = randomization_inference_v2(diff, nperm, results, "time",
+                                                 verbose, seed, data_copy, weighting, use_pre_controls,
+                                                 dummy_cols = dummy_cols)
+            return results
         end
+
     elseif common_adoption
+
+        # Create diff matrix
         states = unique(lambda_df.state)
         diff_df = DataFrame(state = states,
                             diff = Vector{Float64}(undef, length(states)),
                             treat = Vector{Float64}(undef, length(states)),
                             treated_time = fill(unique(treatment_times)[1], length(states)),
-                            n = Vector{Float64}(undef, length(states)))
+                            n = Vector{Float64}(undef, length(states)),
+                            n_t = Vector{Float64}(undef, length(states)))
         for i in eachindex(states)
             state = states[i]
             if state in treated_states
@@ -868,36 +1067,109 @@ Try defining an argument for 'freq' or set 'autoadjust = true' in order to activ
             diff_df.diff[i] = diff
             diff_df.treat[i] = trt
             diff_df.n[i] = sum(data_copy.state_71X9yTx .== state)
+            diff_df.n_t[i] = sum((data_copy.state_71X9yTx .== state) .&& (data_copy.time_71X9yTx .== "post"))
         end 
-        results = DataFrame(agg_att = Vector{Union{Missing, Float64}}(missing, 1),
-                            se_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
-                            pval_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
-                            jknifese_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
-                            jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
-                            ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
-                            nperm = Vector{Union{Missing, Float64}}(missing, 1))
-        X = convert(Matrix{Float64}, hcat(ones(nrow(diff_df)), diff_df.treat))
-        Y = convert(Vector{Float64}, diff_df.diff)
-        if in(weighting, ["diff", "both"])
-            W = convert(Vector{Float64}, diff_df.n)
-            W ./= sum(W)
-        else
-            W = fill(nothing, nrow(diff_df))
-        end 
-        result_dict = final_regression_results(X, Y, W = W)
-        results.agg_att[1] = result_dict["beta_hat"]
-        if cornercase
-            results.se_agg_att[1] = cornercase_se
-        else
-            results.se_agg_att[1] = result_dict["beta_hat_se"]
-        end 
-        results.pval_agg_att[1] = result_dict["pval_att"]
-        results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
-        results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-        results = randomization_inference_v2(diff_df, nperm, results, agg,
-                                             verbose, seed, data_copy, weighting)
 
-        return results
+        # Compute results
+        if in(agg, ["cohort", "gt", "none"]) || length(treated_states) == 1
+            results = DataFrame(agg_att = Vector{Union{Missing, Float64}}(missing, 1),
+                                se_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
+                                pval_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
+                                jknifese_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
+                                jknifepval_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
+                                ri_pval_agg_att = Vector{Union{Missing, Float64}}(missing, 1),
+                                nperm = Vector{Union{Missing, Float64}}(missing, 1))
+            X = convert(Matrix{Float64}, hcat(ones(nrow(diff_df)), diff_df.treat))
+            Y = convert(Vector{Float64}, diff_df.diff)
+            if in(weighting, ["diff", "both"])
+                W = convert(Vector{Float64}, diff_df.n)
+                W ./= sum(W)
+            else
+                W = fill(nothing, nrow(diff_df))
+            end 
+            result_dict = final_regression_results(X, Y, W = W)
+            results.agg_att[1] = result_dict["beta_hat"]
+            if cornercase
+                results.se_agg_att[1] = cornercase_se
+            else
+                results.se_agg_att[1] = result_dict["beta_hat_se"]
+            end 
+            results.pval_agg_att[1] = result_dict["pval_att"]
+            results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
+            results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
+            results = randomization_inference_v2(diff_df, nperm, results, agg,
+                                                 verbose, seed, data_copy, weighting,
+                                                 use_pre_controls)
+
+            return results
+        elseif in(agg, ["state", "sgt"])
+
+            # Define nrows and identify object to iterate thru for the sub aggregate ATTs
+            nrows = length(treated_states)
+
+            # Create results df
+            results = DataFrame(state = Vector{String}(undef, nrows),
+                                att_s = init_column(),
+                                agg_att = init_column(),
+                                se_agg_att = init_column(),
+                                pval_agg_att = init_column(),
+                                jknifese_agg_att = init_column(),
+                                jknifepval_agg_att = init_column(),
+                                ri_pval_agg_att = init_column(),
+                                nperm = init_column(),
+                                se_att_s = init_column(),
+                                pval_att_s = init_column(),
+                                jknifese_att_s = init_column(),
+                                jknifepval_att_s = init_column(),
+                                ri_pval_att_s = init_column(),
+                                weights = Vector{Union{Nothing, Float64}}(nothing, nrows))
+
+            # Compute sub aggregate ATTs
+            for i in eachindex(treated_states)
+                state = treated_states[i]
+                trt = treatment_times[i]
+                temp_treated = diff_df[diff_df.state .== state, :]
+                temp_control = diff_df[(diff_df.treat .== 0) .&& (diff_df.treated_time .== trt), :]
+                temp = vcat(temp_control, temp_treated)
+                X = convert(Matrix{Float64}, hcat(ones(nrow(temp)), temp.treat))
+                Y = convert(Vector{Float64}, temp.diff)
+                if in(weighting, ["diff", "both"])
+                    W = convert(Vector{Float64}, temp.n)
+                    W ./= sum(W)
+                else
+                    W = fill(nothing, nrow(temp))
+                end 
+                results.state[i] = state
+                result_dict = final_regression_results(X, Y, W = W)
+                results.att_s[i] = result_dict["beta_hat"]
+                results.se_att_s[i] = result_dict["beta_hat_se"]
+                results.pval_att_s[i] = result_dict["pval_att"] 
+                results.jknifese_att_s[i] = result_dict["beta_hat_se_jknife"]
+                results.jknifepval_att_s[i] = result_dict["pval_att_jknife"]
+                if weighting in ["att", "both"]
+                    results.weights[i] = sum(temp[temp.treat .== 1, "n_t"])
+                end
+            end
+
+            # Sort results dataframe and compute aggregate ATT, return results
+            results.tuple_state = custom_sort_order.(results.state)
+            sort!(results,[order(:tuple_state)])
+            select!(results, Not([:tuple_state]))
+            results = scale_weights_final(results, weighting)
+            X = ones(nrow(results), 1)
+            Y = convert(Vector{Float64}, results.att_s)
+            W = results.weights
+            result_dict = final_regression_results(X, Y, W = W)
+            results.agg_att[1] = result_dict["beta_hat"]
+            results.se_agg_att[1] = result_dict["beta_hat_se"]
+            results.pval_agg_att[1] = result_dict["pval_att"]
+            results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
+            results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
+            results = randomization_inference_v2(diff_df, nperm, results, "state",
+                                                 verbose, seed, data_copy, weighting, use_pre_controls)
+            return results
+
+        end 
     end 
 
 
