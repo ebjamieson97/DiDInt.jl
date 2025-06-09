@@ -83,7 +83,7 @@ function didint(outcome::AbstractString,
                 nperm::Number = 1001,
                 verbose::Bool = true,
                 seed::Number = rand(1:1000000),
-                use_pre_controls::Bool = true)
+                use_pre_controls::Bool = false)
 
 
     # Do checks for start_date and end_date
