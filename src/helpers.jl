@@ -589,7 +589,7 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
                 t = times[i]
                 temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.time_since_treatment .== t), :]
                 Y = convert(Vector{Float64}, temp.diff)
-                X = design_matrix_time_agg(temp, dummy_cols)
+                X = design_matrix_time_agg(temp, dummy_cols, colname)
                 if in(weighting, ["diff", "both"]) 
                     W_diff = convert(Vector{Float64}, temp.n)
                     W_diff ./= sum(W_diff) 
@@ -706,7 +706,7 @@ function scale_weights_final(results::DataFrame, weighting::AbstractString)
     return results
 end 
 
-function design_matrix_time_agg(temp::DataFrame, dummy_cols::Vector{Symbol})
+function design_matrix_time_agg(temp::DataFrame, dummy_cols::Vector{Symbol}, treat_col::Symbol)
     
     # Only keep the dummy columns where at least one row is 1
     active = [c for c in dummy_cols if any(temp[!, c] .== 1)]
@@ -716,9 +716,9 @@ function design_matrix_time_agg(temp::DataFrame, dummy_cols::Vector{Symbol})
 
     # If no kept dummy, just omit 
     if isempty(dummies_keep)
-        X = hcat(ones(nrow(temp)), temp.treat)               
+        X = hcat(ones(nrow(temp)), temp[:, treat_col])               
     else 
-        X = hcat(ones(nrow(temp)), Matrix(temp[:, dummies_keep]), temp.treat)            
+        X = hcat(ones(nrow(temp)), Matrix(temp[:, dummies_keep]), temp[:, treat_col])            
     end
     return X
 end

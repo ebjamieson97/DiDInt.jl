@@ -1009,7 +1009,7 @@ Try defining an argument for 'freq' (and 'start_date' and 'end_date') in order t
             for i in eachindex(times)
                 t = times[i]
                 temp = diff[(diff.time_since_treatment .== t) .&& (diff.treat .!= -1), :]
-                X = design_matrix_time_agg(temp, dummy_cols)
+                X = design_matrix_time_agg(temp, dummy_cols, Symbol("treat"))
                 Y = convert(Vector{Float64}, temp.diff)
                 if in(weighting, ["diff", "both"])
                     W = convert(Vector{Float64}, temp.n)
