@@ -196,6 +196,7 @@ function didint(outcome::Union{AbstractString, Symbol},
 
     # Ensure that treatment_times, if a number, are all 4 digit entries
     if Base.nonmissingtype(eltype(treatment_times)) <: Number
+        treatment_times = round.(Int, treatment_times)
         treatment_times_numeric = true
         if isnothing(date_format) 
             date_format = "yyyy"
