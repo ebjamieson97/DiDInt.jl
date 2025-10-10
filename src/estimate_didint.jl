@@ -65,15 +65,17 @@ in `treated_times`, and so on.
 A DataFrame of results including the estimate of the ATT as well as standard errors and p-values.
 
 """
-function didint(outcome::AbstractString,
-                state::AbstractString,
-                time::AbstractString,
-                data::DataFrame,
-                treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number},
-                treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date};
+function didint(outcome::Union{AbstractString, Symbol},
+                state::Union{AbstractString, Symbol},
+                time::Union{AbstractString, Symbol},
+                data::DataFrame;
+                gvar::Union{AbstractString, Symbol, Nothing} = nothing,
+                treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
+                treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing,
                 date_format::Union{AbstractString, Nothing} = nothing,
                 covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing} = nothing,
-                ccc::AbstractString = "int", agg::AbstractString = "cohort",
+                ccc::AbstractString = "int",
+                agg::AbstractString = "cohort",
                 weighting::AbstractString = "both",
                 ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
                 freq::Union{AbstractString, Nothing} = nothing,
@@ -85,6 +87,35 @@ function didint(outcome::AbstractString,
                 seed::Number = rand(1:1000000),
                 use_pre_controls::Bool = false)
 
+    # Turn outcome, state, time, and gvar to strings if they were inputted as symbols
+    if typeof(outcome) <: Symbol
+        outcome = string(outcome)
+    end 
+    if typeof(state) <: Symbol
+        state = string(state)
+    end
+    if typeof(time) <: Symbol
+        time = string(time)
+    end
+    if typeof(gvar) <: Symbol
+        gvar = string(gvar)
+    end
+
+    # Determine if the gvar method or the treatment_times & treated_states method
+    # is being used
+    if isnothing(gvar)
+        if isnothing(treatment_times) || isnothing(treated_states)
+            error("If 'gvar' is not specified, then 'treatment_times' and 'treated_states' must be specified!")
+        end
+    else
+        if !isnothing(treatment_times) || !isnothing(treated_states)
+            error("If 'gvar' is specified, do not specify the 'treatment_times' and 'treated_states'!")
+        end
+        mask = .!ismissing.(data[!, gvar]) .&& data[!, gvar] .!= 0 .&& data[!, gvar] .!= "0" .&& data[!, gvar] .!= "0.0"
+        filtered = unique(data[mask, [state, gvar]])
+        treated_states = filtered[!, state]
+        treatment_times = filtered[!, gvar]
+    end
 
     # Do checks for start_date and end_date
     if !isnothing(start_date)
@@ -164,7 +195,7 @@ function didint(outcome::AbstractString,
     end
 
     # Ensure that treatment_times, if a number, are all 4 digit entries
-    if eltype(treatment_times) <: Number
+    if Base.nonmissingtype(eltype(treatment_times)) <: Number
         treatment_times_numeric = true
         if isnothing(date_format) 
             date_format = "yyyy"
