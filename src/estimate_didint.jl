@@ -211,7 +211,8 @@ function didint(outcome::Union{AbstractString, Symbol},
         end
         if length(unique_lengths) == 1
             if unique_lengths[1] != 4
-                error("If 'treatment_times' are entered as numbers, they must all be 4 digits long in 'yyyy' date_format.")
+                error("If 'treatment_times' are entered as numbers, they must all be 4 digits long in 'yyyy' date_format.\n
+                'treatment_times' found: $(join(treatment_times, ", "))")
             end 
         else
             error("Detected multiple unique date_formats in 'treatment_times'.")
