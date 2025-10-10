@@ -223,6 +223,7 @@ function didint(outcome::Union{AbstractString, Symbol},
     end
     nonmissing_time_type = Base.nonmissingtype(eltype(data_copy[!, time]))
     if nonmissing_time_type <: Number
+        data_copy[!, time] = round.(Int, data_copy[!, time])
         time_column_numeric = true
         unique_time_lengths = unique(length.(string.(data_copy[!, time])))
         if length(unique_time_lengths) > 1 || unique_time_lengths[1] != 4
