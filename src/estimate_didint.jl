@@ -260,8 +260,14 @@ function didint(outcome::Union{AbstractString, Symbol},
         control_states = [control_states]
     end 
     missing_control_states = isempty(control_states)
-    if missing_control_states
+    if missing_control_states && !use_pre_controls
         error("No control states were found.")
+    elseif missing_control_states && use_pre_controls
+        # If there are at least two unique treatment times, then should still be able to compute
+        # some ATTs if using the notyet treated cells as controls 
+        if !staggered_adoption
+            error("No valid control states were found.")
+        end 
     end 
 
     # Ensure the state column is a string or number and that the nonmissingtype(treated_states) == nonmissingtype(state column)
@@ -702,7 +708,16 @@ Try defining an argument for 'freq' (and 'start_date' and 'end_date') in order t
             end
             diff_df = vcat(diff_df, ri_diff_df[ri_diff_df.treat .== 0,:])
             ri_diff_df = ri_diff_df[ri_diff_df.treat .== -1,:]
-        end 
+            if missing_control_states
+                # If there are no pure control states, do extra processing to remove cells
+                # where there are no treat-control pairs
+                diff_df = subset(
+                            groupby(diff_df, [:t, :r1]),
+                            :treat => x -> any(x .== 1) && any(x .== 0)
+                          )
+                ri_diff_df = semijoin(ri_diff_df, diff_df, on=[:t, :r1])
+            end 
+        end
 
         # Run final regression to compute ATT based on weighting/aggregation method
         if agg == "cohort"
