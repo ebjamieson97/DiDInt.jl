@@ -129,154 +129,6 @@ function final_regression_results(X::Matrix{<:Number}, Y::Vector{<:Number};
     return result_dict
 end 
 
-# This function is deprecated
-function randomization_inference_didint(diff_df::DataFrame, agg::AbstractString,
-                                        original_att::Number, nperm::Integer, control_states::AbstractVector,
-                                        treated_states::AbstractVector, verbose::Bool; warnings::Bool = true)
-
-    # Check total number of possible permutations
-    n = length(control_states) + length(treated_states)
-    k = length(treated_states)
-    n_unique_perms = binomial(n, k)
-    n_unique_perms_minus_one = n_unique_perms - 1
-    if nperm > n_unique_perms
-        if warnings 
-            @warn "'nperm' was set to $nperm but only $n_unique_perms unique permutations exist. \n 
-Setting 'nperm' to $(n_unique_perms_minus_one)."
-        end 
-        nperm = n_unique_perms
-    end 
-    if nperm < 500 && warnings
-        @warn "'nperm' is less than 500!"
-    end 
-
-    # Create df which keeps track of treatment_time randomizations and associated states
-    init = copy(diff_df)
-    init = unique(select(init[init.treat .!= -1,:], :state, :treated_time, :treat ))
-    init.treated_time[init.treat .== 0] .= missing
-    init = unique(init)
-    treated_time = init.treated_time
-    seen = Set{String}()
-    key = join(treated_time, "")
-    push!(seen, key)
-    i = 1
-    while i < nperm
-        new_perm = shuffle(treated_time)
-        key = join(new_perm, "")
-        if !(key in seen)
-            # Add a new column with the randomized permutation
-            init[!, Symbol("treated_time_randomized_$i")] = new_perm
-            push!(seen, key)
-            i += 1
-        end
-    end
-    
-    # Create preallocation vector to store agg_ATT from each randomization
-    ri_att = Vector{Float64}(undef, nperm - 1)
-
-    # Make sure unique_diffs is defined, no need to repeatedly redefine during the loop
-    if agg == "simple"
-        unique_diffs = unique(select(diff_df, :t, :r1))
-    end
-
-    # Loop thru all the treated_time randomizations
-    for j in 1:(nperm - 1)
-        # Construct the ri_df for this iteration
-        colname = Symbol("treated_time_randomized_" * string(j))
-        mask_treated = ismissing.(init[!, colname])
-        new_treated = init[.!mask_treated, colname]
-        new_treated_states = init[.!mask_treated, :state]
-        new_control_states = init[mask_treated, :state]
-        ri_df = filter(row -> row.state in new_control_states, diff_df)
-        ri_df.treat .= 0
-        for i in eachindex(new_treated)
-            state = new_treated_states[i]
-            treatment_time = new_treated[i]
-            rows_to_add = filter(row -> row.state == state && row.treated_time == treatment_time, diff_df)
-            ri_df = vcat(ri_df, rows_to_add)
-            ri_mask = (ri_df.state .== state) .& (ri_df.treated_time .== treatment_time)
-            ri_df.treat[ri_mask] .= 1
-        end
-
-        # Compute agg_att for this ri_df conditional on aggregation method
-        if agg == "cohort"
-            unique_treatment_times = unique(ri_df.treated_time)
-            att_cohort = Vector{Float64}(undef, length(unique_treatment_times))
-            for i in eachindex(unique_treatment_times)
-                trt = unique_treatment_times[i]
-                temp = ri_df[ri_df.treated_time .== trt, :]
-                X = convert(Matrix{Float64},(hcat(ones(nrow(temp)), temp.treat)))
-                Y = convert(Vector{Float64}, temp.diff)
-                β = nothing
-                try
-                    β = (X \ Y) 
-                catch e
-                    @warn "Direct solve failed, using pseudoinverse: $e"
-                    β = pinv(X' * X) * X' * Y
-                end
-                att_cohort[i] = β[2]
-            end
-            ri_att[j] = mean(att_cohort)       
-        elseif agg == "simple"
-            att_simple = Vector{Float64}(undef, nrow(unique_diffs))
-            for i in 1:nrow(unique_diffs)
-                t = unique_diffs[i,"t"]
-                r1 = unique_diffs[i,"r1"]
-                temp = ri_df[(ri_df.t .== t) .& (ri_df.r1 .== r1), :]
-                X = convert(Matrix{Float64},(hcat(ones(nrow(temp)), temp.treat)))
-                Y = convert(Vector{Float64}, temp.diff)
-                β = nothing
-                try
-                    β = (X \ Y) 
-                catch e
-                    @warn "Direct solve failed, using pseudoinverse: $e"
-                    β = pinv(X' * X) * X' * Y
-                end
-                att_simple[i] = β[2]
-            end
-            ri_att[j] = mean(att_simple)
-        elseif agg == "state"
-            att_state = Vector{Float64}(undef, length(new_treated_states))
-            for i in eachindex(new_treated_states)
-                state = new_treated_states[i]
-                trt = new_treated[i]
-                temp_treated = ri_df[ri_df.state .== state, :]
-                temp_control = ri_df[(ri_df.treat .== 0) .& (ri_df.treated_time .== trt), :]
-                temp = vcat(temp_control, temp_treated)
-                X = convert(Matrix{Float64}, hcat(ones(nrow(temp)), temp.treat))
-                Y = convert(Vector{Float64}, temp.diff)
-                β = nothing
-                try
-                    β = (X \ Y) 
-                catch e
-                    @warn "Direct solve failed, using pseudoinverse: $e"
-                    β = pinv(X' * X) * X' * Y
-                end
-                att_state[i] = β[2]
-            end
-            ri_att[j] = mean(att_state)
-        elseif agg == "none"
-            X = convert(Matrix{Float64}, hcat(ones(nrow(ri_df)), ri_df.treat))
-            Y = convert(Vector{Float64}, ri_df.diff)
-            β = nothing
-            try
-                β = (X \ Y) 
-            catch e
-                @warn "Direct solve failed, using pseudoinverse: $e"
-                β = pinv(X' * X) * X' * Y
-            end
-            ri_att[j] = β[2]
-        end 
-
-        if verbose && j % 100 == 0
-            println("Completed $(j) of $(nperm - 1) permutations")
-        end
-    end
-    pval = (sum(abs.(ri_att) .> abs(original_att)) / length(ri_att))
-    result_dict = Dict("ri_pval" => pval, "ri_nperm" => nperm)
-    return result_dict
-end 
-
 function get_sep_info(date::String)
     sep_positions = findall(c -> c in ['/', '-'], date)
     sep_types = unique(date[i] for i in sep_positions)
@@ -315,58 +167,6 @@ function match_treatment_time(t::Date, periods::Vector{Date})
     else
         return periods[i]
     end
-end
-
-# This function is deprecated
-function ri_common_adoption(diff_df::DataFrame, original_att::Number,
-                            nperm::Integer, verbose::Bool)
-
-    # Check total number of possible permutations
-    n = nrow(diff_df)
-    k = nrow(diff_df[diff_df.trt .== 1,:]) 
-    n_unique_perms = binomial(n, k)
-    if nperm > n_unique_perms
-        @warn "'nperm' was set to $nperm but only $n_unique_perms unique permutations exist. \n 
-Setting 'nperm' to $n_unique_perms."
-        nperm = n_unique_perms
-    end 
-    if nperm < 500
-        @warn "'nperm' is less than 500!"
-    end 
-
-    # create nperm unique permutations
-    seen = Set{String}()
-    key = join(diff_df.trt, "")
-    push!(seen, key)
-    i = 1
-    while i < nperm
-        new_perm = shuffle(diff_df.trt)
-        key = join(new_perm, "")
-        if !(key in seen)
-            diff_df[!, Symbol("trt_randomized_$i")] = new_perm
-            push!(seen, key)
-            i += 1
-        end
-    end
-
-    # Run all the regressions with the unique permutations of trt
-    ri_att = Vector{Float64}(undef, nperm-1)
-    for i in 1:nperm - 1
-        X = convert(Matrix{Float64}, hcat(ones(nrow(diff_df)), diff_df[!, Symbol("trt_randomized_$i")]))
-        Y = convert(Vector{Float64}, diff_df.diff)
-        β = nothing
-        try
-            β = (X \ Y) 
-        catch e
-            @warn "Direct solve failed, using pseudoinverse: $e"
-            β = pinv(X' * X) * X' * Y
-        end
-        ri_att[i] = β[2]
-        if verbose && i % 100 == 0
-            println("Completed $(i) of $(nperm - 1) permutations")
-        end
-    end
-    return (sum(abs.(ri_att) .> abs(original_att)) / length(ri_att))
 end
 
 function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::DataFrame,
@@ -735,4 +535,26 @@ function check_dates_by_state(df::DataFrame; state::Symbol = :state_71X9yTx,
         end
     end
     return true
+end
+
+function parse_date_to_string_didint(date, date_format::AbstractString)
+    
+    # This function is basically a wrapper Dates.format()
+    # except this adds a bit more functionality so that it can 
+    # take date strings in Stata formats (e.g. 25dec2020 or 2020m12) and return those as strings
+    if date_format == "ddmonyyyy"
+        month_dict = Dict("01" => "jan", "02" => "feb", "03" => "mar", "04" => "apr", "05" => "may", 
+        "06" => "jun", "07" => "jul", "08" => "aug", "09" => "sep", "10" => "oct", 
+        "11" => "nov", "12" => "dec")
+        vectorized_date_object = split(string(date), "-")
+        return "$(vectorized_date_object[3])$(month_dict[vectorized_date_object[2]])$(vectorized_date_object[1])"        
+    elseif date_format == "yyyym00"
+        month_dict = Dict("01" => "m1", "02" => "m2", "03" => "m3", "04" => "m4", "05" => "m5", 
+        "06" => "m6", "07" => "m7", "08" => "m8", "09" => "m9", "10" => "m10", 
+        "11" => "m11", "12" => "m12")
+        vectorized_date_object = split(string(date), "-")
+        return "$(vectorized_date_object[1])$(month_dict[vectorized_date_object[2]])"
+    else
+        return Dates.format(date, date_format)
+    end 
 end

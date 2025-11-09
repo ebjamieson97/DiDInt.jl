@@ -101,8 +101,7 @@ function didint(outcome::Union{AbstractString, Symbol},
         gvar = string(gvar)
     end
 
-    # Determine if the gvar method or the treatment_times & treated_states method
-    # is being used
+    # Determine if the gvar method or the treatment_times & treated_states method is being used
     if isnothing(gvar)
         if isnothing(treatment_times) || isnothing(treated_states)
             error("If 'gvar' is not specified, then 'treatment_times' and 'treated_states' must be specified!")
@@ -190,7 +189,7 @@ function didint(outcome::Union{AbstractString, Symbol},
         end
         missing_cov = [col for col in covariates if !(col in names(data_copy))]
         if !isempty(missing_cov)
-            error("$(join(missing_cov, ", ")) The preceding covariates could not be found in the data.")
+            error("The following covariates could not be found in the data $(join(missing_cov, ", ")) ")
         end
     end
 
@@ -285,20 +284,30 @@ Instead, found 'treated_states' $treated_states_type and '$state' $state_column_
 Only found the following states $(unique(data_copy.state_71X9yTx))")
     end
 
-    # Check for missing/nothing/NaN values
+    # Check for missing/nothing/NaN values and drop those rows
     if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy.outcome_71X9yTx)
-        error("Found missing values in the 'outcome' column.")
+        @warn "Found missing values in the 'outcome' column. Dropping those rows."
+        data_copy = filter(row -> !(row.outcome_71X9yTx === missing || row.outcome_71X9yTx === nothing || 
+                                    (row.outcome_71X9yTx isa AbstractFloat && isnan(row.outcome_71X9yTx))), data_copy)
     end 
+
     if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, state])
-        error("Found missing values in the 'state' column.")
+        @warn "Found missing values in the 'state' column. Dropping those rows."
+        data_copy = filter(row -> !(row[state] === missing || row[state] === nothing || 
+                                    (row[state] isa AbstractFloat && isnan(row[state]))), data_copy)
     end 
+
     if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, time])
-        error("Found missing values in the 'time' column.")
-    end 
+        @warn "Found missing values in the 'time' column. Dropping those rows."
+        data_copy = filter(row -> !(row[time] === missing || row[time] === nothing || 
+                                    (row[time] isa AbstractFloat && isnan(row[time]))), data_copy)
+    end
     if !(isnothing(covariates))
         for cov in covariates
             if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, cov])
-                error("Found missing values in the '$cov' column.")
+                @warn "Found missing values in the '$cov' column. Dropping those rows."
+                data_copy = filter(row -> !(row[cov] === missing || row[cov] === nothing ||
+                                            (row[cov] isa AbstractFloat && isnan(row[cov]))), data_copy)
             end 
         end
     end
