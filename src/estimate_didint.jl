@@ -267,7 +267,10 @@ function didint(outcome::Union{AbstractString, Symbol},
         if !staggered_adoption
             error("No valid control states were found.")
         end 
-    end 
+    end
+
+    # Check missing values
+    data_copy = check_missing_vals(data_copy, state, time, covariates)
 
     # Ensure the state column is a string or number and that the nonmissingtype(treated_states) == nonmissingtype(state column)
     treated_states_type = Base.nonmissingtype(eltype(treated_states))
@@ -278,42 +281,12 @@ function didint(outcome::Union{AbstractString, Symbol},
 Instead, found 'treated_states' $treated_states_type and '$state' $state_column_type.")
     end
     data_copy.state_71X9yTx = data_copy[!, state]
-    missing_states = setdiff(treated_states, data_copy.state_71X9yTx)
-    if !isempty(missing_states)
-        error("The following 'treated_states' could not be found in the data $(missing_states). \n 
-Only found the following states $(unique(data_copy.state_71X9yTx))")
-    end
 
-    # Check for missing/nothing/NaN values and drop those rows
-    if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy.outcome_71X9yTx)
-        @warn "Found missing values in the 'outcome' column. Dropping those rows."
-        data_copy = filter(row -> !(row.outcome_71X9yTx === missing || row.outcome_71X9yTx === nothing || 
-                                    (row.outcome_71X9yTx isa AbstractFloat && isnan(row.outcome_71X9yTx))), data_copy)
+    # Do some checks after (potentially) dropping rows to make sure that the analysis
+    # is still valid
+    if (length(unique(data_copy.state_71X9yTx)) == 1)
+        error("Not enough non-missing observations.\nFound", length(unique(data_copy.state_71X9yTx)), "states after dropping missing observations.")
     end 
-
-    if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, state])
-        @warn "Found missing values in the 'state' column. Dropping those rows."
-        data_copy = filter(row -> !(row[state] === missing || row[state] === nothing || 
-                                    (row[state] isa AbstractFloat && isnan(row[state]))), data_copy)
-    end 
-
-    if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, time])
-        @warn "Found missing values in the 'time' column. Dropping those rows."
-        data_copy = filter(row -> !(row[time] === missing || row[time] === nothing || 
-                                    (row[time] isa AbstractFloat && isnan(row[time]))), data_copy)
-    end
-    if !(isnothing(covariates))
-        for cov in covariates
-            if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, cov])
-                @warn "Found missing values in the '$cov' column. Dropping those rows."
-                data_copy = filter(row -> !(row[cov] === missing || row[cov] === nothing ||
-                                            (row[cov] isa AbstractFloat && isnan(row[cov]))), data_copy)
-            end 
-        end
-    end
-
-    # Force outcome to float64 to speed up regression (runs faster is <:Number rather than <:Union{Number, Missing})
-    data_copy.outcome_71X9yTx = convert(Vector{Float64}, data_copy.outcome_71X9yTx)
 
     # Check that time column entries are all in the same date format
     nonmissing_time_type = Base.nonmissingtype(eltype(data_copy[!, time]))
@@ -415,24 +388,35 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
         end 
     end 
 
+    # Grab all existing times in the data
+    all_times = sort(unique(data_copy.time_71X9yTx))
+    if isnothing(start_date)
+        start_date = minimum(all_times)
+    end
+    if isnothing(end_date)
+        end_date = maximum(all_times)
+    end
+
+    data_copy = filter(row -> row.time_71X9yTx >= start_date && row.time_71X9yTx <= end_date, data_copy)
+
+    if nrow(data_copy) == 0
+        error("After filtering by 'start_date' and 'end_date' found only 0 rows of data!")
+    end 
+
     # In the case of staggered adoption, check if date matching procedure should be done
     if staggered_adoption
         if !isnothing(freq)
-            if isnothing(start_date) 
-                start_date = minimum(data_copy.time_71X9yTx)
-            end
-            if isnothing(end_date)
-                end_date   = maximum(data_copy.time_71X9yTx)
-            end
             period = parse_freq(string(freq_multiplier)*" "*freq)
-            match_to_these_dates = collect(start_date:period:end_date)
-            matched = [match_date(t, match_to_these_dates, treatment_times) for t in data_copy.time_71X9yTx]
-            data_copy.time_71X9yTx = matched
-            matched_treatment = [match_treatment_time(t, match_to_these_dates) for t in treatment_times]
-            treatment_times = matched_treatment
         else
-            should_you_specify_freq_and_start_end_dates = check_dates_by_state(data_copy)
-        end 
+            period = get_freq_approx(all_times)
+        end
+        match_to_these_dates = collect(start_date:period:end_date)
+        one_past = end_date + period
+        matched = [match_date(t, match_to_these_dates, treatment_times) for t in data_copy.time_71X9yTx]
+        data_copy.time_71X9yTx = matched
+        treated_states = treated_states[(treatment_times .< one_past) .&& (treatment_times .> start_date)]
+        treatment_times = treatment_times[(treatment_times .< one_past) .&& (treatment_times .> start_date)]
+        treatment_times = [match_treatment_time(t, match_to_these_dates) for t in treatment_times]
     end
 
     # Check that treatment_times actually exist in all_times from the data
@@ -444,6 +428,13 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
 Try defining an argument for 'freq' (and 'start_date' and 'end_date') in order to activate the date matching procedure.")
         end
     end 
+
+    # Check that treated states actually exist
+    missing_states = setdiff(treated_states, data_copy.state_71X9yTx)
+    if !isempty(missing_states)
+        error("The following 'treated_states' could not be found in the data $(missing_states). \n 
+Only found the following states $(unique(data_copy.state_71X9yTx))")
+    end
 
     # Do some checks for treatment_times vector length
     if common_adoption && length(treatment_times) != length(treated_states)
@@ -464,10 +455,10 @@ Try defining an argument for 'freq' (and 'start_date' and 'end_date') in order t
         earliest = minimum(state_dates)
         latest = maximum(state_dates)
         if !(earliest < treat_time)
-            error("$s For state $s, the earliest date ($earliest) is not strictly less than the treatment time ($treat_time).")
+            error("For state $s, the earliest date ($earliest) is not strictly less than the treatment time ($treat_time).")
         end
         if !(treat_time <= latest)
-            error("$s For state $s, the treatment time ($treat_time) is greater than the last date ($latest).")
+            error("For state $s, the treatment time ($treat_time) is greater than the last date ($latest).")
         end
     end
 
@@ -486,6 +477,9 @@ Try defining an argument for 'freq' (and 'start_date' and 'end_date') in order t
     if common_adoption
         data_copy.time_71X9yTx = ifelse.(data_copy.time_71X9yTx .>= treatment_times[1], "post", "pre")
         data_copy.time_71X9yTx = string.(data_copy.time_71X9yTx)
+        if length(unique(data_copy.time_71X9yTx)) == 1
+            error("Only", unique(data_copy.time_71X9yTx), "treatment periods were found in the data!")
+        end
     elseif staggered_adoption
         data_copy.time_71X9yTx = string.(data_copy.time_71X9yTx)
     else
@@ -537,6 +531,9 @@ Try defining an argument for 'freq' (and 'start_date' and 'end_date') in order t
             end
         end
     end 
+
+    # Force outcome to float64 to speed up regression (runs faster is <:Number rather than <:Union{Number, Missing})
+    data_copy.outcome_71X9yTx = convert(Vector{Float64}, data_copy.outcome_71X9yTx)
 
     # Construct formula, depending on DID-INT variation
     formula_str = "@formula(outcome_71X9yTx ~ 0 + state_time"

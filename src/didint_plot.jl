@@ -92,9 +92,9 @@ function didint_plot(
    end
    ccc = replace.(lowercase.(ccc), r"\s" => "")
    if ccc == ["all"]
-       ccc = ["hom", "time", "state", "int", "add"]
+       ccc = ["hom", "time", "state", "int", "add", "none"]
    else 
-      ccc_options = ["hom", "time", "state", "int", "add"]
+      ccc_options = ["hom", "time", "state", "int", "add", "none"]
       for c in ccc
           if !(c in ccc_options)
               error("$c is not a valid 'ccc' option. Try any combination of", join(ccc_options, ", "))
@@ -181,6 +181,8 @@ function didint_plot(
         if !isempty(missing_cov)
             error("$(join(missing_cov, ", ")) The preceding covariates could not be found in the data.")
         end
+    else
+        @warn "No covariates specified!"
     end
 
     # Ensure that treatment_times, if a number, are all 4 digit entries
@@ -260,40 +262,11 @@ function didint_plot(
             error("The following 'treated_states' could not be found in the data $(missing_states).\nOnly found the following states $(unique(data_copy.state_71X9yTx))")
         end
 
-        # We can also filter the df down to just the treated_states
-        filter!(row -> row.state_71X9yTx in treated_states, data_copy)
+        data_copy = filter(row -> !ismissing(row.state_71X9yTx) && row.state_71X9yTx in treated_states , data_copy)
     end
 
-    # Check for missing/nothing/NaN values and drop those rows
-    if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy.outcome_71X9yTx)
-        @warn "Found missing values in the 'outcome' column. Dropping those rows."
-        data_copy = filter(row -> !(row.outcome_71X9yTx === missing || row.outcome_71X9yTx === nothing || 
-                                    (row.outcome_71X9yTx isa AbstractFloat && isnan(row.outcome_71X9yTx))), data_copy)
-    end 
-
-    if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, state])
-        @warn "Found missing values in the 'state' column. Dropping those rows."
-        data_copy = filter(row -> !(row[state] === missing || row[state] === nothing || 
-                                    (row[state] isa AbstractFloat && isnan(row[state]))), data_copy)
-    end 
-
-    if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, time])
-        @warn "Found missing values in the 'time' column. Dropping those rows."
-        data_copy = filter(row -> !(row[time] === missing || row[time] === nothing || 
-                                    (row[time] isa AbstractFloat && isnan(row[time]))), data_copy)
-    end
-    if !(isnothing(covariates))
-        for cov in covariates
-            if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, cov])
-                @warn "Found missing values in the '$cov' column. Dropping those rows."
-                data_copy = filter(row -> !(row[cov] === missing || row[cov] === nothing ||
-                                            (row[cov] isa AbstractFloat && isnan(row[cov]))), data_copy)
-            end 
-        end
-    end
-
-    # Force outcome to float64 to speed up regression (runs faster is <:Number rather than <:Union{Number, Missing})
-    data_copy.outcome_71X9yTx = convert(Vector{Float64}, data_copy.outcome_71X9yTx)
+    # Check missing values
+    data_copy = check_missing_vals(data_copy, state, time, covariates)
 
     # Check that time column entries are all in the same date format
     nonmissing_time_type = Base.nonmissingtype(eltype(data_copy[!, time]))
@@ -395,29 +368,38 @@ function didint_plot(
         end 
     end 
 
-    # Do date matching procedure
-    if !isnothing(freq)
-        if isnothing(start_date) 
-            start_date = minimum(data_copy.time_71X9yTx)
-        end
-        if isnothing(end_date)
-            end_date   = maximum(data_copy.time_71X9yTx)
-        end
-        period = parse_freq(string(freq_multiplier)*" "*freq)
-        match_to_these_dates = collect(start_date:period:end_date)
-        matched = [match_date(t, match_to_these_dates, treatment_times) for t in data_copy.time_71X9yTx]
-        data_copy.time_71X9yTx = matched
-        matched_treatment = [match_treatment_time(t, match_to_these_dates) for t in treatment_times]
-        treatment_times = matched_treatment
-    else
-        should_you_specify_freq_and_start_end_dates = check_dates_by_state(data_copy)
+    # Grab all existing times in the data
+    all_times = sort(unique(data_copy.time_71X9yTx))
+    if isnothing(start_date)
+        start_date = minimum(all_times)
+    end
+    if isnothing(end_date)
+        end_date = maximum(all_times)
+    end
+
+    data_copy = filter(row -> row.time_71X9yTx >= start_date && row.time_71X9yTx <= end_date, data_copy)
+
+    if nrow(data_copy) == 0
+        error("After filtering by 'start_date' and 'end_date' found only 0 rows of data!")
     end 
 
-    # Check that treatment_times actually exist in all_times from the data
-    all_times = sort(unique(data_copy.time_71X9yTx))
-    missing_dates = setdiff(treatment_times, all_times)
-    if !isempty(missing_dates)
-        error("The following 'treatment_times' are not found in the data $(missing_dates).\nTry defining an argument for 'freq' (and 'start_date' and 'end_date') in order to activate the date matching procedure.")
+    # Do date matching procedure
+    if !isnothing(freq)
+        period = parse_freq(string(freq_multiplier)*" "*freq)
+    else
+        period = get_freq_approx(all_times)
+    end 
+    match_to_these_dates = collect(start_date:period:end_date)
+    one_past = end_date + period
+    matched = [match_date(t, match_to_these_dates, treatment_times) for t in data_copy.time_71X9yTx]
+    data_copy.time_71X9yTx = matched
+    treated_states = treated_states[(treatment_times .< one_past) .&& (treatment_times .> start_date)]
+    treatment_times = treatment_times[(treatment_times .< one_past) .&& (treatment_times .> start_date)]
+    treatment_times = [match_treatment_time(t, match_to_these_dates) for t in treatment_times]
+    time_to_index = Dict(time => idx for (idx, time) in enumerate(match_to_these_dates))
+    if event == true
+        # Make sure the remaining treated_states are the only ones left in the df
+        data_copy = filter(row -> row.state_71X9yTx in treated_states, data_copy)
     end
 
     # Ensure state column is a string
@@ -474,6 +456,9 @@ function didint_plot(
         end
     end
 
+    # Force outcome to float64 to speed up regression (runs faster is <:Number rather than <:Union{Number, Missing})
+    data_copy.outcome_71X9yTx = convert(Vector{Float64}, data_copy.outcome_71X9yTx)
+
     # And now on to the actual computations
     master_lambda = DataFrame()
     for c in ccc
@@ -501,6 +486,8 @@ function didint_plot(
             for c in covariates_to_include
                 formula_str *= " + $c"
             end
+        elseif c == "none"
+            formula_str *= ""
         end 
         formula_str *= ")"
         formula_expr = Meta.parse(formula_str)
@@ -531,7 +518,7 @@ function didint_plot(
         master_lambda = [master_lambda;lambda_df]
     end
 
-    time_to_index = Dict(time => idx for (idx, time) in enumerate(all_times))
+    # Add periods
     master_lambda.period = [time_to_index[date] for date in master_lambda.time] .- 1
     
     if event == true
@@ -545,6 +532,8 @@ function didint_plot(
                                        missing 
                                        for row in eachrow(master_lambda)] .- 1
         master_lambda.time_since_treatment = master_lambda.period - master_lambda.treat_period
+
+        return master_lambda
 
         if weights == true
             # Add weights
@@ -640,14 +629,34 @@ function didint_plot(
                               :ci_lower => first => :ci_lower,
                               :ci_upper => first => :ci_upper)
 
+    event_plot_data.period_length .= string(period)
+
     return event_plot_data 
 
     elseif event == false
-        # If we're not doing an event plot, then it doesn't actually
-        # matter where we assign the treat_periods, so long as we do
-        treatment_times = unique(treatment_times)
-        master_lambda.treat_period = [date in treatment_times ? time_to_index[date] : missing for date in master_lambda.time] .- 1
+
+        # Switch time column to string labels
         master_lambda.time = parse_date_to_string_didint.(master_lambda.time, date_format)
+
+        # If we're not doing an event plot, then it doesn't actually matter that we
+        # assign the treat_periods to the right states, so long as we do add them
+        treatment_times = unique(treatment_times)
+        treatment_periods = [time_to_index[date] for date in treatment_times] .-1
+
+        # Safely add the treatment_times - not dependent on the current size of master_lambda
+        treat_df = DataFrame(treat_period = treatment_periods)
+        for col in names(master_lambda)
+            if col != "treat_period"
+                treat_df[!, col] .= missing
+            end
+        end
+        max_period = maximum(master_lambda.period)
+        treat_df = filter(row -> row.treat_period <= max_period, treat_df)
+        
+        master_lambda.treat_period .= missing
+        master_lambda = vcat(master_lambda, treat_df)
+        master_lambda.period_length .= string(period)
+        
         return master_lambda
     end
 

@@ -531,10 +531,10 @@ function check_dates_by_state(df::DataFrame; state::Symbol = :state_71X9yTx,
     for s in states[2:end]                                
         if Set(df[df[!, state] .== s, time]) ≠ ref
             @warn "State $s has a different set of time values than $(states[1]). Consider setting options for \n'freq', 'start_time', and 'end_time'."
-            return false
+            return true
         end
     end
-    return true
+    return false
 end
 
 function parse_date_to_string_didint(date, date_format::AbstractString)
@@ -557,4 +557,84 @@ function parse_date_to_string_didint(date, date_format::AbstractString)
     else
         return Dates.format(date, date_format)
     end 
+end
+
+function get_freq_approx(times)
+
+    # find max distances between dates
+    max_dist = maximum(diff(times))
+
+    # Test each period type to find the largest that fits
+    # Start with largest periods and work down
+
+    max_years = ceil(max_dist / Day(365))
+    max_months = ceil(max_dist / Day(28))
+    max_weeks = ceil(max_dist / Day(7))
+    max_days = ceil(max_dist / Day(1))
+
+    # Test years
+    for n in max_years:-1:1
+        period = Year(n)
+        if all(times[i] + period <= times[i+1] for i in 1:length(times)-1)
+            return period
+        end
+    end
+    
+    # Test months
+    for n in max_months:-1:1
+        period = Month(n)
+        if all(times[i] + period <= times[i+1] for i in 1:length(times)-1)
+            return period
+        end
+    end
+    
+    # Test weeks
+    for n in max_weeks:-1:1
+        period = Week(n)
+        if all(times[i] + period <= times[i+1] for i in 1:length(times)-1)
+            return period
+        end
+    end
+    
+    # Test days
+    for n in max_days:-1:1
+        period = Day(n)
+        if all(times[i] + period <= times[i+1] for i in 1:length(times)-1)
+            return period
+        end
+    end
+
+
+end
+
+function check_missing_vals(data_copy, state, time, covariates)
+
+    if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy.outcome_71X9yTx)
+        @warn "Found missing values in the 'outcome' column. Dropping those rows."
+        data_copy = filter(row -> !(row.outcome_71X9yTx === missing || row.outcome_71X9yTx === nothing || 
+                                    (row.outcome_71X9yTx isa AbstractFloat && isnan(row.outcome_71X9yTx))), data_copy)
+    end 
+
+    if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, state])
+        @warn "Found missing values in the 'state' column. Dropping those rows."
+        data_copy = filter(row -> !(row[state] === missing || row[state] === nothing || 
+                                    (row[state] isa AbstractFloat && isnan(row[state]))), data_copy)
+    end 
+
+    if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, time])
+        @warn "Found missing values in the 'time' column. Dropping those rows."
+        data_copy = filter(row -> !(row[time] === missing || row[time] === nothing || 
+                                    (row[time] isa AbstractFloat && isnan(row[time]))), data_copy)
+    end
+    if !(isnothing(covariates))
+        for cov in covariates
+            if any(x -> x === missing || x === nothing || (x isa AbstractFloat && isnan(x)), data_copy[!, cov])
+                @warn "Found missing values in the '$cov' column. Dropping those rows."
+                data_copy = filter(row -> !(row[cov] === missing || row[cov] === nothing ||
+                                            (row[cov] isa AbstractFloat && isnan(row[cov]))), data_copy)
+            end 
+        end
+    end
+
+    return data_copy
 end

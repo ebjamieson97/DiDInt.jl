@@ -1,7 +1,7 @@
 name = "DiDInt"
 uuid = "a755adf4-2e2b-446b-93e8-5a1a900eb7ed"
 authors = ["Eric Jamieson <ericbrucejamieson@gmail.com>"]
-version = "0.5.9"
+version = "0.6.0"
 
 [deps]
 CategoricalArrays = "324d7699-5711-5eae-9e2f-1d82baa6b597"
@@ -19,6 +19,6 @@ CategoricalArrays = "0.1.0 - 1.0"
 DataFrames = "1.1.0 - 2.0"
 Distributions = "0.1.0 - 1.0"
 FixedEffectModels = "1.1.0 - 2.0"
-GLM = "1.0.0 - 3.0"
+GLM = "1.0.0 - 2.0"
 Statistics = "1.1.0 - 2.0"
 julia = "1.10.0 - 2.0"
