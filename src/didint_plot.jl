@@ -140,7 +140,10 @@ function didint_plot(
             else 
                 start_date = Date(start_date)
             end 
-        elseif start_date isa String 
+        elseif start_date isa String
+            if isnothing(date_format)
+                error("If 'start_date' is entered as a string, please specify 'date_format'.")
+            end
             start_date = parse_string_to_date_didint(start_date, date_format)
         end 
     end
@@ -152,6 +155,9 @@ function didint_plot(
                 end_date = Date(end_date)
             end 
         elseif end_date isa String
+            if isnothing(date_format)
+                error("If 'start_date' is entered as a string, please specify 'date_format'.")
+            end
             end_date = parse_string_to_date_didint(end_date, date_format)
         end 
     end            
@@ -262,7 +268,6 @@ function didint_plot(
             error("The following 'treated_states' could not be found in the data $(missing_states).\nOnly found the following states $(unique(data_copy.state_71X9yTx))")
         end
 
-        data_copy = filter(row -> !ismissing(row.state_71X9yTx) && row.state_71X9yTx in treated_states , data_copy)
     end
 
     # Check missing values
@@ -387,7 +392,7 @@ function didint_plot(
     if !isnothing(freq)
         period = parse_freq(string(freq_multiplier)*" "*freq)
     else
-        period = get_freq_approx(all_times)
+        period = get_max_period(all_times)
     end 
     match_to_these_dates = collect(start_date:period:end_date)
     one_past = end_date + period
@@ -502,23 +507,32 @@ function didint_plot(
         # Recover lambdas
         state_time = split.(replace.(coefnames(stage1), "state_time: " => ""), "0IQR7q6Wei7Ejp4e")
         coefs = coef(stage1)
-        if c == "hom"
-            state_time = state_time[1:end - length(covariates_to_include)]
-            coefs = coefs[1:end - length(covariates_to_include)]
+        if c == "hom" && !isnothing(covariates)
+            keep_mask = map(x -> !(x[1] in covariates), state_time)
+            state_time = state_time[keep_mask]
+            coefs = coefs[keep_mask]
         end
         lambda_df = DataFrame(state = first.(state_time), time = last.(state_time))
         lambda_df.lambda = coefs
 
+        # Handle the edge case
+        expected_df = unique(data_copy[:, [:state_71X9yTx, :time_71X9yTx]])
+        expected_df = rename(expected_df, :state_71X9yTx => :state, :time_71X9yTx => :time)
+        lambda_df = leftjoin(expected_df, lambda_df, on = [:state, :time])
+        lambda_df.lambda = coalesce.(lambda_df.lambda, 0.0)
 
         # Parse the treatment_times and the time column to dates for staggered adoption
         lambda_df.time = Date.(lambda_df.time)
 
         # Note the ccc for this loop
         lambda_df.ccc .= c
+
+        # Append master data
         master_lambda = [master_lambda;lambda_df]
     end
 
     # Add periods
+    
     master_lambda.period = [time_to_index[date] for date in master_lambda.time] .- 1
     
     if event == true
@@ -532,8 +546,6 @@ function didint_plot(
                                        missing 
                                        for row in eachrow(master_lambda)] .- 1
         master_lambda.time_since_treatment = master_lambda.period - master_lambda.treat_period
-
-        return master_lambda
 
         if weights == true
             # Add weights
@@ -636,7 +648,11 @@ function didint_plot(
     elseif event == false
 
         # Switch time column to string labels
+        if isnothing(date_format)
+            date_format = assume_date_format(period)
+        end
         master_lambda.time = parse_date_to_string_didint.(master_lambda.time, date_format)
+        master_lambda.start_date .= parse_date_to_string_didint(start_date, date_format)
 
         # If we're not doing an event plot, then it doesn't actually matter that we
         # assign the treat_periods to the right states, so long as we do add them

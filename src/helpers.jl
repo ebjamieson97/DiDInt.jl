@@ -561,6 +561,9 @@ end
 
 function get_freq_approx(times)
 
+    # This function finds the maximum period_length such that
+    # period_{t-1} + period_length <= period_{t+1} for all periods in the data
+
     # find max distances between dates
     max_dist = maximum(diff(times))
 
@@ -637,4 +640,111 @@ function check_missing_vals(data_copy, state, time, covariates)
     end
 
     return data_copy
+end
+
+function assume_date_format(period)
+
+    # For edge cases in didint_plot where date_format wasn't specified, but period length has between
+    if typeof(period) <: Year
+        return "yyyy"
+    else
+        return "yyyy/mm/dd"
+    end
+end
+
+function get_max_period(times)
+
+    # This function simply returns the maximum period length found in the data
+
+    # find max distances between dates
+    max_dist = maximum(diff(times))
+
+    # Convert to days for comparison
+    days = Dates.value(max_dist)
+    
+    # Return a period that is AT LEAST as large as the max gap
+    # This ensures no "empty" periods in the grid 
+    
+    if days >= 365
+        # If it is 1 day off from being cleanly divided into years, assume leap year
+        if days > 365
+            if days % 365 == 1 
+                years = floor(days / 365)
+                return Year(years)
+            end
+            # Days is > 1461, it is bound to have one leap year
+            if days > 1460
+                leap_count = days ÷ (365*4)
+                if days % 365 == leap_count
+                    years = floor(days / 365)
+                    return Year(years)
+                end 
+            end
+        end
+        years = ceil(Int, days / 365)
+        return Year(years)
+    elseif days >= 28
+        months = ceil(Int, days / 31)
+        return Month(months)
+    elseif days >= 7
+        weeks = ceil(Int, days / 7)
+        return Week(weeks)
+    else
+        return Day(days)
+    end
+end
+
+function check_prior_to_ri(diff_df, ri_diff_df)
+    
+    randomize = true
+
+    # Get all required (t, r1) combinations and check for each state, each pair exists in the combined data
+    combined_df = vcat(diff_df, ri_diff_df)
+    all_states = unique(combined_df.state)
+    required_pairs = unique(select(combined_df, :t, :r1))
+    for state in all_states
+        state_data = combined_df[combined_df.state .== state, :]
+        state_pairs = unique(select(state_data, :t, :r1))
+        missing_pairs = antijoin(required_pairs, state_pairs, on=[:t, :r1])
+        if nrow(missing_pairs) > 0
+            randomize = false
+            break
+        end
+    end
+    if !randomize
+        @warn "Randomization inference cannot be performed.\nUnable to find all of the non-missing values for differences required to implement randomization inference procedure."
+    end
+
+    return randomize
+
+end
+
+function check_states_for_common_adoption(data_copy, treated_states)
+
+    states = unique(data_copy.state_71X9yTx)
+    states_to_drop = []
+    for state in states
+        periods = unique(data_copy[data_copy.state_71X9yTx .== state, :].time_71X9yTx)
+        if !("pre" in periods && "post" in periods)
+            @warn "State $state does not have at least one post-treatment and one pre-treatment observation.\nDropping $state."
+            push!(states_to_drop, state)
+        end
+    end
+
+    data_copy = isempty(states_to_drop) ? data_copy : filter(row -> row.state_71X9yTx ∉ states_to_drop, data_copy)
+
+    remaining_states = unique(data_copy.state_71X9yTx)
+    n_states = length(remaining_states)
+    if n_states < 2
+        error("Only found $n_states with observations both post-treatment and pre-treatment!")
+    end
+    have_treated = any(state -> state in remaining_states, treated_states)
+    have_control = any(state -> state ∉ treated_states, remaining_states)
+
+    if have_treated && have_control
+        return data_copy
+    else
+        error("After dropping states that did not have at least one post-treatment and one pre-treatment observation,\nthere was not a single pair of a treated and untreated state required in order to compute ATTs.")
+    end
+
 end

@@ -85,7 +85,11 @@ function didint(outcome::Union{AbstractString, Symbol},
                 nperm::Number = 1001,
                 verbose::Bool = true,
                 seed::Number = rand(1:1000000),
-                use_pre_controls::Bool = false)
+                use_pre_controls::Bool = false,
+                notyet::Union{Nothing, Bool} = nothing)
+
+    # Let notyet override use_pre_controls
+    use_pre_controls = isnothing(notyet) ? use_pre_controls : notyet
 
     # Turn outcome, state, time, and gvar to strings if they were inputted as symbols
     if typeof(outcome) <: Symbol
@@ -124,7 +128,10 @@ function didint(outcome::Union{AbstractString, Symbol},
             else 
                 start_date = Date(start_date)
             end 
-        elseif start_date isa String 
+        elseif start_date isa String
+            if isnothing(date_format)
+                error("If 'start_date' is entered as a string, please specify 'date_format'.")
+            end
             start_date = parse_string_to_date_didint(start_date, date_format)
         end 
     end
@@ -136,6 +143,9 @@ function didint(outcome::Union{AbstractString, Symbol},
                 end_date = Date(end_date)
             end 
         elseif end_date isa String
+            if isnothing(date_format)
+                error("If 'end_date' is entered as a string, please specify 'date_format'.")
+            end
             end_date = parse_string_to_date_didint(end_date, date_format)
         end 
     end            
@@ -268,6 +278,11 @@ function didint(outcome::Union{AbstractString, Symbol},
             error("No valid control states were found.")
         end 
     end
+
+    # Do intial check before filtering that treatment_times length is equal treated_states length
+    if staggered_adoption && length(treatment_times) != length(treated_states)
+        error("'treatment_times' should be the same length as the 'treated_states'.")
+    end 
 
     # Check missing values
     data_copy = check_missing_vals(data_copy, state, time, covariates)
@@ -408,7 +423,7 @@ Instead, found 'treated_states' $treated_states_type and '$state' $state_column_
         if !isnothing(freq)
             period = parse_freq(string(freq_multiplier)*" "*freq)
         else
-            period = get_freq_approx(all_times)
+            period = get_max_period(all_times)
         end
         match_to_these_dates = collect(start_date:period:end_date)
         one_past = end_date + period
@@ -477,9 +492,7 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
     if common_adoption
         data_copy.time_71X9yTx = ifelse.(data_copy.time_71X9yTx .>= treatment_times[1], "post", "pre")
         data_copy.time_71X9yTx = string.(data_copy.time_71X9yTx)
-        if length(unique(data_copy.time_71X9yTx)) == 1
-            error("Only", unique(data_copy.time_71X9yTx), "treatment periods were found in the data!")
-        end
+        data_copy = check_states_for_common_adoption(data_copy, treated_states)
     elseif staggered_adoption
         data_copy.time_71X9yTx = string.(data_copy.time_71X9yTx)
     else
@@ -571,7 +584,7 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
     # Call GC.gc() before running big FixedEffectsModels regression
     GC.gc()
 
-    # Determine if corner case 
+    # Determine if corner case (i.e. only two states common adoption)
     cornercase = false
     if common_adoption && length(unique(data_copy.state_71X9yTx)) == 2
         cornercase = true
@@ -589,12 +602,24 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
     # Recover lambdas
     state_time = split.(replace.(coefnames(stage1), "state_time: " => ""), "0IQR7q6Wei7Ejp4e")
     coefs = coef(stage1)
-    if ccc == "hom"
-        state_time = state_time[1:end - length(covariates_to_include)]
-        coefs = coefs[1:end - length(covariates_to_include)]
+    if ccc == "hom" && !isnothing(covariates)
+        keep_mask = map(x -> !(x[1] in covariates), state_time)
+        state_time = state_time[keep_mask]
+        coefs = coefs[keep_mask]
     end 
+    
     lambda_df = DataFrame(state = first.(state_time), time = last.(state_time))
     lambda_df.lambda = coefs
+
+    # Handle edge case where FE structure drops some state-time coefficients,
+    # that is, effect is entirely absorbed by fixed effects thus the estimate from
+    # the state_time dummy should be exactly zero
+    expected_df = unique(data_copy[:, [:state_71X9yTx, :time_71X9yTx]])
+    expected_df = rename(expected_df, :state_71X9yTx => :state, :time_71X9yTx => :time)
+    lambda_df = leftjoin(expected_df, lambda_df, on = [:state, :time])
+    lambda_df.lambda = coalesce.(lambda_df.lambda, 0.0)
+
+    # Common adoption and only 2 states can still compue SE manually
     if cornercase
         vcov_matrix = vcov(stage1)[1:4,1:4]
 
@@ -631,15 +656,18 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
             idx = time_to_index[treatment_times[i]]
             one_period_prior_treatment = all_times[idx - 1]
             temp = lambda_df[(lambda_df.state .== treated_states[i]) .& (lambda_df.time .>= one_period_prior_treatment), :]
-            lambda_r1 = temp[temp.time .== one_period_prior_treatment, "lambda"][1]
+            lambda_r1 = temp[temp.time .== one_period_prior_treatment, "lambda"]
+            lambda_r1 = isempty(lambda_r1) ? missing : lambda_r1[1]
             temp = temp[temp.time .> one_period_prior_treatment, :]
             sort!(temp, :time)
             years = temp.time
-            diffs = Vector{Float64}(undef, nrow(temp))
+            diffs = Vector{Union{Float64, Missing}}(undef, nrow(temp))
             n = Vector{Int}(undef, nrow(temp))
             n_t = Vector{Int}(undef, nrow(temp))
             for j in eachindex(diffs)
-                diffs[j] = temp[j, "lambda"][1] - lambda_r1
+                lambda_j = temp[j, "lambda"]
+                lambda_j = isempty(lambda_j) ? missing : lambda_j[1]
+                diffs[j] = lambda_j - lambda_r1
                 post = temp[j, "time"]
                 pre = one_period_prior_treatment
                 n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([post, pre])) .&& (data_copy.state_71X9yTx .== treated_states[i]))
@@ -656,13 +684,17 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
         control_states = setdiff(unique_states, treated_states)     
         for i in eachindex(control_states)
             temp = lambda_df[(lambda_df.state .== control_states[i]), :]
-            diffs = Vector{Float64}(undef, nrow(unique_diffs))
+            diffs = Vector{Union{Float64, Missing}}(undef, nrow(unique_diffs))
             n = Vector{Int}(undef, nrow(unique_diffs))
             n_t = Vector{Int}(undef, nrow(unique_diffs))
             for j in 1:nrow(unique_diffs)
                 t = unique_diffs[j,"t"]
                 r1 = unique_diffs[j,"r1"]
-                diffs[j] = temp[temp.time .== t, "lambda"][1] - temp[temp.time .== r1, "lambda"][1]
+                lambda_t = temp[temp.time .== t, "lambda"]
+                lambda_t = isempty(lambda_t) ? missing : lambda_t[1]
+                lambda_r1 = temp[temp.time .== r1, "lambda"]
+                lambda_r1 = isempty(lambda_r1) ? missing : lambda_r1[1]
+                diffs[j] = lambda_t - lambda_r1
                 n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([t, r1])) .&& (data_copy.state_71X9yTx .== control_states[i]))
                 n_t[j] = sum((data_copy.time_dmG5fpM .== t) .&& (data_copy.state_71X9yTx .== control_states[i]))
             end 
@@ -680,13 +712,17 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
         for i in eachindex(treated_states)
             ri_diffs = unique(select(diff_df[(diff_df.state .!= treated_states[i]) .& (diff_df.treated_time .!= treatment_times[i]), :], :t, :r1))
             temp = lambda_df[(lambda_df.state .== treated_states[i]), :]
-            diffs = Vector{Float64}(undef, nrow(ri_diffs))
+            diffs = Vector{Union{Float64, Missing}}(undef, nrow(ri_diffs))
             n = Vector{Int}(undef, nrow(ri_diffs))
             n_t = Vector{Int}(undef, nrow(ri_diffs))
             for j in 1:nrow(ri_diffs)
                 t = unique_diffs[j,"t"]
                 r1 = unique_diffs[j,"r1"]
-                diffs[j] = temp[temp.time .== t, "lambda"][1] - temp[temp.time .== r1, "lambda"][1]
+                lambda_t = temp[temp.time .== t, "lambda"]
+                lambda_t = isempty(lambda_t) ? missing : lambda_t[1]
+                lambda_r1 = temp[temp.time .== r1, "lambda"]
+                lambda_r1 = isempty(lambda_r1) ? missing : lambda_r1[1]
+                diffs[j] = lambda_t - lambda_r1
                 n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([t, r1])) .&& (data_copy.state_71X9yTx .== treated_states[i]))
                 n_t[j] = sum((data_copy.time_dmG5fpM .== t) .&& (data_copy.state_71X9yTx .== treated_states[i]))
             end
@@ -698,7 +734,7 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
         end
 
         # Add the periods since treatment column to ri_diff_df and diff_df
-        ordered_t = sort(unique(diff_df.t))        
+        ordered_t = match_to_these_dates   
         t_period = indexin(diff_df.t, ordered_t)             
         treated_time_period = indexin(diff_df.treated_time, ordered_t) 
         diff_df.time_since_treatment = t_period .- treated_time_period 
@@ -725,11 +761,39 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
             end 
         end
 
+        # In the case where the diff_df has missing values for diffs, drop those rows
+        if any(ismissing.(diff_df.diff))
+            diff_df = dropmissing(diff_df, :diff)
+            diff_df = subset(
+                            groupby(diff_df, [:t, :r1]),
+                            :treat => x -> any(x .== 1) && any(x .== 0)
+                          )
+            if nrow(diff_df) == 0
+                error("Could not find a single pair of non-missing valued treated & untreated differences for the same (g,t) group.\nUnable to compute any ATTs.")
+            end
+            ri_diff_df = semijoin(ri_diff_df, diff_df, on=[:t, :r1])
+            ri_diff_df = dropmissing(ri_diff_df, :diff)
+        end
+
+        # Do check to make sure that each state has each (g,t) group for RI 
+        randomize = check_prior_to_ri(diff_df, ri_diff_df)
+
+        # These are used in computing the sub-agg ATTs so, overwrite them if we dropped missing vals
+        unique_diffs = unique(select(diff_df, :t, :r1, :treated_time))
+        original_treated = sort(unique(diff_df[diff_df.treat .== 1, [:state, :treated_time]]), :treated_time)
+        treatment_times = original_treated.treated_time
+        treated_states = original_treated.state
+
+        # Show period length in results
+        period = string(period)
+        start_date = string(start_date)
+        end_date = string(maximum(data_copy.time_dmG5fpM))
+
         # Run final regression to compute ATT based on weighting/aggregation method
         if agg == "cohort"
 
             # Define nrows and vector to iterate through for sub aggregate ATTs
-            unique_treatment_times = sort!(unique(diff_df.treated_time))
+            unique_treatment_times = sort(unique(diff_df.treated_time))
             nrows = length(unique_treatment_times)
 
             # Create results df
@@ -784,9 +848,8 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "cohort",
+            results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "cohort",
                                                       verbose, seed, data_copy, weighting, use_pre_controls)
-            return results
 
         elseif agg == "simple"
 
@@ -853,9 +916,8 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "simple",
+            results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "simple",
                                                  verbose, seed, data_copy, weighting, use_pre_controls)
-            return results
 
         elseif agg == "state"
 
@@ -920,9 +982,8 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "state",
+            results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "state",
                                                  verbose, seed, data_copy, weighting, use_pre_controls)
-            return results
 
         elseif agg == "none"  
             
@@ -950,9 +1011,8 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "none",
+            results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "none",
                                                  verbose, seed, data_copy, weighting, use_pre_controls)
-            return results
 
         elseif agg == "sgt"
             
@@ -1020,9 +1080,8 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            results = randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "sgt",
+            results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "sgt",
                                                  verbose, seed, data_copy, weighting, use_pre_controls)
-            return results
 
         elseif agg == "time"
 
@@ -1094,11 +1153,16 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
             results.pval_agg_att[1] = result_dict["pval_att"]
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
-            results = randomization_inference_v2(diff, nperm, results, "time",
+            results = !randomize ? results : randomization_inference_v2(diff, nperm, results, "time",
                                                  verbose, seed, data_copy, weighting, use_pre_controls,
                                                  dummy_cols = dummy_cols)
-            return results
         end
+
+        # Return staggered adoption results
+        results.period .= period
+        results.start_date .= start_date
+        results.end_date .= end_date
+        return results
 
     elseif common_adoption
 
