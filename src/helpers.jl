@@ -712,7 +712,7 @@ function check_prior_to_ri(diff_df, ri_diff_df)
         end
     end
     if !randomize
-        @warn "Randomization inference cannot be performed.\nUnable to find all of the non-missing values for differences required to implement randomization inference procedure."
+        @warn "Randomization inference cannot be performed.\nDid not find all the non-missing values for differences required to implement randomization inference procedure."
     end
 
     return randomize

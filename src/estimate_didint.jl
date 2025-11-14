@@ -421,11 +421,18 @@ Instead, found 'treated_states' $treated_states_type and '$state' $state_column_
     # In the case of staggered adoption, check if date matching procedure should be done
     if staggered_adoption
         if !isnothing(freq)
-            period = parse_freq(string(freq_multiplier)*" "*freq)
+        max_dist = Dates.value(maximum(Base.diff(all_times)))
+        period = parse_freq(string(freq_multiplier)*" "*freq)
+        match_to_these_dates = collect(start_date:period:end_date)
+        max_dist_grid = Dates.value(maximum(Base.diff(match_to_these_dates)))
+            if max_dist > max_dist_grid
+                period_str = string(period)
+                @warn "The specified period length $period_str is less than the maximum observed period length ($max_dist days)."
+            end
         else
             period = get_max_period(all_times)
-        end
-        match_to_these_dates = collect(start_date:period:end_date)
+            match_to_these_dates = collect(start_date:period:end_date)
+        end 
         one_past = end_date + period
         matched = [match_date(t, match_to_these_dates, treatment_times) for t in data_copy.time_71X9yTx]
         data_copy.time_71X9yTx = matched
@@ -470,10 +477,14 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
         earliest = minimum(state_dates)
         latest = maximum(state_dates)
         if !(earliest < treat_time)
-            error("For state $s, the earliest date ($earliest) is not strictly less than the treatment time ($treat_time).")
+            earliest = string(earliest)
+            treat_time = string(treat_time)
+            error("For state $s, the earliest date for which there is non-missing value ($earliest) is not strictly less than the treatment time ($treat_time).")
         end
         if !(treat_time <= latest)
-            error("For state $s, the treatment time ($treat_time) is greater than the last date ($latest).")
+            treat_time = string(treat_time)
+            latest = string(latest)
+            error("For state $s, the treatment time ($treat_time) is greater than the last date ($latest) for which there is a non-missing observation.")
         end
     end
 
@@ -786,8 +797,11 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
 
         # Show period length in results
         period = string(period)
-        start_date = string(start_date)
-        end_date = string(maximum(data_copy.time_dmG5fpM))
+        if isnothing(date_format) || date_format == "yyyy"
+            date_format = assume_date_format(period)
+        end
+        start_date = parse_date_to_string_didint(start_date, date_format)
+        end_date = parse_date_to_string_didint(maximum(data_copy.time_dmG5fpM), date_format)
 
         # Run final regression to compute ATT based on weighting/aggregation method
         if agg == "cohort"

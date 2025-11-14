@@ -390,11 +390,18 @@ function didint_plot(
 
     # Do date matching procedure
     if !isnothing(freq)
+        max_dist = Dates.value(maximum(diff(all_times)))
         period = parse_freq(string(freq_multiplier)*" "*freq)
+        match_to_these_dates = collect(start_date:period:end_date)
+        max_dist_grid = Dates.value(maximum(diff(match_to_these_dates)))
+        if max_dist > max_dist_grid
+            period_str = string(period)
+            @warn "The specified period length $period_str is less than the maximum observed period length ($max_dist days)."
+        end
     else
         period = get_max_period(all_times)
+        match_to_these_dates = collect(start_date:period:end_date)
     end 
-    match_to_these_dates = collect(start_date:period:end_date)
     one_past = end_date + period
     matched = [match_date(t, match_to_these_dates, treatment_times) for t in data_copy.time_71X9yTx]
     data_copy.time_71X9yTx = matched
@@ -648,7 +655,7 @@ function didint_plot(
     elseif event == false
 
         # Switch time column to string labels
-        if isnothing(date_format)
+        if isnothing(date_format) || date_format == "yyyy"
             date_format = assume_date_format(period)
         end
         master_lambda.time = parse_date_to_string_didint.(master_lambda.time, date_format)
