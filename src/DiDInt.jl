@@ -10,6 +10,7 @@ using LinearAlgebra
 using Random
 using Statistics
 
+include("data_checks.jl")
 include("helpers.jl")
 include("estimate_didint.jl")
 include("didint_plot.jl")

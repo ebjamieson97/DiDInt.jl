@@ -92,63 +92,15 @@ function didint(outcome::Union{AbstractString, Symbol},
     use_pre_controls = isnothing(notyet) ? use_pre_controls : notyet
 
     # Turn outcome, state, time, and gvar to strings if they were inputted as symbols
-    if typeof(outcome) <: Symbol
-        outcome = string(outcome)
-    end 
-    if typeof(state) <: Symbol
-        state = string(state)
-    end
-    if typeof(time) <: Symbol
-        time = string(time)
-    end
-    if typeof(gvar) <: Symbol
-        gvar = string(gvar)
-    end
+    outcome, state, time, gvar = symbol_to_string(outcome, state, time, gvar)
 
     # Determine if the gvar method or the treatment_times & treated_states method is being used
-    if isnothing(gvar)
-        if isnothing(treatment_times) || isnothing(treated_states)
-            error("If 'gvar' is not specified, then 'treatment_times' and 'treated_states' must be specified!")
-        end
-    else
-        if !isnothing(treatment_times) || !isnothing(treated_states)
-            error("If 'gvar' is specified, do not specify the 'treatment_times' and 'treated_states'!")
-        end
-        mask = .!ismissing.(data[!, gvar]) .&& data[!, gvar] .!= 0 .&& data[!, gvar] .!= "0" .&& data[!, gvar] .!= "0.0"
-        filtered = unique(data[mask, [state, gvar]])
-        treated_states = filtered[!, state]
-        treatment_times = filtered[!, gvar]
-    end
+    treated_states, treatment_times = gvar_or_treatment_times(gvar, treatment_times, treated_states, data, state;
+                                                              event = false, check = "estimate_didint")
 
     # Do checks for start_date and end_date
-    if !isnothing(start_date)
-        if eltype(start_date) <: Number
-            if length(string(start_date)) != 4
-                error("If 'start_date' is a number it must be 4 digits long.")
-            else 
-                start_date = Date(start_date)
-            end 
-        elseif start_date isa String
-            if isnothing(date_format)
-                error("If 'start_date' is entered as a string, please specify 'date_format'.")
-            end
-            start_date = parse_string_to_date_didint(start_date, date_format)
-        end 
-    end
-    if !isnothing(end_date)
-        if eltype(end_date) <: Number
-            if length(string(end_date)) != 4
-                error("If 'end_date' is a number it must be 4 digits long.")
-            else 
-                end_date = Date(end_date)
-            end 
-        elseif end_date isa String
-            if isnothing(date_format)
-                error("If 'end_date' is entered as a string, please specify 'date_format'.")
-            end
-            end_date = parse_string_to_date_didint(end_date, date_format)
-        end 
-    end            
+    start_date = start_end_date_checks(start_date, "start_date", date_format)
+    end_date = start_end_date_checks(end_date, "end_date", date_format)           
 
     # Check that seed is set correctly
     seed = Int(round(seed))
@@ -179,76 +131,12 @@ function didint(outcome::Union{AbstractString, Symbol},
     # Create data copy
     data_copy = DataFrame(data; copycols = false)    
 
-    # Ensure the specified outcome, state, and time columns exist in the data
-    missing_cols = [col for col in [outcome, state, time] if !(col in names(data_copy))]
-    if !isempty(missing_cols)
-        error("The following columns could not be found in the data ", join(missing_cols, ", "))
-    end
+    # Do validation checks to see if specified columns exist, and that they are able to be processed correctly
+    data_copy, treatment_times = validate_data(data_copy, outcome, state, time, covariates, treatment_times, date_format;
+                                               warn_missing_covariates = false)
+    treatment_times = !(treatment_times isa AbstractVector) ? [treatment_times] : treatment_times
 
-    # Ensure the outcome variable is a numeric variable and create outcome column
-    outcome_nonmissingtype = Base.nonmissingtype(eltype(data_copy[!, outcome]))
-    if !(outcome_nonmissingtype <: Number)
-        error("Column '$outcome' must be numeric, but found $(eltype(data_copy[!, outcome]))")
-    end
-    data_copy.outcome_71X9yTx = data_copy[!, outcome]
-
-    # Check that the specified covariates exist
-    if !isnothing(covariates)
-        if isa(covariates, AbstractString)
-            covariates = [covariates]
-        end
-        missing_cov = [col for col in covariates if !(col in names(data_copy))]
-        if !isempty(missing_cov)
-            error("The following covariates could not be found in the data $(join(missing_cov, ", ")) ")
-        end
-    end
-
-    # Ensure that treatment_times, if a number, are all 4 digit entries
-    if Base.nonmissingtype(eltype(treatment_times)) <: Number
-        treatment_times = round.(Int, treatment_times)
-        treatment_times_numeric = true
-        if isnothing(date_format) 
-            date_format = "yyyy"
-        end 
-        if lowercase(date_format) != "yyyy"
-            error("If 'treatment_times' are entered as a number, the 'date_format' must be \"yyyy\".")
-        end 
-        if treatment_times isa AbstractVector
-            unique_lengths = unique(length.(string.(treatment_times)))
-        else 
-            unique_lengths = [length(string(treatment_times))]
-            treatment_times = [treatment_times]
-        end
-        if length(unique_lengths) == 1
-            if unique_lengths[1] != 4
-                error("If 'treatment_times' are entered as numbers, they must all be 4 digits long in 'yyyy' date_format.'treatment_times' found: $(join(treatment_times, ", "))")
-            end 
-        else
-            error("Detected multiple unique date_formats in 'treatment_times'.")
-        end
-        treatment_times = Date.(treatment_times)
-    else 
-        treatment_times_numeric = false
-    end
-    nonmissing_time_type = Base.nonmissingtype(eltype(data_copy[!, time]))
-    if nonmissing_time_type <: Number
-        data_copy[!, time] = round.(Int, data_copy[!, time])
-        time_column_numeric = true
-        unique_time_lengths = unique(length.(string.(data_copy[!, time])))
-        if length(unique_time_lengths) > 1 || unique_time_lengths[1] != 4
-            error("The 'time' column was found to be numeric but consisting of values of ambiguous date formatting (i.e. not consistent 4 digit entries.)")
-        end 
-    else
-        time_column_numeric = false
-    end 
-    if xor(time_column_numeric, treatment_times_numeric)
-        error("If 'time' column is numeric or 'treatment_times' is numeric, then both must be numeric.")
-    end 
-
-    # Detect if staggered adoption or common treatment time, also check if treatment_times is a vector
-    if !(treatment_times isa AbstractVector)
-        treatment_times = [treatment_times]
-    end
+    # Classify the requested estimation as either a staggered adoption or common adoption scenario
     if length(unique(treatment_times)) == 1
         common_adoption = true
         staggered_adoption = false
@@ -260,9 +148,7 @@ function didint(outcome::Union{AbstractString, Symbol},
     end
     
     # Make sure treated_states and control_states are vectors, make sure control_states exist
-    if !(treated_states isa AbstractVector)
-        treated_states = [treated_states]
-    end 
+    treated_states = !(treated_states isa AbstractVector) ? [treated_states] : treated_states 
     unique_states = unique(data_copy[!, state])
     control_states = setdiff(unique_states, treated_states)
     if !(control_states isa AbstractVector)
@@ -288,13 +174,7 @@ function didint(outcome::Union{AbstractString, Symbol},
     data_copy = check_missing_vals(data_copy, state, time, covariates)
 
     # Ensure the state column is a string or number and that the nonmissingtype(treated_states) == nonmissingtype(state column)
-    treated_states_type = Base.nonmissingtype(eltype(treated_states))
-    state_column_type = Base.nonmissingtype(eltype(data_copy[!, state]))
-    if !((treated_states_type <: Number && state_column_type <: Number) || 
-        (treated_states_type <: AbstractString && state_column_type <: AbstractString))
-        error("'treated_states' and the 'state' column ($state) must both be numerical or both be strings. \n 
-Instead, found 'treated_states' $treated_states_type and '$state' $state_column_type.")
-    end
+    validate_state_types(treated_states, data_copy, state)
     data_copy.state_71X9yTx = data_copy[!, state]
 
     # Do some checks after (potentially) dropping rows to make sure that the analysis
@@ -303,142 +183,15 @@ Instead, found 'treated_states' $treated_states_type and '$state' $state_column_
         error("Not enough non-missing observations.\nFound", length(unique(data_copy.state_71X9yTx)), "states after dropping missing observations.")
     end 
 
-    # Check that time column entries are all in the same date format
-    nonmissing_time_type = Base.nonmissingtype(eltype(data_copy[!, time]))
-    if nonmissing_time_type <: AbstractString || nonmissing_time_type <:Number
-        dates_str = string.(data_copy[!, time])
-        if length(unique(length.(dates_str))) != 1
-            error("Dates in the 'time' column are not all the same length!")
-        end
-        if unique(length.(dates_str))[1] != 4 && nonmissing_time_type <:Number
-            error("If 'time' is a numeric column, dates must be 4 digits long.")
-        end
-    end
-    
-    if nonmissing_time_type <: AbstractString
-        ref_positions, ref_sep_types = get_sep_info(dates_str[1])
-        if length(ref_sep_types) > 1
-            error("First date in 'time' column uses mixed separators: - and /.")
-        end
-        i = 0
-        for date in dates_str
-            i += 1
-            sep_positions, sep_types = get_sep_info(date)
-            if sep_positions != ref_positions
-                error("$i Separator positions differs from the first date in 'time' column in date entry $i $date")
-            end
-            if length(sep_types) > 1
-                error("$i Date found in 'time' column (entry $i) which uses multiple separator types $date")
-            end
-            if sep_types != ref_sep_types
-                error("$i Date found in 'time' column (entry $i $date) which uses different separator types from first date.")
-            end
-        end
-    end
-
-    # Check that treatment_times, if strings, are entered in the same date format
-    if eltype(treatment_times) <: AbstractString
-        ref_positions, ref_sep_types = get_sep_info(treatment_times[1])
-        if length(ref_sep_types) > 1
-            error("First date in 'treatment_times' uses mixed separators - and /.")
-        end
-        i = 0
-        for date in treatment_times
-            i += 1
-            sep_positions, sep_types = get_sep_info(date)
-            if sep_positions != ref_positions
-                error("$i Separator positions differs from the first date in 'treatment_times' in the $i'th entry $date")
-            end
-            if length(sep_types) > 1
-                error("$i Date found in 'treatment_times' column (entry $i) which uses multiple separator types $date")
-            end
-            if sep_types != ref_sep_types
-                error("$i Date found in 'treatment_times' (entry $i $date) which uses different separator types from first date.")
-            end
-        end
-    end
-
-    # Check that time column and treatment_times have the same date format if they are both strings
-    if nonmissing_time_type <:AbstractString && eltype(treatment_times) <:AbstractString
-        treatment_times_length = length(treatment_times[1])
-        date_column_entry_length = length(data_copy[!, time][1])
-        if treatment_times_length != date_column_entry_length
-            error("'treatment_times' and 'time' column were found to have date strings with different lengths.")
-        end
-        sep_positions_time, sep_types_time = get_sep_info(data_copy[!, time][1])
-        sep_positions_treatment, sep_types_treatment = get_sep_info(treatment_times[1])
-        if sep_positions_time != sep_positions_treatment
-            error("'treatment_times' and 'time' column have different separator positions.")
-        end
-        if sep_types_time != sep_types_treatment
-            error("'treatment_times' and 'time' column have different separator types.")
-        end
-    end
-
-    # Make sure the time column is a Date object, especially relevant for staggered adoption
-    if nonmissing_time_type <: Number
-        data_copy.time_71X9yTx = Date.(data_copy[!, time])
-    elseif nonmissing_time_type <: AbstractString
-        if isnothing(date_format)
-            error("If 'time' column is a String column, must specify the 'date_format' argument.")
-        end 
-        data_copy.time_71X9yTx = parse_string_to_date_didint.(data_copy[!, time], date_format)
-    elseif nonmissing_time_type <: Date
-        data_copy.time_71X9yTx = data_copy[!, time]
-    else
-        error("'time' column must be a String, Date, or Number column.")
-    end
-
-    # Convert treatment_times to Date objects
-    if !(typeof(treatment_times) <: Vector{Date})
-        treatment_times = parse_string_to_date_didint.(treatment_times, date_format)
-    end 
-
-    # Check freq args
-    if !isnothing(freq)
-        freq = lowercase(freq)
-        freq_options = ["week", "weeks", "weekly", "day", "days", "daily", "month", "months", "monthly", "year", "years", "yearly"]
-        if !(freq in freq_options)
-            error("'freq' was not set to a valid option. Try one of $freq_options")
-        end 
-    end 
-
-    # Grab all existing times in the data
-    all_times = sort(unique(data_copy.time_71X9yTx))
-    if isnothing(start_date)
-        start_date = minimum(all_times)
-    end
-    if isnothing(end_date)
-        end_date = maximum(all_times)
-    end
-
-    data_copy = filter(row -> row.time_71X9yTx >= start_date && row.time_71X9yTx <= end_date, data_copy)
-
-    if nrow(data_copy) == 0
-        error("After filtering by 'start_date' and 'end_date' found only 0 rows of data!")
-    end 
+    # Validate and convert dates to Date objects, filter data by date range
+    data_copy, treatment_times, start_date, end_date, all_times, freq = validate_and_convert_dates(data_copy, time, treatment_times, date_format,
+                                                                                                   freq, start_date, end_date) 
 
     # In the case of staggered adoption, check if date matching procedure should be done
     if staggered_adoption
-        if !isnothing(freq)
-        max_dist = Dates.value(maximum(Base.diff(all_times)))
-        period = parse_freq(string(freq_multiplier)*" "*freq)
-        match_to_these_dates = collect(start_date:period:end_date)
-        max_dist_grid = Dates.value(maximum(Base.diff(match_to_these_dates)))
-            if max_dist > max_dist_grid
-                period_str = string(period)
-                @warn "The specified period length $period_str is less than the maximum observed period length ($max_dist days)."
-            end
-        else
-            period = get_max_period(all_times)
-            match_to_these_dates = collect(start_date:period:end_date)
-        end 
-        one_past = end_date + period
-        matched = [match_date(t, match_to_these_dates, treatment_times) for t in data_copy.time_71X9yTx]
-        data_copy.time_71X9yTx = matched
-        treated_states = treated_states[(treatment_times .< one_past) .&& (treatment_times .> start_date)]
-        treatment_times = treatment_times[(treatment_times .< one_past) .&& (treatment_times .> start_date)]
-        treatment_times = [match_treatment_time(t, match_to_these_dates) for t in treatment_times]
+        data_copy, treatment_times, treated_states, match_to_these_dates, time_to_index, period = perform_date_matching(data_copy, all_times, freq, freq_multiplier,
+                                                                                                                        start_date, end_date, treatment_times,
+                                                                                                                        treated_states)
     end
 
     # Check that treatment_times actually exist in all_times from the data
@@ -446,16 +199,14 @@ Instead, found 'treated_states' $treated_states_type and '$state' $state_column_
         all_times = sort(unique(data_copy.time_71X9yTx))
         missing_dates = setdiff(treatment_times, all_times)
         if !isempty(missing_dates)
-            error("The following 'treatment_times' are not found in the data $(missing_dates). \n 
-Try defining an argument for 'freq' (and 'start_date' and 'end_date') in order to activate the date matching procedure.")
+            error("The following 'treatment_times' are not found in the data $(missing_dates).\nTry defining an argument for 'freq' (and 'start_date' and 'end_date') in order to activate the date matching procedure.")
         end
     end 
 
     # Check that treated states actually exist
     missing_states = setdiff(treated_states, data_copy.state_71X9yTx)
     if !isempty(missing_states)
-        error("The following 'treated_states' could not be found in the data $(missing_states). \n 
-Only found the following states $(unique(data_copy.state_71X9yTx))")
+        error("The following 'treated_states' could not be found in the data $(missing_states).\nOnly found the following states $(unique(data_copy.state_71X9yTx))")
     end
 
     # Do some checks for treatment_times vector length
@@ -654,7 +405,6 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
     # Parse the treatment_times and the time column to dates for staggered adoption
     if staggered_adoption
         lambda_df.time = Date.(lambda_df.time)
-        time_to_index = Dict(time => idx for (idx, time) in enumerate(all_times))
     end    
 
     # Define a function that initializes the results dataframe columns
@@ -665,7 +415,7 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
         # Compute diffs for each treated_state
         for i in eachindex(treated_states)
             idx = time_to_index[treatment_times[i]]
-            one_period_prior_treatment = all_times[idx - 1]
+            one_period_prior_treatment = match_to_these_dates[idx - 1]
             temp = lambda_df[(lambda_df.state .== treated_states[i]) .& (lambda_df.time .>= one_period_prior_treatment), :]
             lambda_r1 = temp[temp.time .== one_period_prior_treatment, "lambda"]
             lambda_r1 = isempty(lambda_r1) ? missing : lambda_r1[1]
@@ -709,7 +459,7 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
                 n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([t, r1])) .&& (data_copy.state_71X9yTx .== control_states[i]))
                 n_t[j] = sum((data_copy.time_dmG5fpM .== t) .&& (data_copy.state_71X9yTx .== control_states[i]))
             end 
-            trtd_time = [all_times[findfirst(==(t), all_times) + 1] for t in unique_diffs.r1]
+            trtd_time = [match_to_these_dates[findfirst(==(t), match_to_these_dates) + 1] for t in unique_diffs.r1]
             temp_df = DataFrame(state = control_states[i], treated_time = trtd_time,
                                 t = unique_diffs.t, r1 = unique_diffs.r1, diff = diffs, treat = 0,
                                 n = n, n_t = n_t)
@@ -737,7 +487,7 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
                 n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([t, r1])) .&& (data_copy.state_71X9yTx .== treated_states[i]))
                 n_t[j] = sum((data_copy.time_dmG5fpM .== t) .&& (data_copy.state_71X9yTx .== treated_states[i]))
             end
-            trtd_time = [all_times[findfirst(==(t), all_times) + 1] for t in ri_diffs.r1]
+            trtd_time = [match_to_these_dates[findfirst(==(t), match_to_these_dates) + 1] for t in ri_diffs.r1]
             temp_df = DataFrame(state = treated_states[i], treated_time = trtd_time,
                                 t = ri_diffs.t, r1 = ri_diffs.r1, diff = diffs, treat = -1,
                                 n = n, n_t = n_t)
@@ -796,10 +546,10 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
         treated_states = original_treated.state
 
         # Show period length in results
-        period = string(period)
         if isnothing(date_format) || date_format == "yyyy"
             date_format = assume_date_format(period)
         end
+        period = string(period)
         start_date = parse_date_to_string_didint(start_date, date_format)
         end_date = parse_date_to_string_didint(maximum(data_copy.time_dmG5fpM), date_format)
 
@@ -1306,4 +1056,501 @@ Only found the following states $(unique(data_copy.state_71X9yTx))")
 
 
 
+end
+
+### The following functions are parent functions within the didint() function:
+function scale_weights_final(results::DataFrame, weighting::AbstractString)
+    
+    # Scale weights and convert to either Float64 or Nothing
+    if weighting in ["att", "both"]
+        results.weights ./= sum(results.weights)
+        results.weights = convert(Vector{Float64}, results.weights)
+    elseif weighting in ["diff", "none"]
+        results.weights = convert(Vector{Nothing}, results.weights)
+    end
+    return results
+end
+
+function check_states_for_common_adoption(data_copy, treated_states)
+
+    states = unique(data_copy.state_71X9yTx)
+    states_to_drop = []
+    for state in states
+        periods = unique(data_copy[data_copy.state_71X9yTx .== state, :].time_71X9yTx)
+        if !("pre" in periods && "post" in periods)
+            @warn "State $state does not have at least one post-treatment and one pre-treatment observation.\nDropping $state."
+            push!(states_to_drop, state)
+        end
+    end
+
+    data_copy = isempty(states_to_drop) ? data_copy : filter(row -> row.state_71X9yTx ∉ states_to_drop, data_copy)
+
+    remaining_states = unique(data_copy.state_71X9yTx)
+    n_states = length(remaining_states)
+    if n_states < 2
+        error("Only found $n_states with observations both post-treatment and pre-treatment!")
+    end
+    have_treated = any(state -> state in remaining_states, treated_states)
+    have_control = any(state -> state ∉ treated_states, remaining_states)
+
+    if have_treated && have_control
+        return data_copy
+    else
+        error("After dropping states that did not have at least one post-treatment and one pre-treatment observation,\nthere was not a single pair of a treated and untreated state required in order to compute ATTs.")
+    end
+
+end
+
+function design_matrix_time_agg(temp::DataFrame, dummy_cols::Vector{Symbol}, treat_col::Symbol)
+
+    # This function adds dummy variables corresponding to the different gvars
+    # e.g. in the 4 periods since treatment group you could have multiple different 
+    # treatment times, so this function accounts for those differences
+
+    # This function is called both from within didint() and during the randomization inference
+    
+    # Only keep the dummy columns where at least one row is 1
+    active = [c for c in dummy_cols if any(temp[!, c] .== 1)]
+
+    # Drop the first of the kept dummies to avoid perfect multicollinearity with intercept
+    dummies_keep = length(active) ≤ 1 ? Symbol[] : active[2:end]
+
+    # If no kept dummy, just omit 
+    if isempty(dummies_keep)
+        X = hcat(ones(nrow(temp)), temp[:, treat_col])               
+    else 
+        X = hcat(ones(nrow(temp)), Matrix(temp[:, dummies_keep]), temp[:, treat_col])            
+    end
+    return X
+end
+
+function final_regression_results(X::Matrix{<:Number}, Y::Vector{<:Number};
+                                  W::Vector{T} where T <: Union{Nothing, Number} = [nothing])
+    beta_hat = nothing
+    beta_hat_cov = nothing
+    ncolx = size(X, 2)
+
+    # Run OLS (normally if weights aren't provided, and scale (X,Y) -> (Xw,Yw) otherwise)
+    if eltype(W) <: Nothing
+        try
+            beta_hat = (X \ Y) 
+        catch e
+            @warn "Direct solve failed, using pseudoinverse: $e"
+            beta_hat = pinv(X' * X) * X' * Y
+        end
+        resid = Y - X * beta_hat
+        omega = Diagonal(resid .^ 2)
+        try
+            beta_hat_cov = inv(X' * X) * (X' * omega * X) * inv(X' * X)
+        catch e
+            @warn "Direct solve failed, using pseudoinverse: $e"
+            beta_hat_cov = pinv(X' * X) * (X' * omega * X) * pinv(X' * X)
+        end 
+        beta_hat_se_jknife = compute_jknife_se(X, Y, beta_hat[ncolx]) 
+    elseif eltype(W) <: Number
+        sw = sqrt.(W)           
+        Xw = X .* sw            
+        Yw = Y .* sw
+        try
+            beta_hat = (Xw) \ (Yw) 
+        catch e
+            @warn "Direct solve failed, using pseudoinverse: $e"
+            beta_hat = pinv(Xw' * Xw) * Xw' * Yw
+        end
+        resid_w = Yw - Xw * beta_hat
+        Ωw = Diagonal(resid_w.^2)
+        try
+            beta_hat_cov = inv(Xw'Xw) * (Xw' * Ωw * Xw) * inv(Xw'Xw)
+        catch e 
+            @warn "Direct solve failed, using pseudoinverse: $e"
+            beta_hat_cov = pinv(Xw'Xw) * (Xw' * Ωw * Xw) * pinv(Xw'Xw)
+        end 
+        beta_hat_se_jknife = compute_jknife_se(Xw, Yw, beta_hat[ncolx]) 
+    end 
+    beta_hat_var = diag(beta_hat_cov)
+    beta_hat_se = sqrt(beta_hat_var[ncolx]) 
+    dof = length(Y) - ncolx
+    pval_att = dof > 0 ? 2 * (1 - cdf(TDist(dof), abs(beta_hat[ncolx] / beta_hat_se))) : missing 
+    pval_att_jknife = dof > 0 && !ismissing(beta_hat_se_jknife) ? 2 * (1 - cdf(TDist(dof), abs(beta_hat[ncolx] / beta_hat_se_jknife))) : missing
+    result_dict = Dict("beta_hat" => beta_hat[ncolx], "beta_hat_se" => beta_hat_se, "pval_att" => pval_att,
+                       "beta_hat_se_jknife" => beta_hat_se_jknife, "pval_att_jknife" => pval_att_jknife)
+    return result_dict
+end
+
+function custom_sort_order(s)
+    parsed = tryparse(Int, s)
+    if isnothing(parsed)
+        (0, lowercase(s))
+    else
+        (1, parsed)
+    end 
+end
+
+function check_prior_to_ri(diff_df, ri_diff_df)
+    
+    randomize = true
+
+    # Get all required (t, r1) combinations and check for each state, each pair exists in the combined data
+    combined_df = vcat(diff_df, ri_diff_df)
+    all_states = unique(combined_df.state)
+    required_pairs = unique(select(combined_df, :t, :r1))
+    for state in all_states
+        state_data = combined_df[combined_df.state .== state, :]
+        state_pairs = unique(select(state_data, :t, :r1))
+        missing_pairs = antijoin(required_pairs, state_pairs, on=[:t, :r1])
+        if nrow(missing_pairs) > 0
+            randomize = false
+            break
+        end
+    end
+    if !randomize
+        @warn "Randomization inference cannot be performed.\nDid not find all the non-missing values for differences required to implement randomization inference procedure."
+    end
+
+    return randomize
+
+end
+
+function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::DataFrame,
+                                    agg::AbstractString, verbose::Bool, seed::Number,
+                                    data::DataFrame, weighting::AbstractString,
+                                    use_pre_controls::Bool;
+                                    dummy_cols::Union{Vector{Symbol}, Nothing} = nothing)
+    
+    # PART ONE: CREATE RANDOMIZED TREATMENT COLUMNS
+    original_treated = unique(diff_df[diff_df.treat .== 1, [:state, :treated_time]])
+    k = nrow(original_treated)  
+    treatment_times = original_treated.treated_time
+    treatment_states = original_treated.state
+    all_states = unique(diff_df.state)
+
+    n_unique_perms = compute_n_unique_assignments(treatment_times, length(all_states))
+    if nperm > n_unique_perms
+        @warn "'nperm' was set to $nperm but only $n_unique_perms unique permutations exist. \n 
+                Setting 'nperm' to $(n_unique_perms - 1)."
+        nperm = n_unique_perms
+    end 
+    if nperm < 500
+        @warn "'nperm' is less than 500!"
+    end 
+
+    randomized_diff_df = diff_df
+    Random.seed!(seed)
+    
+    i = 1
+    seen = Set{String}()
+    pairs = zip(original_treated.state, original_treated.treated_time)
+    key = join(sort([string(s, "-", t) for (s, t) in pairs]), "")
+    push!(seen, key)
+    while i < nperm
+        shuffled_states = shuffle(all_states)
+        new_treated_states = shuffled_states[1:k]
+        new_treated_times = treatment_times[randperm(k)]
+        pairs = zip(new_treated_states, new_treated_times)
+        key = join(sort([string(s, "-", t) for (s, t) in pairs]), "")
+        if key in seen
+            continue
+        end 
+        assigned_tt = Dict(new_treated_states[j] => new_treated_times[j] for j in 1:k)
+        new_treat = Vector{Int}(undef, nrow(diff_df))
+        for row_idx in 1:nrow(diff_df)
+            state = diff_df[row_idx, :state]
+            trt_time = diff_df[row_idx, :treated_time]
+            if haskey(assigned_tt, state)
+                if trt_time == assigned_tt[state]
+                    new_treat[row_idx] = 1
+                else 
+                    if use_pre_controls
+                        t = diff_df[row_idx, :t]
+                        if t < assigned_tt[state]
+                            new_treat[row_idx] = 0
+                        else
+                            new_treat[row_idx] = -1
+                        end 
+                    else
+                        new_treat[row_idx] = -1
+                    end
+                end
+            else
+                new_treat[row_idx] = 0
+            end
+        end
+        randomized_diff_df[!, Symbol("treat_random_", i)] = new_treat
+        i += 1
+    end
+
+    # PART TWO: COMPUTE RI_ATT & RI_ATT_SUBGROUP
+    # Force agg arguments for common adoption to either none or state
+    if (length(unique(treatment_times)) == 1 && in(agg, ["cohort", "gt"])) || (length(unique(treatment_times)) == 1 && length(unique(treatment_states)) == 1)
+        agg = "none"
+    end 
+    if length(unique(treatment_times)) == 1 && agg == "sgt"
+        agg = "state"
+    end 
+
+    att_ri = Vector{Float64}(undef, nperm - 1)
+    if agg == "cohort" 
+        att_ri_cohort = Matrix{Float64}(undef, nperm - 1, length(treatment_times))
+        for j in 1:nperm - 1 
+            colname = Symbol("treat_random_$(j)")
+            W = Vector{Float64}(undef, length(treatment_times))
+            for i in eachindex(treatment_times)
+                # Compute sub aggregate ATT
+                trt = treatment_times[i]
+                temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.treated_time .== trt), :]
+                att_ri_cohort[j,i] = compute_ri_sub_agg_att(temp, weighting, colname)
+                
+                # Compute weights
+                if in(weighting, ["att", "both"])
+                    W[i] = sum(temp[temp[!, colname] .== 1, "n_t"])
+                end 
+            end
+
+            # Compute aggregate ATT
+            if in(weighting, ["att", "both"])
+                W ./= sum(W)
+            elseif in(weighting, ["none", "diff"])
+                W .= (1 / length(W))
+            end 
+            att_ri[j] = dot(W, att_ri_cohort[j,:])
+            if verbose && j % 100 == 0
+                println("Completed $(j) of $(nperm - 1) permutations")
+            end
+        end 
+    elseif agg == "state"
+        att_ri_state = Matrix{Float64}(undef, nperm - 1, length(treatment_times))
+        for j in 1:nperm - 1 
+            colname = Symbol("treat_random_$(j)")
+            W = Vector{Float64}(undef, length(treatment_states))
+            for i in eachindex(treatment_states)
+                # Compute sub aggregate ATT
+                trt = treatment_times[i]
+                temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.treated_time .== trt), :]
+                temp_treated_silos = unique(temp[temp[!, colname] .== 1, "state"])
+                temp_treated_silo = shuffle(temp_treated_silos)[1]
+                temp = temp[(temp.state .== temp_treated_silo) .|| (temp[!, colname] .== 0), :]
+                att_ri_state[j,i] = compute_ri_sub_agg_att(temp, weighting, colname)
+
+                # Compute weights
+                if in(weighting, ["att", "both"])
+                    W[i] = sum(temp[temp[!, colname] .== 1, "n_t"])
+                end 
+            end
+
+            # Compute aggregate ATT
+            if in(weighting, ["att", "both"])
+                W ./= sum(W)
+            elseif in(weighting, ["none", "diff"])
+                W .= (1 / length(treatment_states))
+            end 
+            att_ri[j] = dot(W, att_ri_state[j,:])
+            if verbose && j % 100 == 0
+                println("Completed $(j) of $(nperm - 1) permutations")
+            end 
+        end 
+    elseif agg == "simple"
+        unique_diffs = unique(select(diff_df[diff_df.treat .== 1,:], :t, :r1, :treated_time))
+        att_ri_simple = Matrix{Float64}(undef, nperm - 1, nrow(unique_diffs))
+        for j in 1:nperm - 1
+            colname = Symbol("treat_random_$(j)")
+            W = Vector{Float64}(undef, nrow(unique_diffs))
+            for i in 1:nrow(unique_diffs)
+                # Compute sub aggregate ATT
+                t = unique_diffs[i,"t"]
+                r1 = unique_diffs[i,"r1"]
+                temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.t .== t) .&& (diff_df.r1 .== r1), :]
+                att_ri_simple[j,i] = compute_ri_sub_agg_att(temp, weighting, colname)
+
+                # Compute weights
+                if in(weighting, ["att", "both"])
+                    W[i] = sum(temp[temp[!, colname] .== 1, "n_t"])
+                end 
+            end
+
+            # Compute aggregate ATT
+            if in(weighting, ["att", "both"])
+                W ./= sum(W)
+            elseif in(weighting, ["none", "diff"])
+                W .= (1 / nrow(unique_diffs))
+            end 
+            att_ri[j] = dot(W, att_ri_simple[j,:])
+            if verbose && j % 100 == 0
+                println("Completed $(j) of $(nperm - 1) permutations")
+            end
+        end 
+    elseif agg == "sgt"
+        unique_diffs = unique(select(diff_df[diff_df.treat .== 1,:], :state, :t, :r1, :treated_time))
+        att_ri_sgt = Matrix{Float64}(undef, nperm - 1, nrow(unique_diffs))
+        for j in 1:nperm - 1
+            colname = Symbol("treat_random_$(j)")
+            W = Vector{Float64}(undef, nrow(unique_diffs))
+            for i in 1:nrow(unique_diffs)
+                # Compute sub aggregate ATT
+                t = unique_diffs[i,"t"]
+                r1 = unique_diffs[i,"r1"]
+                temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.t .== t) .&& (diff_df.r1 .== r1), :]
+                temp_treated_silos = unique(temp[temp[!, colname] .== 1, "state"])
+                temp_treated_silo = shuffle(temp_treated_silos)[1]
+                temp = temp[(temp.state .== temp_treated_silo) .|| (temp[!, colname] .== 0), :]
+                att_ri_sgt[j,i] = compute_ri_sub_agg_att(temp, weighting, colname)
+                
+                # Compute weights
+                if in(weighting, ["att", "both"])
+                    W[i] = sum(temp[temp[!, colname] .== 1, "n_t"])
+                end 
+            end
+
+            # Compute aggregate ATT
+            if in(weighting, ["att", "both"])
+                W ./= sum(W)
+            elseif in(weighting, ["none", "diff"])
+                W .= (1 / nrow(unique_diffs))
+            end 
+            att_ri[j] = dot(W, att_ri_sgt[j,:])
+            if verbose && j % 100 == 0
+                println("Completed $(j) of $(nperm - 1) permutations")
+            end
+        end 
+    elseif agg == "none"
+        for j in 1:nperm - 1
+            colname = Symbol("treat_random_$(j)")
+            temp = diff_df[diff_df[!, colname] .!= -1,:]
+            att_ri[j] = compute_ri_sub_agg_att(temp, weighting, colname)
+            if verbose && j % 100 == 0
+                println("Completed $(j) of $(nperm - 1) permutations")
+            end
+        end 
+    elseif agg == "time"
+        times = results.periods_post_treat
+        att_ri_time = Matrix{Float64}(undef, nperm - 1, length(times))
+        for j in 1:nperm - 1
+            colname = Symbol("treat_random_$(j)")
+            W = Vector{Float64}(undef, length(times))
+            for i in eachindex(times)
+                # Compute sub aggregate ATT
+                t = times[i]
+                temp = diff_df[(diff_df[!, colname] .!= -1) .&& (diff_df.time_since_treatment .== t), :]
+                Y = convert(Vector{Float64}, temp.diff)
+                X = design_matrix_time_agg(temp, dummy_cols, colname)
+                if in(weighting, ["diff", "both"]) 
+                    W_diff = convert(Vector{Float64}, temp.n)
+                    W_diff ./= sum(W_diff) 
+                    sw = sqrt.(W_diff)           
+                    X = X .* sw            
+                    Y = Y .* sw
+                end 
+                att_ri_time[j,i] = (X \ Y)[end]
+                
+                # Compute weights
+                if in(weighting, ["att", "both"])
+                    W[i] = sum(temp[temp[!, colname] .== 1, "n_t"])
+                end 
+            end
+
+            # Compute aggregate ATT
+            if in(weighting, ["att", "both"])
+                W ./= sum(W)
+            elseif in(weighting, ["none", "diff"])
+                W .= (1 / length(times))
+            end 
+            att_ri[j] = dot(W, att_ri_time[j,:])
+            if verbose && j % 100 == 0
+                println("Completed $(j) of $(nperm - 1) permutations")
+            end
+        end
+    end
+
+    # PART THREE: COMPUTE P-VALS BASED ON RI_ATT & RI_ATT_SUBGROUP
+    agg_att = results.agg_att[1]
+    if agg == "cohort"
+        for i in eachindex(treatment_times)
+            sub_agg_att = results[results.treatment_time .== treatment_times[i], "att_cohort"][1]
+            results[results.treatment_time .== treatment_times[i], "ri_pval_att_cohort"] .= (sum(abs.(att_ri_cohort[:,i]) .> abs(sub_agg_att))) / length(att_ri_cohort[:,i])
+        end
+    elseif agg == "state"
+        for i in eachindex(treatment_states)
+            sub_agg_att = results[results.state .== treatment_states[i], "att_s"][1]
+            results[results.state .== treatment_states[i], "ri_pval_att_s"] .= (sum(abs.(att_ri_state[:,i]) .> abs(sub_agg_att))) / length(att_ri_state[:,i])
+        end 
+    elseif agg == "simple"
+        for i in 1:nrow(unique_diffs)
+            t = unique_diffs[i,"t"]
+            r1 = unique_diffs[i,"r1"]
+            gvar = unique_diffs[i, "treated_time"]
+            sub_agg_att = results[(results.time .== t) .&& (results.r1 .== r1) .&& (results.gvar .== gvar), "att_gt"][1]
+            results[(results.time .== t) .&& (results.r1 .== r1) .&& (results.gvar .== gvar), "ri_pval_att_gt"] .= (sum(abs.(att_ri_simple[:,i]) .> abs(sub_agg_att))) / length(att_ri_simple[:,i])
+        end
+    elseif agg == "sgt"
+        for i in 1:nrow(unique_diffs)
+            t = unique_diffs[i,"t"]
+            gvar = unique_diffs[i, "treated_time"]
+            state = unique_diffs[i, "state"]
+            sub_agg_att = results[(results.t .== t) .&& (results.gvar .== gvar) .&& (results.state .== state), "att_sgt"][1]
+            results[(results.t .== t) .&& (results.gvar .== gvar) .&& (results.state .== state), "ri_pval_att_sgt"] .= (sum(abs.(att_ri_sgt[:,i]) .> abs(sub_agg_att))) / length(att_ri_sgt[:,i])
+        end 
+    elseif agg == "time"
+        for i in eachindex(times)
+            sub_agg_att = results[results.periods_post_treat .== times[i], "att_t"][1]
+            results[results.periods_post_treat .== times[i], "ri_pval_att_t"] .= (sum(abs.(att_ri_time[:,i]) .> abs(sub_agg_att))) / length(att_ri_time[:,i])
+        end 
+    end
+    results.ri_pval_agg_att[1] = ((sum(abs.(att_ri) .> abs(agg_att))) / length(att_ri))
+    results.nperm[1] = nperm - 1
+    return results
+end
+
+## compute_jknife_se() is used within final_regression_results()
+function compute_jknife_se(X::Matrix{<:Number}, Y::Vector{<:Number}, original_att::Number)
+    
+    n = length(Y)
+    if n == 1 
+        return missing
+    end 
+    jknife_beta = Vector{Float64}(undef, n)
+    ncolx = size(X,2)
+    treat_count = sum(X[:,ncolx] .!= 0)
+    control_count = sum(X[:,ncolx] .== 0)
+    if (treat_count < 2 || control_count < 2) & (ncolx > 1)
+        return missing
+    end
+    for i in eachindex(Y)
+        idx = [1:i-1; i+1:size(X, 1)]
+        X_sub = X[idx, :]
+        Y_sub = Y[idx]
+        jknife_beta[i] = (X_sub \ Y_sub)[ncolx]
+    end 
+    jknife_se = sqrt(sum((jknife_beta .- original_att).^2) * ((n - 1) / n))
+    return jknife_se
 end 
+
+## The following functions are used within randomization_inference_v2():
+function compute_n_unique_assignments(treatment_times::Vector, total_n_states::Number)
+    # This computes the combinations formula * the multinomial coefficient
+    n_assignments = length(treatment_times)
+    unique_assignments = unique(treatment_times)
+    num = factorial(big(total_n_states))           
+    den = factorial(big(total_n_states - n_assignments))
+    for m in unique_assignments
+        n_m = sum(treatment_times .== m)
+        den *= factorial(big(n_m))
+    end
+    return num ÷ den                  
+end
+
+function compute_ri_sub_agg_att(temp::DataFrame, weighting::AbstractString, colname::Symbol)
+
+    X = convert(Vector{Float64}, temp[!, colname])
+    Y = convert(Vector{Float64}, temp.diff)
+    if in(weighting, ["both", "diff"])
+        W_diff  = convert(Vector{Float64}, temp.n)
+        W_diff ./= sum(W_diff)
+        sub_agg_att = (dot(W_diff[X .== 1], Y[X .== 1]) / sum(W_diff[X .== 1])) - 
+                             (dot(W_diff[X .== 0], Y[X .== 0]) / sum(W_diff[X .== 0]))
+    elseif in(weighting, ["att", "none"])
+        sub_agg_att = mean(Y[X .== 1]) - mean(Y[X .== 0])
+    end 
+    return sub_agg_att
+end 
+
+
+
