@@ -187,27 +187,15 @@ function didint(outcome::Union{AbstractString, Symbol},
     data_copy, treatment_times, start_date, end_date, all_times, freq = validate_and_convert_dates(data_copy, time, treatment_times, date_format,
                                                                                                    freq, start_date, end_date) 
 
-    # In the case of staggered adoption, check if date matching procedure should be done
+    # In the case of staggered adoption, do date matching procedure should be done
     if staggered_adoption
         data_copy, treatment_times, treated_states, match_to_these_dates, time_to_index, period = perform_date_matching(data_copy, all_times, freq, freq_multiplier,
                                                                                                                         start_date, end_date, treatment_times,
                                                                                                                         treated_states)
     end
 
-    # Check that treatment_times actually exist in all_times from the data
-    if staggered_adoption
-        all_times = sort(unique(data_copy.time_71X9yTx))
-        missing_dates = setdiff(treatment_times, all_times)
-        if !isempty(missing_dates)
-            error("The following 'treatment_times' are not found in the data $(missing_dates).\nTry defining an argument for 'freq' (and 'start_date' and 'end_date') in order to activate the date matching procedure.")
-        end
-    end 
-
     # Check that treated states actually exist
-    missing_states = setdiff(treated_states, data_copy.state_71X9yTx)
-    if !isempty(missing_states)
-        error("The following 'treated_states' could not be found in the data $(missing_states).\nOnly found the following states $(unique(data_copy.state_71X9yTx))")
-    end
+    treated_states, treatment_times = validate_treated_states(treated_states, treatment_times, data_copy)
 
     # Do some checks for treatment_times vector length
     if common_adoption && length(treatment_times) != length(treated_states)
@@ -240,13 +228,7 @@ function didint(outcome::Union{AbstractString, Symbol},
     end
 
     # Ensure state column is a string (as are treated_states)
-    data_copy.state_71X9yTx = string.(data_copy.state_71X9yTx)
-    treated_states = string.(treated_states)
-    check_states = unique(data_copy.state_71X9yTx)
-    missing_states = setdiff(treated_states, check_states)
-    if !isempty(missing_states)
-        error("The states $missing_states could not be found among the states in the data $check_states")
-    end
+    data_copy, treated_states = validate_string_treated_states(data_copy; treated_states = treated_states)
 
     # Once any date matching procedures are done, convert time_71X9yTx back to a string for processing in `categorical()`
     # Also keep a column vector copy as a date
@@ -1135,7 +1117,7 @@ function final_regression_results(X::Matrix{<:Number}, Y::Vector{<:Number};
         try
             beta_hat = (X \ Y) 
         catch e
-            @warn "Direct solve failed, using pseudoinverse: $e"
+            @warn "Direct solve failed, using pseudoinverse $e"
             beta_hat = pinv(X' * X) * X' * Y
         end
         resid = Y - X * beta_hat
@@ -1143,7 +1125,7 @@ function final_regression_results(X::Matrix{<:Number}, Y::Vector{<:Number};
         try
             beta_hat_cov = inv(X' * X) * (X' * omega * X) * inv(X' * X)
         catch e
-            @warn "Direct solve failed, using pseudoinverse: $e"
+            @warn "Direct solve failed, using pseudoinverse $e"
             beta_hat_cov = pinv(X' * X) * (X' * omega * X) * pinv(X' * X)
         end 
         beta_hat_se_jknife = compute_jknife_se(X, Y, beta_hat[ncolx]) 
@@ -1154,7 +1136,7 @@ function final_regression_results(X::Matrix{<:Number}, Y::Vector{<:Number};
         try
             beta_hat = (Xw) \ (Yw) 
         catch e
-            @warn "Direct solve failed, using pseudoinverse: $e"
+            @warn "Direct solve failed, using pseudoinverse $e"
             beta_hat = pinv(Xw' * Xw) * Xw' * Yw
         end
         resid_w = Yw - Xw * beta_hat
@@ -1162,7 +1144,7 @@ function final_regression_results(X::Matrix{<:Number}, Y::Vector{<:Number};
         try
             beta_hat_cov = inv(Xw'Xw) * (Xw' * Ωw * Xw) * inv(Xw'Xw)
         catch e 
-            @warn "Direct solve failed, using pseudoinverse: $e"
+            @warn "Direct solve failed, using pseudoinverse $e"
             beta_hat_cov = pinv(Xw'Xw) * (Xw' * Ωw * Xw) * pinv(Xw'Xw)
         end 
         beta_hat_se_jknife = compute_jknife_se(Xw, Yw, beta_hat[ncolx]) 

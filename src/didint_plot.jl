@@ -133,15 +133,15 @@ function didint_plot(
 
         # Ensure the state column is a string or number and that the nonmissingtype(treated_states) == nonmissingtype(state column)
         validate_state_types(treated_states, data_copy, state)
-        missing_states = setdiff(treated_states, data_copy.state_71X9yTx)
-        if !isempty(missing_states)
-            error("The following 'treated_states' could not be found in the data $(missing_states).\nOnly found the following states $(unique(data_copy.state_71X9yTx))")
-        end
-
     end
 
     # Check missing values
     data_copy = check_missing_vals(data_copy, state, time, covariates)
+
+    # Check for all the specified treated_states if doing event plot
+    if event == true
+        treated_states, treatment_times = validate_treated_states(treated_states, treatment_times, data_copy)
+    end
 
     # Validate and convert dates to Date objects, filter data by date range
     data_copy, treatment_times, start_date, end_date, all_times, freq = validate_and_convert_dates(data_copy, time, treatment_times, date_format,
@@ -153,10 +153,13 @@ function didint_plot(
     if event == true
         # Make sure the remaining treated_states are the only ones left in the df
         data_copy = filter(row -> row.state_71X9yTx in treated_states, data_copy)
+        if nrow(data_copy) == 0 
+            error("No valid 'treated_states' were found in the data.")
+        end
     end
 
     # Ensure state column is a string
-    data_copy.state_71X9yTx = string.(data_copy.state_71X9yTx)
+    data_copy, treated_states = validate_string_treated_states(data_copy; treated_states = treated_states, event = event)
 
     # Once any date matching procedures are done, convert time_71X9yTx back to a string for processing in `categorical()`
     # Also keep a column vector copy as a date
@@ -344,7 +347,7 @@ function didint_plot(
             # Filter to this specific group
             group_data = filter(r -> r.ccc == ccc_val && r.time_since_treatment == et, master_lambda)
         
-            if nrow(group_data) > 1
+            if nrow(group_data) > 2
                 result = lm(@formula(y ~ 0 + intercept), group_data)
                 
                 # Get coefficient

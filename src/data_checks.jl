@@ -311,3 +311,32 @@ function validate_and_convert_dates(data_copy, time, treatment_times, date_forma
     
     return data_copy, treatment_times, start_date, end_date, all_times, freq
 end
+
+function validate_treated_states(treated_states, treatment_times, data_copy)
+    missing_states = setdiff(treated_states, data_copy.state_71X9yTx)
+    if !isempty(missing_states)
+        @warn "The following 'treated_states' could not be found in the data $(join(missing_states, ", ")).\nOnly found the following states $(join(unique(data_copy.state_71X9yTx), ", "))"
+        keep_mask = treated_states .∉ Ref(missing_states)
+        treated_states = treated_states[keep_mask]
+        treatment_times = treatment_times[keep_mask]
+        if length(treated_states) == 0 || length(treatment_times) == 0
+            error("No valid 'treated_states' were found in the data.")
+        end
+    end
+    return treated_states, treatment_times
+end
+
+function validate_string_treated_states(data_copy; treated_states = nothing, event = false)
+
+    data_copy.state_71X9yTx = string.(data_copy.state_71X9yTx)
+    if event == true
+        treated_states = string.(treated_states)
+        check_states = unique(data_copy.state_71X9yTx)
+        missing_states = setdiff(treated_states, check_states)
+        if !isempty(missing_states)
+            error("The states $missing_states could not be found among the states in the data $check_states")
+        end
+    end
+    return data_copy, treated_states
+
+end

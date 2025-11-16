@@ -83,7 +83,7 @@ function perform_date_matching(data_copy, all_times, freq, freq_multiplier, star
     one_past = end_date + period
     matched = [match_date(t, match_to_these_dates, treatment_times) for t in data_copy.time_71X9yTx]
     data_copy.time_71X9yTx = matched
-    treated_states = treated_states[(treatment_times .< one_past) .&& (treatment_times .> start_date)]
+    treated_states = isnothing(treated_states) ? nothing : treated_states[(treatment_times .< one_past) .&& (treatment_times .> start_date)]
     treatment_times = treatment_times[(treatment_times .< one_past) .&& (treatment_times .> start_date)]
     treatment_times = [match_treatment_time(t, match_to_these_dates) for t in treatment_times]
     time_to_index = Dict(time => idx for (idx, time) in enumerate(match_to_these_dates))
