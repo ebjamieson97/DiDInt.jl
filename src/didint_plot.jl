@@ -77,6 +77,7 @@ function didint_plot(
          treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing,
          date_format::Union{AbstractString, Nothing} = nothing,
          covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing} = nothing,
+         ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
          ccc::Union{AbstractString, Vector{<:AbstractString}} = "all",
          event::Bool = false,
          weights::Bool = true,
@@ -84,7 +85,13 @@ function didint_plot(
          freq::Union{AbstractString, Nothing} = nothing,
          freq_multiplier::Number = 1,
          start_date::Union{AbstractString, Number, Date, Nothing} = nothing,
-         end_date::Union{AbstractString, Number, Date, Nothing} = nothing)
+         end_date::Union{AbstractString, Number, Date, Nothing} = nothing,
+         hc::Union{AbstractString, Number} = "hc3")
+
+    # Check hc args
+    if event
+        hc = hc_checks(hc)
+    end
 
    # Do check for ccc options
    if !(ccc isa AbstractVector)
@@ -170,113 +177,20 @@ function didint_plot(
     data_copy.state_time = categorical(data_copy.state_71X9yTx .* "0IQR7q6Wei7Ejp4e" .* data_copy.time_71X9yTx)
 
     # Convert factor covariates into multiple numeric dummy variable columns
-    covariates_to_include = String[]
-    if !isnothing(covariates)
-        for cov in covariates
-            cov_type = Base.nonmissingtype(eltype(data_copy[!, cov]))
-            if cov_type <: AbstractString || cov_type <: CategoricalValue
-                unique_categories = unique(data_copy[!, cov])
-                if length(unique_categories) >= 2 
+    data_copy, covariates_to_include = process_covariates(covariates, data_copy, ref)
 
-                    if !isnothing(ref) && haskey(ref, cov)
-                        refcat = ref[cov]
-                        if !(refcat in unique_categories)
-                            error("$refcat $cov Reference category '$refcat' not found in column '$cov'.")
-                        end
-                    else
-                        refcat = first(unique_categories)
-                    end
-
-                    if length(unique_categories) > 2
-                        for category in unique_categories
-                            if category != refcat
-                                newcol = Symbol("$(cov)_$(category)")
-                                data_copy[!, newcol] = (data_copy[!, cov] .== category) .|> Int
-                                push!(covariates_to_include, string(newcol))
-                            end
-                        end
-                    elseif length(unique_categories) == 2
-                        newcol = Symbol("$(cov)_not_$(refcat)")
-                        data_copy[!, cov] = (data_copy[!, cov] .!= refcat) .|> Int
-                        push!(covariates_to_include, string(newcol))
-                    end
-                else    
-                    error("$cov Only detected one unique factor ($unique_categories) in factor variable $cov.")
-                end 
-            elseif cov_type <:Number
-                data_copy[!, cov] = convert(Vector{Float64}, data_copy[!, cov])
-                push!(covariates_to_include, cov)
-            else
-                error("$cov column was found to be ($cov_type) neither of type Number, AbstractString, nor CategoricalValue!")
-            end
-        end
-    end
-
-    # Force outcome to float64 to speed up regression (runs faster is <:Number rather than <:Union{Number, Missing})
+    # Force outcome to float64 to speed up regression (runs faster if <:Number rather than <:Union{Number, Missing})
     data_copy.outcome_71X9yTx = convert(Vector{Float64}, data_copy.outcome_71X9yTx)
 
     # And now on to the actual computations
     master_lambda = DataFrame()
     for c in ccc
+
         # Construct formula, depending on DID-INT variation
-        formula_str = "@formula(outcome_71X9yTx ~ 0 + state_time"
+        formula = construct_formula(c, covariates_to_include; forplot = true)
 
-        # Set up formula
-        if c == "int"
-            for c in covariates_to_include
-                formula_str *= " + fe(state_71X9yTx)&fe(time_71X9yTx)&$c"
-            end
-        elseif c == "time"
-            for c in covariates_to_include
-                formula_str *= " + fe(time_71X9yTx)&$c"
-            end
-        elseif c == "state"
-            for c in covariates_to_include
-                formula_str *= " + fe(state_71X9yTx)&$c"
-            end
-        elseif c == "add"
-            for c in covariates_to_include
-                formula_str *= " + fe(time_71X9yTx)&$c + fe(state_71X9yTx)&$c"
-            end
-        elseif c == "hom"
-            for c in covariates_to_include
-                formula_str *= " + $c"
-            end
-        elseif c == "none"
-            formula_str *= ""
-        end 
-        formula_str *= ")"
-        formula_expr = Meta.parse(formula_str)
-        formula = eval(formula_expr)
-
-        # Call GC.gc() before running big FixedEffectsModels regression
-        GC.gc()
-
-        stage1 = reg(data_copy, formula, contrasts = Dict(:state_71X9yTx => DummyCoding(), :time_71X9yTx => DummyCoding()),
-                         save = false)
-
-        # Recover lambdas
-        state_time = split.(replace.(coefnames(stage1), "state_time: " => ""), "0IQR7q6Wei7Ejp4e")
-        coefs = coef(stage1)
-        if c == "hom" && !isnothing(covariates)
-            keep_mask = map(x -> !(x[1] in covariates), state_time)
-            state_time = state_time[keep_mask]
-            coefs = coefs[keep_mask]
-        end
-        lambda_df = DataFrame(state = first.(state_time), time = last.(state_time))
-        lambda_df.lambda = coefs
-
-        # Handle the edge case
-        expected_df = unique(data_copy[:, [:state_71X9yTx, :time_71X9yTx]])
-        expected_df = rename(expected_df, :state_71X9yTx => :state, :time_71X9yTx => :time)
-        lambda_df = leftjoin(expected_df, lambda_df, on = [:state, :time])
-        lambda_df.lambda = coalesce.(lambda_df.lambda, 0.0)
-
-        # Parse the treatment_times and the time column to dates for staggered adoption
-        lambda_df.time = Date.(lambda_df.time)
-
-        # Note the ccc for this loop
-        lambda_df.ccc .= c
+        # Run the fixed effects model and get back the dataframe of means (or means residualized by covariates) for each period at each state
+        lambda_df, _, _ = run_fixed_effects_model(data_copy, formula, c, covariates)
 
         # Append master data
         master_lambda = [master_lambda;lambda_df]
@@ -348,40 +262,31 @@ function didint_plot(
             group_data = filter(r -> r.ccc == ccc_val && r.time_since_treatment == et, master_lambda)
         
             if nrow(group_data) > 2
-                result = lm(@formula(y ~ 0 + intercept), group_data)
-                
-                # Get coefficient
-                coef_val = coef(result)[1]
 
-                # Manual HC1 robust standard error calculation
-                X = hcat(group_data.intercept) 
-                residuals = group_data.y .- X * coef_val 
-                n = length(residuals)
-                k = 1 
+                X = reshape(group_data.intercept, :, 1)
+                Y = convert(Vector{Float64}, group_data.y)
+                beta_hat = safe_solve(X, Y)
 
-                # HC1 adjustment factor (Stata default)
-                adj = n / (n - k)
-
-                # Compute meat of sandwich estimator
-                bread = inv(X' * X)
-                meat = sum((residuals[i]^2) * (X[i, :]' * X[i, :]) for i in 1:n)
-
-                # HC1 robust variance-covariance matrix
-                vcov_robust = adj * bread * meat * bread
-
-                # Standard error is the square root of the diagonal
-                se_val = sqrt(vcov_robust[1, 1])
-                
-                # Calculate critical t-value for CI
-                df = dof_residual(result)
-                t_crit = quantile(TDist(df), 1 - (1 - ci) / 2)
-                
-                # Update master_lambda for this group
                 mask = (master_lambda.ccc .== ccc_val) .& (master_lambda.time_since_treatment .== et)
-                master_lambda[mask, :fitted_y] .= coef_val  
-                master_lambda[mask, :se] .= se_val
-                master_lambda[mask, :ci_lower] .= coef_val - t_crit * se_val
-                master_lambda[mask, :ci_upper] .= coef_val + t_crit * se_val
+                if !ismissing(beta_hat)
+                    resid = Y - X * beta_hat
+                    beta_hat_cov = compute_hc_covariance(X, resid, hc)
+                    beta_hat_var = diag(beta_hat_cov)
+                    beta_hat_se = sqrt(beta_hat_var[1])
+                    dof = length(Y) - 1
+                    t_crit = quantile(TDist(dof), 1 - ((1 - ci) / 2))
+                    beta_hat = first(beta_hat)
+                    master_lambda[mask, :fitted_y] .= beta_hat
+                    master_lambda[mask, :se] .= beta_hat_se
+                    master_lambda[mask, :ci_lower] .= beta_hat - t_crit * beta_hat_se
+                    master_lambda[mask, :ci_upper] .= beta_hat + t_crit * beta_hat_se
+                else
+                    master_lambda[mask, :fitted_y] .= missing
+                    master_lambda[mask, :se] .= missing
+                    master_lambda[mask, :ci_lower] .= missing
+                    master_lambda[mask, :ci_upper] .= missing
+                end
+                
             end
         end
     

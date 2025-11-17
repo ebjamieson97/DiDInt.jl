@@ -1,3 +1,23 @@
+
+## The following functions have to do with data checks/validation/processing common to both didint_plot and didint_estimate
+function hc_checks(hc)
+
+    # Check hc args
+    if hc isa Number 
+        hc = round(hc)
+        if !(hc in [0, 1, 2, 3])
+            error("'hc' must be one of 0, 1, 2, or 3.")
+        end
+        hc = string("hc", hc)
+    end
+    hc = lowercase(replace(hc, r"\s" => ""))
+    if !(hc in ["hc0", "hc1", "hc2", "hc3"])
+        error("'hc' must be one of $(join(["hc0", "hc1", "hc2", "hc3"], ","))")
+    end
+
+    return hc
+end
+
 function get_sep_info(date::String)
     sep_positions = findall(c -> c in ['/', '-'], date)
     sep_types = unique(date[i] for i in sep_positions)
@@ -338,5 +358,53 @@ function validate_string_treated_states(data_copy; treated_states = nothing, eve
         end
     end
     return data_copy, treated_states
+
+end
+
+function process_covariates(covariates, data_copy, ref)
+    # Convert factor covariates into multiple numeric dummy variable columns
+    covariates_to_include = String[]
+    if !isnothing(covariates)
+        for cov in covariates
+            cov_type = Base.nonmissingtype(eltype(data_copy[!, cov]))
+            if cov_type <: AbstractString || cov_type <: CategoricalValue
+                unique_categories = unique(data_copy[!, cov])
+                if length(unique_categories) >= 2 
+
+                    if !isnothing(ref) && haskey(ref, cov)
+                        refcat = ref[cov]
+                        if !(refcat in unique_categories)
+                            error("Reference category '$refcat' not found in column '$cov'.")
+                        end
+                    else
+                        refcat = first(unique_categories)
+                    end
+
+                    if length(unique_categories) > 2
+                        for category in unique_categories
+                            if category != refcat
+                                newcol = Symbol("$(cov)_$(category)")
+                                data_copy[!, newcol] = (data_copy[!, cov] .== category) .|> Int
+                                push!(covariates_to_include, string(newcol))
+                            end
+                        end
+                    elseif length(unique_categories) == 2
+                        newcol = Symbol("$(cov)_not_$(refcat)")
+                        data_copy[!, cov] = (data_copy[!, cov] .!= refcat) .|> Int
+                        push!(covariates_to_include, string(newcol))
+                    end
+                else    
+                    error("$cov Only detected one unique factor ($unique_categories) in factor variable $cov.")
+                end 
+            elseif cov_type <:Number
+                data_copy[!, cov] = convert(Vector{Float64}, data_copy[!, cov])
+                push!(covariates_to_include, cov)
+            else
+                error("$cov column was found to be ($cov_type) neither of type Number, AbstractString, nor CategoricalValue!")
+            end
+        end
+    end
+
+    return data_copy, covariates_to_include
 
 end

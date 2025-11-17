@@ -86,7 +86,11 @@ function didint(outcome::Union{AbstractString, Symbol},
                 verbose::Bool = true,
                 seed::Number = rand(1:1000000),
                 use_pre_controls::Bool = false,
-                notyet::Union{Nothing, Bool} = nothing)
+                notyet::Union{Nothing, Bool} = nothing,
+                hc::Union{AbstractString, Number} = "hc3")
+
+    # Check hc args
+    hc = hc_checks(hc)
 
     # Let notyet override use_pre_controls
     use_pre_controls = isnothing(notyet) ? use_pre_controls : notyet
@@ -247,147 +251,23 @@ function didint(outcome::Union{AbstractString, Symbol},
     data_copy.state_time = categorical(data_copy.state_71X9yTx .* "0IQR7q6Wei7Ejp4e" .* data_copy.time_71X9yTx)
 
     # Convert factor covariates into multiple numeric dummy variable columns
-    covariates_to_include = String[]
-    if !isnothing(covariates)
-        for cov in covariates
-            cov_type = Base.nonmissingtype(eltype(data_copy[!, cov]))
-            if cov_type <: AbstractString || cov_type <: CategoricalValue
-                unique_categories = unique(data_copy[!, cov])
-                if length(unique_categories) >= 2 
+    data_copy, covariates_to_include = process_covariates(covariates, data_copy, ref)
 
-                    if !isnothing(ref) && haskey(ref, cov)
-                        refcat = ref[cov]
-                        if !(refcat in unique_categories)
-                            error("$refcat $cov Reference category '$refcat' not found in column '$cov'.")
-                        end
-                    else
-                        refcat = first(unique_categories)
-                    end
-
-                    if length(unique_categories) > 2
-                        for category in unique_categories
-                            if category != refcat
-                                newcol = Symbol("$(cov)_$(category)")
-                                data_copy[!, newcol] = (data_copy[!, cov] .== category) .|> Int
-                                push!(covariates_to_include, string(newcol))
-                            end
-                        end
-                    elseif length(unique_categories) == 2
-                        newcol = Symbol("$(cov)_not_$(refcat)")
-                        data_copy[!, cov] = (data_copy[!, cov] .!= refcat) .|> Int
-                        push!(covariates_to_include, string(newcol))
-                    end
-                else    
-                    error("$cov Only detected one unique factor ($unique_categories) in factor variable $cov.")
-                end 
-            elseif cov_type <:Number
-                data_copy[!, cov] = convert(Vector{Float64}, data_copy[!, cov])
-                push!(covariates_to_include, cov)
-            else
-                error("$cov column was found to be ($cov_type) neither of type Number, AbstractString, nor CategoricalValue!")
-            end
-        end
-    end 
-
-    # Force outcome to float64 to speed up regression (runs faster is <:Number rather than <:Union{Number, Missing})
+    # Force outcome to float64 to speed up regression (runs faster if <:Number rather than <:Union{Number, Missing})
     data_copy.outcome_71X9yTx = convert(Vector{Float64}, data_copy.outcome_71X9yTx)
 
     # Construct formula, depending on DID-INT variation
-    formula_str = "@formula(outcome_71X9yTx ~ 0 + state_time"
+    formula = construct_formula(ccc, covariates_to_include)
 
-    # Set up formula
-    ccc = lowercase(ccc)
-    ccc = replace(ccc, r"\s" => "")
-    if ccc == "int"
-        for c in covariates_to_include
-            formula_str *= " + fe(state_71X9yTx)&fe(time_71X9yTx)&$c"
-        end
-    elseif ccc == "time"
-        for c in covariates_to_include
-            formula_str *= " + fe(time_71X9yTx)&$c"
-        end
-    elseif ccc == "state"
-        for c in covariates_to_include
-            formula_str *= " + fe(state_71X9yTx)&$c"
-        end
-    elseif ccc == "add"
-        for c in covariates_to_include
-            formula_str *= " + fe(time_71X9yTx)&$c + fe(state_71X9yTx)&$c"
-        end
-    elseif ccc == "hom"
-        for c in covariates_to_include
-            formula_str *= " + $c"
-        end
-    else 
-        error("'ccc' must be set to one of \"int\", \"time\", \"state\", \"add\", or \"hom\".")
-    end 
-    formula_str *= ")"
-    formula_expr = Meta.parse(formula_str)
-    formula = eval(formula_expr)
-
-    # Call GC.gc() before running big FixedEffectsModels regression
-    GC.gc()
-
-    # Determine if corner case (i.e. only two states common adoption)
-    cornercase = false
-    if common_adoption && length(unique(data_copy.state_71X9yTx)) == 2
-        cornercase = true
-    end 
-
-    # Run FixedEffectsModels regression (stage 1)
-    if cornercase
-        stage1 = reg(data_copy, formula, Vcov.robust(), contrasts = Dict(:state_71X9yTx => DummyCoding(), :time_71X9yTx => DummyCoding()),
-                     save = false)
-    else
-        stage1 = reg(data_copy, formula, contrasts = Dict(:state_71X9yTx => DummyCoding(), :time_71X9yTx => DummyCoding()),
-                     save = false)
-    end
-
-    # Recover lambdas
-    state_time = split.(replace.(coefnames(stage1), "state_time: " => ""), "0IQR7q6Wei7Ejp4e")
-    coefs = coef(stage1)
-    if ccc == "hom" && !isnothing(covariates)
-        keep_mask = map(x -> !(x[1] in covariates), state_time)
-        state_time = state_time[keep_mask]
-        coefs = coefs[keep_mask]
-    end 
-    
-    lambda_df = DataFrame(state = first.(state_time), time = last.(state_time))
-    lambda_df.lambda = coefs
-
-    # Handle edge case where FE structure drops some state-time coefficients,
-    # that is, effect is entirely absorbed by fixed effects thus the estimate from
-    # the state_time dummy should be exactly zero
-    expected_df = unique(data_copy[:, [:state_71X9yTx, :time_71X9yTx]])
-    expected_df = rename(expected_df, :state_71X9yTx => :state, :time_71X9yTx => :time)
-    lambda_df = leftjoin(expected_df, lambda_df, on = [:state, :time])
-    lambda_df.lambda = coalesce.(lambda_df.lambda, 0.0)
-
-    # Common adoption and only 2 states can still compue SE manually
-    if cornercase
-        vcov_matrix = vcov(stage1)[1:4,1:4]
-
-        treat_post_var = vcov_matrix[1,1]
-        treat_pre_var = vcov_matrix[2,2]
-        treat_cov = vcov_matrix[2,1]
-        control_post_var = vcov_matrix[3,3]
-        control_pre_var = vcov_matrix[4,4]
-        control_cov = vcov_matrix[4,3]
-
-        cornercase_se = sqrt(treat_post_var + treat_pre_var + control_post_var + control_pre_var - 2*treat_cov - 2*control_cov)
-
-    end 
+    # Run the fixed effects model and get back the dataframe of means (or means residualized by covariates) for each period at each state
+    lambda_df, cornercase, cornercase_se = run_fixed_effects_model(data_copy, formula, ccc, covariates,
+                                                                   common_adoption = common_adoption, staggered_adoption = staggered_adoption) 
 
     # Compute diff for each treated state
     unique_states = unique(lambda_df.state)
     diff_df = DataFrame(state = String[], treated_time = Date[],
                         t = Date[], r1 = Date[], diff = Float64[],
                         treat = Int[], n = Int[], n_t = Int[])
-
-    # Parse the treatment_times and the time column to dates for staggered adoption
-    if staggered_adoption
-        lambda_df.time = Date.(lambda_df.time)
-    end    
 
     # Define a function that initializes the results dataframe columns
     init_column() = Vector{Union{Missing, Float64}}(missing, nrows)
@@ -572,7 +452,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                     W = fill(nothing, nrow(temp))
                 end            
                 results.treatment_time[i] = trt
-                result_dict = final_regression_results(X, Y, W = W)
+                result_dict = final_regression_results(X, Y, W = W, hc = hc)
                 results.att_cohort[i] = result_dict["beta_hat"]
                 results.se_att_cohort[i] = result_dict["beta_hat_se"]
                 results.pval_att_cohort[i] = result_dict["pval_att"] 
@@ -588,7 +468,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_cohort)
             W = results.weights
-            result_dict = final_regression_results(X, Y, W = W)
+            result_dict = final_regression_results(X, Y, W = W, hc = hc)
             results.agg_att[1] = result_dict["beta_hat"]
             results.se_agg_att[1] = result_dict["beta_hat_se"]
             results.pval_agg_att[1] = result_dict["pval_att"]
@@ -638,7 +518,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 results.time[i] = t
                 results.r1[i] = r1
                 results.gvar[i] = gvar
-                result_dict = final_regression_results(X, Y, W = W)
+                result_dict = final_regression_results(X, Y, W = W, hc = hc)
                 results.att_gt[i] = result_dict["beta_hat"]
                 results.se_att_gt[i] = result_dict["beta_hat_se"]
                 results.pval_att_gt[i] = result_dict["pval_att"] 
@@ -656,7 +536,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_gt)
             W = results.weights
-            result_dict = final_regression_results(X, Y, W = W)
+            result_dict = final_regression_results(X, Y, W = W, hc = hc)
             results.agg_att[1] = result_dict["beta_hat"]
             results.se_agg_att[1] = result_dict["beta_hat_se"]
             results.pval_agg_att[1] = result_dict["pval_att"]
@@ -703,7 +583,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                     W = fill(nothing, nrow(temp))
                 end 
                 results.state[i] = state
-                result_dict = final_regression_results(X, Y, W = W)
+                result_dict = final_regression_results(X, Y, W = W, hc = hc)
                 results.att_s[i] = result_dict["beta_hat"]
                 results.se_att_s[i] = result_dict["beta_hat_se"]
                 results.pval_att_s[i] = result_dict["pval_att"] 
@@ -722,7 +602,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_s)
             W = results.weights
-            result_dict = final_regression_results(X, Y, W = W)
+            result_dict = final_regression_results(X, Y, W = W, hc = hc)
             results.agg_att[1] = result_dict["beta_hat"]
             results.se_agg_att[1] = result_dict["beta_hat_se"]
             results.pval_agg_att[1] = result_dict["pval_att"]
@@ -751,7 +631,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             else
                 W = fill(nothing, nrow(diff_df))
             end 
-            result_dict = final_regression_results(X, Y, W = W)
+            result_dict = final_regression_results(X, Y, W = W, hc = hc)
             results.agg_att[1] = result_dict["beta_hat"]
             results.se_agg_att[1] = result_dict["beta_hat_se"]
             results.pval_agg_att[1] = result_dict["pval_att"]
@@ -804,7 +684,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 results.state[i] = state
                 results.gvar[i] = gvar
                 results.t[i] = t
-                result_dict = final_regression_results(X, Y, W = W)
+                result_dict = final_regression_results(X, Y, W = W, hc = hc)
                 results.att_sgt[i] = result_dict["beta_hat"]
                 results.se_att_sgt[i] = result_dict["beta_hat_se"]
                 results.pval_att_sgt[i] = result_dict["pval_att"] 
@@ -820,7 +700,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_sgt)
             W = results.weights
-            result_dict = final_regression_results(X, Y, W = W)
+            result_dict = final_regression_results(X, Y, W = W, hc = hc)
             results.agg_att[1] = result_dict["beta_hat"]
             results.se_agg_att[1] = result_dict["beta_hat_se"]
             results.pval_agg_att[1] = result_dict["pval_att"]
@@ -877,7 +757,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                     W = fill(nothing, nrow(temp))
                 end 
                 results.periods_post_treat[i] = t
-                result_dict = final_regression_results(X, Y, W = W)
+                result_dict = final_regression_results(X, Y, W = W, hc = hc)
                 results.att_t[i] = result_dict["beta_hat"]
                 results.se_att_t[i] = result_dict["beta_hat_se"]
                 results.pval_att_t[i] = result_dict["pval_att"] 
@@ -893,7 +773,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_t)
             W = results.weights
-            result_dict = final_regression_results(X, Y, W = W)
+            result_dict = final_regression_results(X, Y, W = W, hc = hc)
             results.agg_att[1] = result_dict["beta_hat"]
             results.se_agg_att[1] = result_dict["beta_hat_se"]
             results.pval_agg_att[1] = result_dict["pval_att"]
@@ -951,7 +831,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             else
                 W = fill(nothing, nrow(diff_df))
             end 
-            result_dict = final_regression_results(X, Y, W = W)
+            result_dict = final_regression_results(X, Y, W = W, hc = hc)
             results.agg_att[1] = result_dict["beta_hat"]
             if cornercase
                 results.se_agg_att[1] = cornercase_se
@@ -1004,7 +884,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                     W = fill(nothing, nrow(temp))
                 end 
                 results.state[i] = state
-                result_dict = final_regression_results(X, Y, W = W)
+                result_dict = final_regression_results(X, Y, W = W, hc = hc)
                 results.att_s[i] = result_dict["beta_hat"]
                 results.se_att_s[i] = result_dict["beta_hat_se"]
                 results.pval_att_s[i] = result_dict["pval_att"] 
@@ -1023,7 +903,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             X = ones(nrow(results), 1)
             Y = convert(Vector{Float64}, results.att_s)
             W = results.weights
-            result_dict = final_regression_results(X, Y, W = W)
+            result_dict = final_regression_results(X, Y, W = W, hc = hc)
             results.agg_att[1] = result_dict["beta_hat"]
             results.se_agg_att[1] = result_dict["beta_hat_se"]
             results.pval_agg_att[1] = result_dict["pval_att"]
@@ -1035,8 +915,6 @@ function didint(outcome::Union{AbstractString, Symbol},
 
         end 
     end 
-
-
 
 end
 
@@ -1106,52 +984,69 @@ function design_matrix_time_agg(temp::DataFrame, dummy_cols::Vector{Symbol}, tre
     return X
 end
 
-function final_regression_results(X::Matrix{<:Number}, Y::Vector{<:Number};
-                                  W::Vector{T} where T <: Union{Nothing, Number} = [nothing])
+function final_regression_results(X::Matrix, Y::Vector; W::Vector = [nothing], hc::AbstractString = "hc3")
+
+    n = length(Y)
+
+    # Check for and remove missing values
+    # Build mask for each component
+    x_valid = [!any(ismissing, X[i, :]) for i in 1:n]
+    y_valid = .!ismissing.(Y)
+
+    if eltype(W) <: Nothing
+        valid_mask = x_valid .& y_valid
+    else
+        w_valid = .!ismissing.(W)
+        valid_mask = x_valid .& y_valid .& w_valid
+    end
+
+    # Filter out missing observations
+    X = X[valid_mask, :]
+    Y = Y[valid_mask]
+    if eltype(W) <: Number
+        W = W[valid_mask]
+    end
+    
+    # Check if we have enough observations left
+    ncolx = size(X, 2)
+    n = length(Y)
+    if n <= ncolx
+        @warn "Insufficient observations after dropping missing values (n = $n, k = $ncolx)"
+        return Dict("beta_hat" => missing, "beta_hat_se" => missing, 
+                   "pval_att" => missing, "beta_hat_se_jknife" => missing, 
+                   "pval_att_jknife" => missing)
+    end
+
     beta_hat = nothing
     beta_hat_cov = nothing
-    ncolx = size(X, 2)
 
     # Run OLS (normally if weights aren't provided, and scale (X,Y) -> (Xw,Yw) otherwise)
     if eltype(W) <: Nothing
-        try
-            beta_hat = (X \ Y) 
-        catch e
-            @warn "Direct solve failed, using pseudoinverse $e"
-            beta_hat = pinv(X' * X) * X' * Y
+        beta_hat = safe_solve(X, Y)
+        if ismissing(beta_hat)
+            return Dict("beta_hat" => missing, "beta_hat_se" => missing, "pval_att" => missing,
+                       "beta_hat_se_jknife" => missing, "pval_att_jknife" => missing)
         end
         resid = Y - X * beta_hat
-        omega = Diagonal(resid .^ 2)
-        try
-            beta_hat_cov = inv(X' * X) * (X' * omega * X) * inv(X' * X)
-        catch e
-            @warn "Direct solve failed, using pseudoinverse $e"
-            beta_hat_cov = pinv(X' * X) * (X' * omega * X) * pinv(X' * X)
-        end 
+        beta_hat_cov = compute_hc_covariance(X, resid, hc)
         beta_hat_se_jknife = compute_jknife_se(X, Y, beta_hat[ncolx]) 
     elseif eltype(W) <: Number
         sw = sqrt.(W)           
         Xw = X .* sw            
         Yw = Y .* sw
-        try
-            beta_hat = (Xw) \ (Yw) 
-        catch e
-            @warn "Direct solve failed, using pseudoinverse $e"
-            beta_hat = pinv(Xw' * Xw) * Xw' * Yw
+        beta_hat = safe_solve(Xw, Yw)
+        if ismissing(beta_hat)
+            return Dict("beta_hat" => missing, "beta_hat_se" => missing, "pval_att" => missing,
+                       "beta_hat_se_jknife" => missing, "pval_att_jknife" => missing)
         end
         resid_w = Yw - Xw * beta_hat
-        Ωw = Diagonal(resid_w.^2)
-        try
-            beta_hat_cov = inv(Xw'Xw) * (Xw' * Ωw * Xw) * inv(Xw'Xw)
-        catch e 
-            @warn "Direct solve failed, using pseudoinverse $e"
-            beta_hat_cov = pinv(Xw'Xw) * (Xw' * Ωw * Xw) * pinv(Xw'Xw)
-        end 
+        beta_hat_cov = compute_hc_covariance(Xw, resid_w, hc)
         beta_hat_se_jknife = compute_jknife_se(Xw, Yw, beta_hat[ncolx]) 
     end 
+
     beta_hat_var = diag(beta_hat_cov)
     beta_hat_se = sqrt(beta_hat_var[ncolx]) 
-    dof = length(Y) - ncolx
+    dof = n - ncolx
     pval_att = dof > 0 ? 2 * (1 - cdf(TDist(dof), abs(beta_hat[ncolx] / beta_hat_se))) : missing 
     pval_att_jknife = dof > 0 && !ismissing(beta_hat_se_jknife) ? 2 * (1 - cdf(TDist(dof), abs(beta_hat[ncolx] / beta_hat_se_jknife))) : missing
     result_dict = Dict("beta_hat" => beta_hat[ncolx], "beta_hat_se" => beta_hat_se, "pval_att" => pval_att,
