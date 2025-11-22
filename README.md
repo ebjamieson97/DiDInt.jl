@@ -5,7 +5,7 @@ Intersection difference-in-differences!
 
 To learn more about the common causal covariates assumption and intersection difference-in-differences, please see [Karim & Webb (2025)](https://arxiv.org/abs/2412.14447).
 
-A Stata wrapper for this package is available here: **[didintjl]**(https://github.com/ebjamieson97/didintjl).
+A Stata wrapper for this package is available here: **[didintjl](https://github.com/ebjamieson97/didintjl)**.
 
 ## Installation 
 ```
