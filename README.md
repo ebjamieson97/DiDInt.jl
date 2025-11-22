@@ -49,57 +49,57 @@ using DiDInt
 ### Parameters
 
 #### Required Parameters
-- **outcome** (Union{AbstractString, Symbol}):  
+- **outcome**
   Name of the column which identifies the outcome of interest.
-- **state** (Union{AbstractString, Symbol}):  
+- **state**
   Name of the column which identifies the state membership of the observation.
-- **time** (Union{AbstractString, Symbol}):  
+- **time**
   Name of the column which identifies the date of the observation.
-- **data** (DataFrame):  
+- **data** 
   The DataFrame to be used for the analysis.
 
 #### Treatment Specification
-- **gvar** (Union{AbstractString, Symbol, Nothing} = nothing):  
+- **gvar**  
   Name of the column which indicates time of first treatment for each state.
-- **treated_states** (Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing):  
+- **treated_states**  
   A vector of strings (or a single string) noting the treated state(s).
-- **treatment_times** (Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing):  
+- **treatment_times**  
   A vector (or single entry) denoting the associated treatment times of the treated_states. The order should match `treated_states` (i.e., the first treated state corresponds to the first treatment time, and so on).
 
 #### Model Specification
-- **ccc** (AbstractString = "int"):  
+- **ccc**  
   Specify which version of DID-INT should be used. Options: `"hom"`, `"time"`, `"state"`, `"add"`, `"int"`.
-- **agg** (AbstractString = "cohort"):  
+- **agg**  
   Enter the aggregation method as a string. Options: `"cohort"`, `"simple"`, `"state"`, `"sgt"`, `"none"`.
-- **weighting** (AbstractString = "both"):  
+- **weighting**  
   Specify which weighting method should be used. Options: `"both"`, `"att"`, `"diff"`, `"none"`.
-- **covariates** (Union{T, Vector{T}} where T <: Union{AbstractString, Symbol} = nothing):  
+- **covariates**  
   A vector of covariates entered as either strings or symbols (or a single covariate string or symbol), or `nothing` (default).
-- **notyet** (Bool = false):  
+- **notyet**  
   Determine if pre-treatment periods from treated states should be used as controls.
-- **ref** (Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing):  
+- **ref**  
   A dictionary specifying which category in a categorical variable should be used as the reference (baseline) category.
 
 #### Date Processing & Period Grid Construction
-- **date_format** (Union{AbstractString, Nothing} = nothing):  
+- **date_format**  
   Date format (e.g., `"yyyy"` or `"yyyy-mm-dd"`) to be used when parsing string dates from the time column, or `start_date`, `end_date`, and `treatment_times` arguments.
-- **freq** (Union{AbstractString, Nothing} = nothing):  
+- **freq**  
   A string indicating the desired timeframe of a period for the analysis for staggered adoption scenarios. Options: `"year"`, `"month"`, `"week"`, `"day"`.
-- **freq_multiplier** (Number = 1):  
+- **freq_multiplier**  
   An integer by which the `freq` argument should be multiplied in a staggered adoption scenario (e.g., if a two-year period is desired, set `freq = "year"` and `freq_multiplier = 2`).
-- **start_date** (Union{AbstractString, Number, Date, Nothing} = nothing):  
+- **start_date**  
   Any data prior to this date is dropped, and serves as the starting date for the period grid construction if activated.
-- **end_date** (Union{AbstractString, Number, Date, Nothing} = nothing):  
+- **end_date**  
   Any data after this date is dropped, and serves as the end date for the period grid construction if activated.
 
 #### Inference
-- **nperm** (Number = 999):  
+- **nperm**  
   The number of unique permutations (not including the initial assignment of treatment times) to be considered when performing the randomization inference.
-- **verbose** (Bool = true):  
+- **verbose**  
   A boolean option for displaying progress of the randomization procedure.
-- **seed** (Number = rand(1:1000000)):  
+- **seed**  
   An integer to set the random seed for the randomization inference procedure.
-- **hc** (Union{AbstractString, Number} = "hc3"):  
+- **hc**  
   Specify which heteroskedasticity-consistent covariance matrix estimator (HCCME) should be used. Options: `0`, `1`, `2`, `3`, `4` (or `"hc0"`, `"hc1"`, `"hc2"`, `"hc3"`, `"hc4"`).
 
 ### Returns
@@ -141,51 +141,51 @@ using DiDInt
 ### Parameters
 
 #### Required Parameters
-- **outcome** (Union{AbstractString, Symbol}):  
+- **outcome**  
   Input the name of the column which identifies the outcome of interest.
-- **state** (Union{AbstractString, Symbol}):  
+- **state**  
   Input the name of the column which identifies the state membership of the observation.
-- **time** (Union{AbstractString, Symbol}):  
+- **time**  
   Input the name of the column which identifies the date of the observation.
-- **data** (DataFrame):  
+- **data**  
   The DataFrame to be used for the analysis.
 
 #### Treatment Specification
-- **gvar** (Union{AbstractString, Symbol, Nothing} = nothing):  
+- **gvar**  
   Name of the column which indicates time of first treatment for each state.
-- **treatment_times** (Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing):  
+- **treatment_times**  
   A vector (or single entry) denoting the associated treatment times of the treated_states. The order should match `treated_states` (i.e., the first treated state corresponds to the first treatment time, and so on).
 
 #### Model Specifications
-- **ccc** (Union{AbstractString, Vector{<:AbstractString}} = "all"):  
+- **ccc**  
   Specify which versions of DID-INT should be used. Options are either `"all"`, or any combination of: `"none"`, `"hom"`, `"time"`, `"state"`, `"add"`, `"int"`.
-- **covariates** (Union{T, Vector{T}} where T <: Union{AbstractString, Symbol} = nothing):  
+- **covariates**  
   A vector of covariates entered as either strings or symbols (or a single covariate string or symbol), or `nothing` (default).
-- **ref** (Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing):  
+- **ref**  
   A dictionary specifying which category in a categorical variable should be used as the reference (baseline) category.
 
 #### Event Study Plot Options
-- **event** (Bool = false):  
+- **event**  
   Specify if data should be prepared for an event study plot as opposed to a parallel trends plot.
-- **treated_states** (Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing):  
+- **treated_states**  
   A vector of strings (or a single string) noting the treated state(s).
-- **weights** (Bool = true):  
+- **weights**  
   Whether to use weighted means when computing event study estimates. If `true`, estimates are computed as weighted averages of state-level means for each period relative to treatment; if `false`, uses simple unweighted averages.
-- **ci** (Number = 0.95):  
+- **ci**  
   Define the size of confidence bands for the event study plot.
-- **hc** (Union{AbstractString, Number} = "hc3"):  
+- **hc**  
   Specify which heteroskedasticity-consistent covariance matrix estimator (HCCME) should be used. Options: `0`, `1`, `2`, `3`, `4` (or `"hc0"`, `"hc1"`, `"hc2"`, `"hc3"`, `"hc4"`).
 
 #### Date Processing & Period Grid Construction
-- **date_format** (Union{AbstractString, Nothing} = nothing):  
+- **date_format**  
   Date format (e.g., `"yyyy"` or `"yyyy-mm-dd"`) to be used when parsing string dates from the time column, or `start_date`, `end_date`, and `treatment_times` arguments.
-- **freq** (Union{AbstractString, Nothing} = nothing):  
+- **freq**  
   A string indicating the desired timeframe of a period for the analysis for staggered adoption scenarios. Options: `"year"`, `"month"`, `"week"`, `"day"`.
-- **freq_multiplier** (Number = 1):  
+- **freq_multiplier**  
   An integer by which the `freq` argument should be multiplied in a staggered adoption scenario (e.g., if a two-year period is desired, set `freq = "year"` and `freq_multiplier = 2`).
-- **start_date** (Union{AbstractString, Number, Date, Nothing} = nothing):  
+- **start_date**  
   Any data prior to this date is dropped, and serves as the starting date for the period grid construction if activated.
-- **end_date** (Union{AbstractString, Number, Date, Nothing} = nothing):  
+- **end_date**  
   Any data after this date is dropped, and serves as the end date for the period grid construction if activated.
 
 ### Returns

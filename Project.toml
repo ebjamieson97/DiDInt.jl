@@ -1,7 +1,7 @@
 name = "DiDInt"
 uuid = "a755adf4-2e2b-446b-93e8-5a1a900eb7ed"
 authors = ["Eric Jamieson <ericbrucejamieson@gmail.com>"]
-version = "0.6.5"
+version = "0.6.7"
 
 [deps]
 CategoricalArrays = "324d7699-5711-5eae-9e2f-1d82baa6b597"
