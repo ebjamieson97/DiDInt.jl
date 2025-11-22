@@ -1,15 +1,29 @@
 """
-    didint(outcome::AbstractString, state::AbstractString,
-           time::AbstractString, data::DataFrame,
-           treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number},
-           treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date};
+    didint(
+           outcome::Union{AbstractString, Symbol},
+           state::Union{AbstractString, Symbol},
+           time::Union{AbstractString, Symbol},
+           data::DataFrame;
+           gvar::Union{AbstractString, Symbol, Nothing} = nothing,
+           treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
+           treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing,
            date_format::Union{AbstractString, Nothing} = nothing,
-           covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing} = nothing,
-           ccc::AbstractString = "int", agg::AbstractString = "state",
+           covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol} = nothing,
+           ccc::AbstractString = "int",
+           agg::AbstractString = "cohort",
+           weighting::AbstractString = "both",
            ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
-           freq::Union{AbstractString, Nothing} = nothing, freq_multiplier::Number = 1,
-           autoadjust::Bool = false, nperm::Number = 1000, verbose::Bool = true,
-           seed::Number = rand(1:1000000))
+           freq::Union{AbstractString, Nothing} = nothing,
+           freq_multiplier::Number = 1,
+           start_date::Union{AbstractString, Number, Date, Nothing} = nothing,
+           end_date::Union{AbstractString, Number, Date, Nothing} = nothing,
+           nperm::Number = 999,
+           verbose::Bool = true,
+           seed::Number = rand(1:1000000),
+           use_pre_controls::Bool = false,
+           notyet::Union{Nothing, Bool} = nothing,
+           hc::Union{AbstractString, Number} = "hc3"
+          )
 
 The `didint()` function estimates the average effect of treatment on the treated (ATT)
 while accounting for covariates that may vary by state, time, or by both state and time simultaneously.
@@ -21,45 +35,72 @@ the second element in `treated_states` refers to the state treated at the date e
 in `treated_times`, and so on. 
 
 # Parameters
-- `outcome::AbstractString` 
+
+## Required Parameters
+- `outcome::Union{AbstractString, Symbol}` 
     Input the name of the column which identifies the outcome of interest.
-- `state::AbstractString` 
+- `state::Union{AbstractString, Symbol}` 
     Input the name of the column which identifies the state membership of the observation.
-- `time::AbstractString`
+- `time::Union{AbstractString, Symbol}`
     Input the name of the column which identifies the date of the observation.
 - `data::DataFrame`
     The DataFrame to be used for the analysis.
-- `treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number}`
+
+## Treatment Specification
+- `gvar::Union{AbstractString, Symbol, Nothing} = nothing`
+    Name of the column which indicates time of first treatment for each state.
+- `treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing`
     A vector of strings (or a single string) noting the treated state(s).
-- `treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date}`
+- `treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing`
     A vector (or single entry) denoting the associated treatment times of the 'treated_states'.
-- `covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing}` 
-    A vector of covariates entered as strings (or a single covariate string),
-    or, `nothing` (default).
+
+## Model Specification
 - `ccc::AbstractString = "int"`
     Specify which version of DID-INT should be used.
-    Options are: `"hom"`, `"time"`, `"state"`, "`add`", and `"int"` (default). 
+    Options are: `"hom"`, `"time"`, `"state"`, "`add`", and `"int"`. 
 - `agg::AbstractString = "cohort"` 
-    Enter the weighting method as a string.
-    Options are: `"cohort"` (default), `"simple"`, `"state"`, `"sgt"`, `"none"`.
+    Enter the aggregation method as a string.
+    Options are: `"cohort"`, `"simple"`, `"state"`, `"sgt"`, `"none"`.
+- `weighting::AbstractString = "both"`
+    Specify which weighting method should be used.
+    Options are: `"both"`, `"att"`, `"diff"`, or `"none"`.
+- `covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol} = nothing` 
+    A vector of covariates entered as either strings or symbols (or a single covariate string or symbol),
+    or, `nothing` (default).
+- `notyet::Bool = false`
+    Determine if pre-treatment periods from treated states should be used as controls.
 - `ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing`
     A dictionary specifying which category in a categorical variable should be used
     as the reference (baseline) category.
+
+## Date Processing & Period Grid Construction
+- `date_format::Union{AbstractString, Nothing} = nothing`
+    Date format (e.g. "yyyy" or "yyyy-mm-dd") to be used when parsing string dates from
+    the time column, or `start_date`, `end_date`, and `treatment_times` arguments.
 - `freq::Union{AbstractString, Nothing} = nothing`
     A string indicating the desired timeframe of a period for the analysis for staggered adoption scenarios.
     Options are: `"year"`, `"month"`, `"week"`, `"day"`.
 - `freq_multiplier::Number = 1`
     An integer by which the 'freq' argument should be multiplied in a staggered adoption scenario, e.g. if a two-year
     period is desired, set `freq = "year"` and `freq_multiplier = 2`.
-- `autoadjust::Bool = false`
-    A boolean option for the length of a period to be considered in staggered adoption scenario to be automatically
-    determined by DiDInt.
-- `nperm::Number = 1000`
-    The number of unique permutations to be considered when performing the randomization inference.
+- `start_date::Union{AbstractString, Number, Date, Nothing} = nothing`
+    Any data prior this date is dropped, and serves as the starting date for the period
+    grid construction if activated.
+- `end_date::Union{AbstractString, Number, Date, Nothing} = nothing`
+    Any data after this date is dropped, and serves as the end date for the period
+    grid construction if activated.
+
+## Inference
+- `nperm::Number = 999`
+    The number of unique permutations (not including the initial assignment of treatment times)
+    to be considered when performing the randomization inference.
 - `verbose::Bool = true`
     A boolean option for displaying progress of the randomization procedure. 
 - `seed::Number = rand(1:1000000)`
     An integer to set the random seed for the randomization inference procedure.
+- `hc::Union{AbstractString, Number} = "hc3"`
+    Specify which heteroskedasticity-consistent covariance matrix estimator (HCCME) should be used.
+    Options are `0`, `1`, `2`, `3`, and `4` (or `"hc0"`, `"hc1"`, `"hc2"`, `"hc3"`, `"hc4"`).
 
 # Returns
 A DataFrame of results including the estimate of the ATT as well as standard errors and p-values.
@@ -73,7 +114,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
                 treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing,
                 date_format::Union{AbstractString, Nothing} = nothing,
-                covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing} = nothing,
+                covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol} = nothing,
                 ccc::AbstractString = "int",
                 agg::AbstractString = "cohort",
                 weighting::AbstractString = "both",
@@ -82,7 +123,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 freq_multiplier::Number = 1,
                 start_date::Union{AbstractString, Number, Date, Nothing} = nothing,
                 end_date::Union{AbstractString, Number, Date, Nothing} = nothing,
-                nperm::Number = 1001,
+                nperm::Number = 999,
                 verbose::Bool = true,
                 seed::Number = rand(1:1000000),
                 use_pre_controls::Bool = false,
@@ -97,6 +138,9 @@ function didint(outcome::Union{AbstractString, Symbol},
 
     # Turn outcome, state, time, and gvar to strings if they were inputted as symbols
     outcome, state, time, gvar = symbol_to_string(outcome, state, time, gvar)
+
+    # Ensure column for covariates are passed as strings
+    covariates = isnothing(covariates) ? covariates : string.(covariates)
 
     # Determine if the gvar method or the treatment_times & treated_states method is being used
     treated_states, treatment_times = gvar_or_treatment_times(gvar, treatment_times, treated_states, data, state;
@@ -136,7 +180,7 @@ function didint(outcome::Union{AbstractString, Symbol},
     data_copy = DataFrame(data; copycols = false)    
 
     # Do validation checks to see if specified columns exist, and that they are able to be processed correctly
-    data_copy, treatment_times = validate_data(data_copy, outcome, state, time, covariates, treatment_times, date_format;
+    data_copy, treatment_times, covariates = validate_data(data_copy, outcome, state, time, covariates, treatment_times, date_format;
                                                warn_missing_covariates = false)
     treatment_times = !(treatment_times isa AbstractVector) ? [treatment_times] : treatment_times
 
@@ -475,7 +519,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "cohort",
-                                                      verbose, seed, data_copy, weighting, use_pre_controls)
+                                                                        verbose, seed, weighting, use_pre_controls)
 
         elseif agg == "simple"
 
@@ -543,7 +587,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "simple",
-                                                 verbose, seed, data_copy, weighting, use_pre_controls)
+                                                                        verbose, seed, weighting, use_pre_controls)
 
         elseif agg == "state"
 
@@ -609,7 +653,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "state",
-                                                 verbose, seed, data_copy, weighting, use_pre_controls)
+                                                                        verbose, seed, weighting, use_pre_controls)
 
         elseif agg == "none"  
             
@@ -638,7 +682,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "none",
-                                                 verbose, seed, data_copy, weighting, use_pre_controls)
+                                                                        verbose, seed, weighting, use_pre_controls)
 
         elseif agg == "sgt"
             
@@ -707,7 +751,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "sgt",
-                                                 verbose, seed, data_copy, weighting, use_pre_controls)
+                                                                        verbose, seed, weighting, use_pre_controls)
 
         elseif agg == "time"
 
@@ -780,8 +824,8 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
             results = !randomize ? results : randomization_inference_v2(diff, nperm, results, "time",
-                                                 verbose, seed, data_copy, weighting, use_pre_controls,
-                                                 dummy_cols = dummy_cols)
+                                                                        verbose, seed, weighting, use_pre_controls,
+                                                                        dummy_cols = dummy_cols)
         end
 
         # Return staggered adoption results
@@ -842,7 +886,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
             results = randomization_inference_v2(diff_df, nperm, results, agg,
-                                                 verbose, seed, data_copy, weighting,
+                                                 verbose, seed, weighting,
                                                  use_pre_controls)
 
             return results
@@ -910,7 +954,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.jknifese_agg_att[1] = result_dict["beta_hat_se_jknife"]
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
             results = randomization_inference_v2(diff_df, nperm, results, "state",
-                                                 verbose, seed, data_copy, weighting, use_pre_controls)
+                                                 verbose, seed, weighting, use_pre_controls)
             return results
 
         end 
@@ -1090,7 +1134,7 @@ end
 
 function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::DataFrame,
                                     agg::AbstractString, verbose::Bool, seed::Number,
-                                    data::DataFrame, weighting::AbstractString,
+                                    weighting::AbstractString,
                                     use_pre_controls::Bool;
                                     dummy_cols::Union{Vector{Symbol}, Nothing} = nothing)
     
@@ -1101,14 +1145,16 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
     treatment_states = original_treated.state
     all_states = unique(diff_df.state)
 
-    n_unique_perms = compute_n_unique_assignments(treatment_times, length(all_states))
+    # compute_n_unique_assignments() computes all of the possible assignments (including the actual assignment)
+    # so taking compute_n_unique_assignments() - 1 gives us the number of all of the possible unique randomizations besides the actual assignment
+    n_unique_perms = compute_n_unique_assignments(treatment_times, length(all_states)) - 1 
     if nperm > n_unique_perms
         @warn "'nperm' was set to $nperm but only $n_unique_perms unique permutations exist. \n 
-                Setting 'nperm' to $(n_unique_perms - 1)."
+                Setting 'nperm' to $(n_unique_perms)."
         nperm = n_unique_perms
     end 
-    if nperm < 500
-        @warn "'nperm' is less than 500!"
+    if nperm < 519
+        @warn "'nperm' is less than 519!"
     end 
 
     randomized_diff_df = diff_df
@@ -1119,7 +1165,7 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
     pairs = zip(original_treated.state, original_treated.treated_time)
     key = join(sort([string(s, "-", t) for (s, t) in pairs]), "")
     push!(seen, key)
-    while i < nperm
+    while i <= nperm
         shuffled_states = shuffle(all_states)
         new_treated_states = shuffled_states[1:k]
         new_treated_times = treatment_times[randperm(k)]
@@ -1165,10 +1211,10 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
         agg = "state"
     end 
 
-    att_ri = Vector{Float64}(undef, nperm - 1)
+    att_ri = Vector{Float64}(undef, nperm)
     if agg == "cohort" 
-        att_ri_cohort = Matrix{Float64}(undef, nperm - 1, length(treatment_times))
-        for j in 1:nperm - 1 
+        att_ri_cohort = Matrix{Float64}(undef, nperm, length(treatment_times))
+        for j in 1:nperm 
             colname = Symbol("treat_random_$(j)")
             W = Vector{Float64}(undef, length(treatment_times))
             for i in eachindex(treatment_times)
@@ -1191,12 +1237,12 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
             end 
             att_ri[j] = dot(W, att_ri_cohort[j,:])
             if verbose && j % 100 == 0
-                println("Completed $(j) of $(nperm - 1) permutations")
+                println("Completed $(j) of $(nperm) permutations")
             end
         end 
     elseif agg == "state"
-        att_ri_state = Matrix{Float64}(undef, nperm - 1, length(treatment_times))
-        for j in 1:nperm - 1 
+        att_ri_state = Matrix{Float64}(undef, nperm, length(treatment_times))
+        for j in 1:nperm 
             colname = Symbol("treat_random_$(j)")
             W = Vector{Float64}(undef, length(treatment_states))
             for i in eachindex(treatment_states)
@@ -1222,13 +1268,13 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
             end 
             att_ri[j] = dot(W, att_ri_state[j,:])
             if verbose && j % 100 == 0
-                println("Completed $(j) of $(nperm - 1) permutations")
+                println("Completed $(j) of $(nperm) permutations")
             end 
         end 
     elseif agg == "simple"
         unique_diffs = unique(select(diff_df[diff_df.treat .== 1,:], :t, :r1, :treated_time))
-        att_ri_simple = Matrix{Float64}(undef, nperm - 1, nrow(unique_diffs))
-        for j in 1:nperm - 1
+        att_ri_simple = Matrix{Float64}(undef, nperm, nrow(unique_diffs))
+        for j in 1:nperm
             colname = Symbol("treat_random_$(j)")
             W = Vector{Float64}(undef, nrow(unique_diffs))
             for i in 1:nrow(unique_diffs)
@@ -1252,13 +1298,13 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
             end 
             att_ri[j] = dot(W, att_ri_simple[j,:])
             if verbose && j % 100 == 0
-                println("Completed $(j) of $(nperm - 1) permutations")
+                println("Completed $(j) of $(nperm) permutations")
             end
         end 
     elseif agg == "sgt"
         unique_diffs = unique(select(diff_df[diff_df.treat .== 1,:], :state, :t, :r1, :treated_time))
-        att_ri_sgt = Matrix{Float64}(undef, nperm - 1, nrow(unique_diffs))
-        for j in 1:nperm - 1
+        att_ri_sgt = Matrix{Float64}(undef, nperm, nrow(unique_diffs))
+        for j in 1:nperm
             colname = Symbol("treat_random_$(j)")
             W = Vector{Float64}(undef, nrow(unique_diffs))
             for i in 1:nrow(unique_diffs)
@@ -1285,22 +1331,22 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
             end 
             att_ri[j] = dot(W, att_ri_sgt[j,:])
             if verbose && j % 100 == 0
-                println("Completed $(j) of $(nperm - 1) permutations")
+                println("Completed $(j) of $(nperm) permutations")
             end
         end 
     elseif agg == "none"
-        for j in 1:nperm - 1
+        for j in 1:nperm
             colname = Symbol("treat_random_$(j)")
             temp = diff_df[diff_df[!, colname] .!= -1,:]
             att_ri[j] = compute_ri_sub_agg_att(temp, weighting, colname)
             if verbose && j % 100 == 0
-                println("Completed $(j) of $(nperm - 1) permutations")
+                println("Completed $(j) of $(nperm) permutations")
             end
         end 
     elseif agg == "time"
         times = results.periods_post_treat
-        att_ri_time = Matrix{Float64}(undef, nperm - 1, length(times))
-        for j in 1:nperm - 1
+        att_ri_time = Matrix{Float64}(undef, nperm, length(times))
+        for j in 1:nperm
             colname = Symbol("treat_random_$(j)")
             W = Vector{Float64}(undef, length(times))
             for i in eachindex(times)
@@ -1332,7 +1378,7 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
             end 
             att_ri[j] = dot(W, att_ri_time[j,:])
             if verbose && j % 100 == 0
-                println("Completed $(j) of $(nperm - 1) permutations")
+                println("Completed $(j) of $(nperm) permutations")
             end
         end
     end
@@ -1372,7 +1418,7 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
         end 
     end
     results.ri_pval_agg_att[1] = ((sum(abs.(att_ri) .> abs(agg_att))) / length(att_ri))
-    results.nperm[1] = nperm - 1
+    results.nperm[1] = nperm
     return results
 end
 

@@ -5,14 +5,14 @@ function hc_checks(hc)
     # Check hc args
     if hc isa Number 
         hc = round(hc)
-        if !(hc in [0, 1, 2, 3])
-            error("'hc' must be one of 0, 1, 2, or 3.")
+        if !(hc in [0, 1, 2, 3, 4])
+            error("'hc' must be one of 0, 1, 2, 3, or 4.")
         end
         hc = string("hc", hc)
     end
     hc = lowercase(replace(hc, r"\s" => ""))
-    if !(hc in ["hc0", "hc1", "hc2", "hc3"])
-        error("'hc' must be one of $(join(["hc0", "hc1", "hc2", "hc3"], ","))")
+    if !(hc in ["hc0", "hc1", "hc2", "hc3", "hc4"])
+        error("'hc' must be one of $(join(["hc0", "hc1", "hc2", "hc3", "hc4"], ","))")
     end
 
     return hc
@@ -191,7 +191,7 @@ function validate_data(data_copy, outcome, state, time, covariates, treatment_ti
         error("If 'time' column is numeric or 'treatment_times' is numeric, then both must be numeric.")
     end
     
-    return data_copy, treatment_times
+    return data_copy, treatment_times, covariates
 end
 
 function validate_state_types(treated_states, data_copy, state)

@@ -122,8 +122,8 @@ function compute_hc_covariance(X::Matrix, resid::Vector, hc::AbstractString)
     n, k = size(X)
     XXinv = inv(X' * X)
     
-    # Compute hat matrix diagonal if needed for HC2/HC3
-    if hc in ["hc2", "hc3"]
+    # Compute hat matrix diagonal if needed for HC2/HC3/HC4
+    if hc in ["hc2", "hc3", "hc4"]
         # H = X(X'X)⁻¹X' but we only need diagonal
         # hᵢᵢ = xᵢ'(X'X)⁻¹xᵢ
         h = [X[i,:]' * XXinv * X[i,:] for i in 1:n]
@@ -138,6 +138,10 @@ function compute_hc_covariance(X::Matrix, resid::Vector, hc::AbstractString)
         omega_diag = (resid .^ 2) ./ (1 .- h)
     elseif hc == "hc3"
         omega_diag = (resid .^ 2) ./ ((1 .- h) .^ 2)
+    elseif hc == "hc4"
+        h_bar = mean(h) 
+        delta = min.(Ref(4), h ./ h_bar)
+        omega_diag = (resid .^ 2) ./ ((1 .- h) .^ delta)
     end
     
     Ω = Diagonal(omega_diag)
