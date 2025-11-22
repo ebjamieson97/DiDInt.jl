@@ -55,13 +55,13 @@ using DiDInt
 ### Parameters
 
 #### Required Parameters
-- **outcome**
+- **outcome**  
   Name of the column which identifies the outcome of interest.
-- **state**
+- **state**  
   Name of the column which identifies the state membership of the observation.
-- **time**
+- **time**  
   Name of the column which identifies the date of the observation.
-- **data** 
+- **data**   
   The DataFrame to be used for the analysis.
 
 #### Treatment Specification
