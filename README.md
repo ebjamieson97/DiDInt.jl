@@ -1,13 +1,17 @@
 # DiDInt.jl
 Intersection difference-in-differences!
 
+**DiDInt.jl** introduces two functions: `didint()`, which is used for estimating the average effect of treatment on the treated (ATT) while accounting for various violations of the common causal covariates (CCC) assumption; and `didint_plot()` which produces datasets that can easily be used to make parallel trends plots that help determine which CCC violation should be accounted for when using `didint()`. `didint_plot` can also produce datasets that can easily be used to make event study plots.
+
+To learn more about the common causal covariates assumption and intersection difference-in-differences, please see [Karim & Webb (2025)](https://arxiv.org/abs/2412.14447).
+
+A Stata wrapper for this package is available here: **[didintjl]**(https://github.com/ebjamieson97/didintjl).
+
 ## Installation 
 ```
 using Pkg
 Pkg.add(url="https://github.com/ebjamieson97/DiDInt.jl")
 ```
-
-# Usage
 
 ## `didint()` - Estimate ATT
 
