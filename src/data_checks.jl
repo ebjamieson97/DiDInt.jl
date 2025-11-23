@@ -177,11 +177,11 @@ function validate_data(data_copy, outcome, state, time, covariates, treatment_ti
     
     nonmissing_time_type = Base.nonmissingtype(eltype(data_copy[!, time]))
     if nonmissing_time_type <: Number
-        data_copy[!, time] = round.(Int, data_copy[!, time])
+        data_copy[!, time] = [ismissing(t) ? missing : round(Int, t) for t in data_copy[!, time]]
         time_column_numeric = true
-        unique_time_lengths = unique(length.(string.(data_copy[!, time])))
-        if length(unique_time_lengths) > 1 || unique_time_lengths[1] != 4
-            error("The 'time' column was found to be numeric but consisting of values of ambiguous date formatting (i.e. not consistent 4 digit entries.)")
+        unique_time_lengths = unique(length.(string.(skipmissing(data_copy[!, time]))))
+        if isempty(unique_time_lengths) || length(unique_time_lengths) > 1 || unique_time_lengths[1] != 4
+            error("The 'time' column was found to be numeric but consisting of values of ambiguous date formatting (i.e. not consistent 4 digit entries.\nFound entries of the following lengths $(join(unique_time_lengths, ", "))")
         end 
     else
         time_column_numeric = false

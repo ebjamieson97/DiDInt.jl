@@ -2,6 +2,7 @@ using DiDInt
 using Test
 using DataFrames
 using CSV  
+using Random
 
 # Load merit data for testing and build treated_states and treated_times
 test_data = CSV.read(joinpath(@__DIR__, "data", "merit.csv"), DataFrame)
@@ -15,6 +16,16 @@ for i in eachindex(TREATED_STATES)
 end
 const TREATED_TIMES = treated_times
 
+# Also build test data that has a bunch of mising entries for robustness checks
+Random.seed!(1234)
+test_data_missing = allowmissing(copy(TEST_DATA))
+cols_to_randomize = ["asian", "black", "male", "merit", "coll", "year", "state"]
+for col in cols_to_randomize
+    test_data_missing[:, col] = ifelse.(rand(nrow(test_data_missing)) .< 0.25, missing, test_data_missing[:, col])
+end
+const TEST_DATA_MISSING = test_data_missing
+
+# Run tests
 @testset "DiDInt.jl" begin
 
     @testset "didint()" begin
