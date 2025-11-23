@@ -1,4 +1,9 @@
 # DiDInt.jl
+
+[![CI](https://github.com/ebjamieson97/DiDInt.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/ebjamieson97/DiDInt.jl/actions/workflows/CI.yml)
+[![codecov](https://codecov.io/gh/ebjamieson97/DiDInt.jl/graph/badge.svg?token=7Y95RD0P9N)](https://codecov.io/gh/ebjamieson97/DiDInt.jl)
+[![Docs Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://ebjamieson97.github.io/DiDInt.jl/dev)
+
 Intersection difference-in-differences!
 
 **DiDInt.jl** introduces two functions:

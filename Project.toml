@@ -1,7 +1,7 @@
 name = "DiDInt"
 uuid = "a755adf4-2e2b-446b-93e8-5a1a900eb7ed"
 authors = ["Eric Jamieson <ericbrucejamieson@gmail.com>"]
-version = "0.6.7"
+version = "0.6.8"
 
 [deps]
 CategoricalArrays = "324d7699-5711-5eae-9e2f-1d82baa6b597"
@@ -20,3 +20,10 @@ Distributions = "0.1.0 - 1.0"
 FixedEffectModels = "1.1.0 - 2.0"
 Statistics = "1.1.0 - 2.0"
 julia = "1.10.0 - 2.0"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+
+[targets]
+test = ["Test", "CSV"]
