@@ -25,6 +25,12 @@ for col in cols_to_randomize
 end
 const TEST_DATA_MISSING = test_data_missing
 
+# Make a copy of TEST_DATA that uses a gvar column 
+const TEST_DATA_GVAR = transform(groupby(TEST_DATA, :state), [:year, :merit] => ((y, m) -> isempty(y[m .== 1]) ? missing : minimum(y[m .== 1])) => :gvar)
+
+# Make a copy of TEST_DATA that has string columns for time 
+const TEST_DATA_STR = transform(TEST_DATA, :year => ByRow(string) => :year)
+
 # Run tests
 @testset "DiDInt.jl" begin
 
