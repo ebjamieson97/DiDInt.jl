@@ -1,11 +1,11 @@
 # Tests for didint()
 
-# Try different aggregation methods for common adoption
+# Try different aggregation methods for common adoption and different ccc
 @testset "Agg check common - none (default)" begin
     result = DiDInt.didint("coll", "state", "year", TEST_DATA,
                            treatment_times = TREATED_TIMES[1],
                            treated_states = TREATED_STATES, 
-                           seed = 1234, 
+                           seed = 1234,
                            covariates = [:male, :asian, :black],
                            agg = "none")
     @test !isnothing(result)
@@ -15,7 +15,7 @@ end
     result = DiDInt.didint("coll", "state", "year", TEST_DATA,
                            treatment_times = TREATED_TIMES[1],
                            treated_states = TREATED_STATES, 
-                           seed = 1234, 
+                           seed = 1234,
                            covariates = [:male, :asian, :black],
                            agg = "state")
     @test !isnothing(result)
@@ -26,7 +26,7 @@ end
     result = DiDInt.didint("coll", "state", "year", TEST_DATA,
                            treatment_times = TREATED_TIMES,
                            treated_states = TREATED_STATES, 
-                           seed = 1234, 
+                           seed = 1234, ccc = "state",
                            covariates = [:male, :asian, :black],
                            agg = "cohort")
     @test !isnothing(result)
@@ -36,7 +36,7 @@ end
     result = DiDInt.didint("coll", "state", "year", TEST_DATA,
                            treatment_times = TREATED_TIMES,
                            treated_states = TREATED_STATES, 
-                           seed = 1234, 
+                           seed = 1234, ccc = "hom",
                            covariates = [:male, :asian, :black],
                            agg = "simple")
     @test !isnothing(result)
@@ -46,7 +46,7 @@ end
     result = DiDInt.didint("coll", "state", "year", TEST_DATA,
                            treatment_times = TREATED_TIMES,
                            treated_states = TREATED_STATES, 
-                           seed = 1234, 
+                           seed = 1234,  ccc = "add",
                            covariates = [:male, :asian, :black],
                            agg = "sgt")
     @test !isnothing(result)
@@ -56,7 +56,7 @@ end
     result = DiDInt.didint("coll", "state", "year", TEST_DATA,
                            treatment_times = TREATED_TIMES,
                            treated_states = TREATED_STATES, 
-                           seed = 1234, 
+                           seed = 1234, ccc = "time",
                            covariates = [:male, :asian, :black],
                            agg = "state")
     @test !isnothing(result)
@@ -98,6 +98,16 @@ end
                            date_format = "yyyy", start_date = "1989", end_date = "2000", freq = "yearly",
                            treated_states = TREATED_STATES, 
                            seed = 1234, 
+                           covariates = [:male, :asian, :black])
+    @test !isnothing(result)
+end
+
+# Test usage of notyet and different weighting option
+@testset "notyet and weighting = none - staggered" begin
+    result = DiDInt.didint("coll", "state", "year", TEST_DATA,
+                           treatment_times = TREATED_TIMES,
+                           treated_states = TREATED_STATES, 
+                           seed = 1234, notyet = true, weighting = "none",
                            covariates = [:male, :asian, :black])
     @test !isnothing(result)
 end
