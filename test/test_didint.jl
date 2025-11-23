@@ -91,11 +91,11 @@ end
     @test !isnothing(result)
 end
 
-# Test that string time column works
-@testset "String time column - staggered" begin
+# Test that string time column works, also check start_date, end_date, and freq arguments
+@testset "String time column, start_date, end_date, freq - staggered" begin
     result = DiDInt.didint("coll", "state", "year", TEST_DATA_STR,
                            treatment_times = string.(TREATED_TIMES),
-                           date_format = "yyyy",
+                           date_format = "yyyy", start_date = "1989", end_date = "2000", freq = "yearly",
                            treated_states = TREATED_STATES, 
                            seed = 1234, 
                            covariates = [:male, :asian, :black])
