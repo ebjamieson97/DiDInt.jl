@@ -95,6 +95,10 @@ A DataFrame of means and means residualized by the specified covariates for each
 or, a DataFrame of means of the treated states by periods before/after treatment (again, residualized by the specified covariates and for each of the specified
 CCC violations).
 
+# Citations
+- Karim & Webb (2025). "Good Controls Gone Bad: Difference-in-Differences with Covariates". https://arxiv.org/abs/2412.14447
+- MacKinnon & Webb (2020). "Randomization inference for difference-in-differences with few treated clusters". https://doi.org/10.1016/j.jeconom.2020.04.024 
+
 """
 function didint_plot(
          outcome::Union{AbstractString, Symbol},

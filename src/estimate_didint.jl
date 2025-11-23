@@ -105,6 +105,10 @@ in `treated_times`, and so on.
 # Returns
 A DataFrame of results including the estimate of the ATT as well as standard errors and p-values.
 
+# Citations
+- Karim & Webb (2025). "Good Controls Gone Bad: Difference-in-Differences with Covariates". https://arxiv.org/abs/2412.14447
+- MacKinnon & Webb (2020). "Randomization inference for difference-in-differences with few treated clusters". https://doi.org/10.1016/j.jeconom.2020.04.024 
+
 """
 function didint(outcome::Union{AbstractString, Symbol},
                 state::Union{AbstractString, Symbol},
