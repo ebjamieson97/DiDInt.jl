@@ -8,7 +8,7 @@
            treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
            treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing,
            date_format::Union{AbstractString, Nothing} = nothing,
-           covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol} = nothing,
+           covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol, Nothing} = nothing,
            ccc::AbstractString = "int",
            agg::AbstractString = "cohort",
            weighting::AbstractString = "both",
@@ -64,7 +64,7 @@ in `treated_times`, and so on.
 - `weighting::AbstractString = "both"`
     Specify which weighting method should be used.
     Options are: `"both"`, `"att"`, `"diff"`, or `"none"`.
-- `covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol} = nothing` 
+- `covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol, Nothing} = nothing` 
     A vector of covariates entered as either strings or symbols (or a single covariate string or symbol),
     or, `nothing` (default).
 - `notyet::Bool = false`
@@ -118,7 +118,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
                 treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing,
                 date_format::Union{AbstractString, Nothing} = nothing,
-                covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol} = nothing,
+                covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol, Nothing} = nothing,
                 ccc::AbstractString = "int",
                 agg::AbstractString = "cohort",
                 weighting::AbstractString = "both",
