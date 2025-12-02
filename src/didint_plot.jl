@@ -119,12 +119,16 @@ function didint_plot(
          freq_multiplier::Number = 1,
          start_date::Union{AbstractString, Number, Date, Nothing} = nothing,
          end_date::Union{AbstractString, Number, Date, Nothing} = nothing,
-         hc::Union{AbstractString, Number} = "hc3")
+         hc::Union{AbstractString, Number} = "hc3",
+         wrapper::Union{AbstractString, Nothing} = nothing)
 
     # Check hc args
     if event
         hc = hc_checks(hc)
     end
+
+    # Do initial wrapper check
+    wrapper = init_wrapper_check(wrapper)
 
    # Do check for ccc options
    if !(ccc isa AbstractVector)
@@ -323,16 +327,17 @@ function didint_plot(
             end
         end
     
-    # Collapse: sum weighted_y, take first se/ci for each ccc and time_since_treatment
-    event_plot_data = combine(groupby(master_lambda, [:ccc, :time_since_treatment]),
-                              :weighted_y => sum => :y,
-                              :se => first => :se,
-                              :ci_lower => first => :ci_lower,
-                              :ci_upper => first => :ci_upper)
+        # Collapse: sum weighted_y, take first se/ci for each ccc and time_since_treatment
+        event_plot_data = combine(groupby(master_lambda, [:ccc, :time_since_treatment]),
+                                  :weighted_y => sum => :y,
+                                  :se => first => :se,
+                                  :ci_lower => first => :ci_lower,
+                                  :ci_upper => first => :ci_upper)
 
-    event_plot_data.period_length .= string(period)
+        event_plot_data.period_length .= string(period)
 
-    return event_plot_data 
+        event_plot_data = wrapper_check(event_plot_data, wrapper)
+        return event_plot_data 
 
     elseif event == false
 
@@ -362,6 +367,7 @@ function didint_plot(
         master_lambda = vcat(master_lambda, treat_df)
         master_lambda.period_length .= string(period)
         
+        master_lambda = wrapper_check(master_lambda, wrapper)
         return master_lambda
     end
 

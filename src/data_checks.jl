@@ -1,5 +1,15 @@
 
 ## The following functions have to do with data checks/validation/processing common to both didint_plot and didint_estimate
+function data_type_check(data)
+
+    if !(data isa DataFrame)
+        if !((string(typeof(data)) == "Main.RConnector.RDataFrame") || (string(typeof(data)) == "RConnector.RDataFrame"))
+	    error("'data' needs to be of type DataFrame (or RConnector.RDataFrame if running from R via JuliaConnectoR)")
+        end
+    end
+
+end
+
 function hc_checks(hc)
 
     # Check hc args
@@ -406,5 +416,33 @@ function process_covariates(covariates, data_copy, ref)
     end
 
     return data_copy, covariates_to_include
+
+end
+
+function init_wrapper_check(wrapper)
+    
+    if !isnothing(wrapper)
+        wrapper = lowercase(replace(wrapper, r"\s" => ""))
+        wrapper_options = ["julia", "stata", "r"]
+        if !(wrapper in wrapper_options)
+            error("'wrapper' must be one of 'julia', 'stata', or 'r'.")
+        end
+    end
+    return wrapper
+
+end
+
+function wrapper_check(results, wrapper)
+
+    if isnothing(wrapper) || wrapper == "julia"
+        return results
+    elseif wrapper == "r"
+	    for col in names(results)
+            if eltype(results[!, col]) <: Date
+           	    results[!, col] = string.(results[!, col])
+       	    end
+        end
+    end
+    return results
 
 end

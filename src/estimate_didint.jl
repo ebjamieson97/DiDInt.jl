@@ -3,7 +3,7 @@
            outcome::Union{AbstractString, Symbol},
            state::Union{AbstractString, Symbol},
            time::Union{AbstractString, Symbol},
-           data::DataFrame;
+           data::Union{DataFrame, RConnector.RDataFrame};
            gvar::Union{AbstractString, Symbol, Nothing} = nothing,
            treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
            treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing,
@@ -43,7 +43,7 @@ in `treated_times`, and so on.
     Input the name of the column which identifies the state membership of the observation.
 - `time::Union{AbstractString, Symbol}`
     Input the name of the column which identifies the date of the observation.
-- `data::DataFrame`
+- `data::Union{DataFrame, RConnector.RDataFrame}`
     The DataFrame to be used for the analysis.
 
 ## Treatment Specification
@@ -113,7 +113,7 @@ A DataFrame of results including the estimate of the ATT as well as standard err
 function didint(outcome::Union{AbstractString, Symbol},
                 state::Union{AbstractString, Symbol},
                 time::Union{AbstractString, Symbol},
-                data::DataFrame;
+                data;
                 gvar::Union{AbstractString, Symbol, Nothing} = nothing,
                 treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
                 treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing,
@@ -132,10 +132,17 @@ function didint(outcome::Union{AbstractString, Symbol},
                 seed::Number = rand(1:1000000),
                 use_pre_controls::Bool = false,
                 notyet::Union{Nothing, Bool} = nothing,
-                hc::Union{AbstractString, Number} = "hc3")
+                hc::Union{AbstractString, Number} = "hc3",
+                wrapper::Union{AbstractString, Nothing} = nothing)
 
     # Check hc args
     hc = hc_checks(hc)
+
+    # Check wrapper input
+    wrapper = init_wrapper_check(wrapper)
+
+    # Check typeof(data)
+    data_type_check(data)
 
     # Let notyet override use_pre_controls
     use_pre_controls = isnothing(notyet) ? use_pre_controls : notyet
@@ -836,6 +843,7 @@ function didint(outcome::Union{AbstractString, Symbol},
         results.period .= period
         results.start_date .= start_date
         results.end_date .= end_date
+	    results = wrapper_check(results, wrapper)
         return results
 
     elseif common_adoption
@@ -893,7 +901,6 @@ function didint(outcome::Union{AbstractString, Symbol},
                                                  verbose, seed, weighting,
                                                  use_pre_controls)
 
-            return results
         elseif in(agg, ["state", "sgt"])
 
             # Define nrows and identify object to iterate thru for the sub aggregate ATTs
@@ -959,9 +966,10 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.jknifepval_agg_att[1] = result_dict["pval_att_jknife"]
             results = randomization_inference_v2(diff_df, nperm, results, "state",
                                                  verbose, seed, weighting, use_pre_controls)
-            return results
 
-        end 
+        end
+    results = wrapper_check(results, wrapper)
+    return results
     end 
 
 end
@@ -1478,6 +1486,3 @@ function compute_ri_sub_agg_att(temp::DataFrame, weighting::AbstractString, coln
     end 
     return sub_agg_att
 end 
-
-
-
