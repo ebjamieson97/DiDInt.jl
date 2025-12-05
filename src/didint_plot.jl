@@ -104,7 +104,7 @@ function didint_plot(
          outcome::Union{AbstractString, Symbol},
          state::Union{AbstractString, Symbol},
          time::Union{AbstractString, Symbol},
-         data::DataFrame;
+         data;
          gvar::Union{AbstractString, Symbol, Nothing} = nothing,
          treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
          treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing,
@@ -129,6 +129,9 @@ function didint_plot(
 
     # Do initial wrapper check
     wrapper = init_wrapper_check(wrapper)
+
+    # Check typeof(data)
+    data_type_check(data)
 
    # Do check for ccc options
    if !(ccc isa AbstractVector)
