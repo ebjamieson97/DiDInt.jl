@@ -289,6 +289,7 @@ function didint_plot(
         master_lambda.ci_upper = Vector{Union{Float64, Missing}}(missing, nrow(master_lambda))
         master_lambda.ci_lower = Vector{Union{Float64, Missing}}(missing, nrow(master_lambda))
         master_lambda.fitted_y = Vector{Union{Float64, Missing}}(missing, nrow(master_lambda))
+        master_lambda.ngroup = Vector{Union{Int, Missing}}(missing, nrow(master_lambda))
 
         # Get unique combinations of ccc and time_since_treatment
         unique_groups = unique(master_lambda[!, [:ccc, :time_since_treatment]])
@@ -297,17 +298,19 @@ function didint_plot(
         for row in eachrow(unique_groups)
             ccc_val = row.ccc
             et = row.time_since_treatment
+            mask = (master_lambda.ccc .== ccc_val) .& (master_lambda.time_since_treatment .== et)
             
             # Filter to this specific group
             group_data = filter(r -> r.ccc == ccc_val && r.time_since_treatment == et, master_lambda)
-        
-            if nrow(group_data) > 2
+            ngroup = nrow(group_data)
+            master_lambda[mask, :ngroup] .= ngroup
+
+            if ngroup >= 2
 
                 X = reshape(group_data.intercept, :, 1)
                 Y = convert(Vector{Float64}, group_data.y)
                 beta_hat = safe_solve(X, Y)
 
-                mask = (master_lambda.ccc .== ccc_val) .& (master_lambda.time_since_treatment .== et)
                 if !ismissing(beta_hat)
                     resid = Y - X * beta_hat
                     beta_hat_cov = compute_hc_covariance(X, resid, hc)
@@ -335,7 +338,8 @@ function didint_plot(
                                   :weighted_y => sum => :y,
                                   :se => first => :se,
                                   :ci_lower => first => :ci_lower,
-                                  :ci_upper => first => :ci_upper)
+                                  :ci_upper => first => :ci_upper,
+                                  :ngroup => first => :ngroup)
 
         event_plot_data.period_length .= string(period)
 
