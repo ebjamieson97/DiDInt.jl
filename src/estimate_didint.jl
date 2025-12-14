@@ -500,6 +500,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 temp = diff_df[diff_df.treated_time .== trt, :]
                 X = convert(Matrix{Float64},(hcat(ones(nrow(temp)), temp.treat)))
                 Y = convert(Vector{Float64}, temp.diff)
+                ID = temp.state
                 if in(weighting, ["diff", "both"])
                     W = convert(Vector{Float64}, temp.n)
                     W ./= sum(W)
@@ -507,7 +508,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                     W = fill(nothing, nrow(temp))
                 end            
                 results.treatment_time[i] = trt
-                result_dict = final_regression_results(X, Y, W = W, hc = hc)
+                result_dict = final_regression_results(X, Y, W = W, hc = hc, ID = ID, agg = agg)
                 results.att_cohort[i] = result_dict["beta_hat"]
                 results.se_att_cohort[i] = result_dict["beta_hat_se"]
                 results.pval_att_cohort[i] = result_dict["pval_att"] 
@@ -564,6 +565,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 temp = diff_df[(diff_df.t .== t) .& (diff_df.r1 .== r1), :]
                 X = convert(Matrix{Float64},(hcat(ones(nrow(temp)), temp.treat)))
                 Y = convert(Vector{Float64}, temp.diff)
+                ID = temp.state
                 if in(weighting, ["diff", "both"])
                     W = convert(Vector{Float64}, temp.n)
                     W ./= sum(W)
@@ -573,7 +575,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 results.time[i] = t
                 results.r1[i] = r1
                 results.gvar[i] = gvar
-                result_dict = final_regression_results(X, Y, W = W, hc = hc)
+                result_dict = final_regression_results(X, Y, W = W, hc = hc, ID = ID, agg = agg)
                 results.att_gt[i] = result_dict["beta_hat"]
                 results.se_att_gt[i] = result_dict["beta_hat_se"]
                 results.pval_att_gt[i] = result_dict["pval_att"] 
@@ -631,6 +633,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 temp = vcat(temp_control, temp_treated)
                 X = convert(Matrix{Float64}, hcat(ones(nrow(temp)), temp.treat))
                 Y = convert(Vector{Float64}, temp.diff)
+                ID = temp.state
                 if in(weighting, ["diff", "both"])
                     W = convert(Vector{Float64}, temp.n)
                     W ./= sum(W)
@@ -638,7 +641,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                     W = fill(nothing, nrow(temp))
                 end 
                 results.state[i] = state
-                result_dict = final_regression_results(X, Y, W = W, hc = hc)
+                result_dict = final_regression_results(X, Y, W = W, hc = hc, ID = ID, agg = agg)
                 results.att_s[i] = result_dict["beta_hat"]
                 results.se_att_s[i] = result_dict["beta_hat_se"]
                 results.pval_att_s[i] = result_dict["pval_att"] 
@@ -680,13 +683,14 @@ function didint(outcome::Union{AbstractString, Symbol},
             # Compute aggregate ATT, return results
             X = convert(Matrix{Float64}, hcat(ones(nrow(diff_df)), diff_df.treat))
             Y = convert(Vector{Float64}, diff_df.diff)
+            ID = diff_df.state
             if in(weighting, ["diff", "both"])
                 W = convert(Vector{Float64}, diff_df.n)
                 W ./= sum(W)
             else
                 W = fill(nothing, nrow(diff_df))
             end 
-            result_dict = final_regression_results(X, Y, W = W, hc = hc)
+            result_dict = final_regression_results(X, Y, W = W, hc = hc, ID = ID, agg = agg)
             results.agg_att[1] = result_dict["beta_hat"]
             results.se_agg_att[1] = result_dict["beta_hat_se"]
             results.pval_agg_att[1] = result_dict["pval_att"]
@@ -730,6 +734,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 temp = vcat(temp_treated, temp_control)
                 X = convert(Matrix{Float64}, hcat(ones(nrow(temp)), temp.treat))
                 Y = convert(Vector{Float64}, temp.diff)
+                ID = temp.state
                 if in(weighting, ["diff", "both"])
                     W = convert(Vector{Float64}, temp.n)
                     W ./= sum(W)
@@ -739,7 +744,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 results.state[i] = state
                 results.gvar[i] = gvar
                 results.t[i] = t
-                result_dict = final_regression_results(X, Y, W = W, hc = hc)
+                result_dict = final_regression_results(X, Y, W = W, hc = hc, ID = ID, agg = agg)
                 results.att_sgt[i] = result_dict["beta_hat"]
                 results.se_att_sgt[i] = result_dict["beta_hat_se"]
                 results.pval_att_sgt[i] = result_dict["pval_att"] 
@@ -805,6 +810,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 temp = diff[(diff.time_since_treatment .== t) .&& (diff.treat .!= -1), :]
                 X = design_matrix_time_agg(temp, dummy_cols, Symbol("treat"))
                 Y = convert(Vector{Float64}, temp.diff)
+                ID = temp.state
                 if in(weighting, ["diff", "both"])
                     W = convert(Vector{Float64}, temp.n)
                     W ./= sum(W)
@@ -812,7 +818,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                     W = fill(nothing, nrow(temp))
                 end 
                 results.periods_post_treat[i] = t
-                result_dict = final_regression_results(X, Y, W = W, hc = hc)
+                result_dict = final_regression_results(X, Y, W = W, hc = hc, ID = ID, agg = agg)
                 results.att_t[i] = result_dict["beta_hat"]
                 results.se_att_t[i] = result_dict["beta_hat_se"]
                 results.pval_att_t[i] = result_dict["pval_att"] 
@@ -881,13 +887,14 @@ function didint(outcome::Union{AbstractString, Symbol},
                                 nperm = Vector{Union{Missing, Float64}}(missing, 1))
             X = convert(Matrix{Float64}, hcat(ones(nrow(diff_df)), diff_df.treat))
             Y = convert(Vector{Float64}, diff_df.diff)
+            ID = diff_df.state
             if in(weighting, ["diff", "both"])
                 W = convert(Vector{Float64}, diff_df.n)
                 W ./= sum(W)
             else
                 W = fill(nothing, nrow(diff_df))
             end 
-            result_dict = final_regression_results(X, Y, W = W, hc = hc)
+            result_dict = final_regression_results(X, Y, W = W, hc = hc, ID = ID, agg = agg)
             results.agg_att[1] = result_dict["beta_hat"]
             if cornercase
                 results.se_agg_att[1] = cornercase_se
@@ -932,6 +939,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 temp = vcat(temp_control, temp_treated)
                 X = convert(Matrix{Float64}, hcat(ones(nrow(temp)), temp.treat))
                 Y = convert(Vector{Float64}, temp.diff)
+                ID = temp.state
                 if in(weighting, ["diff", "both"])
                     W = convert(Vector{Float64}, temp.n)
                     W ./= sum(W)
@@ -939,7 +947,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                     W = fill(nothing, nrow(temp))
                 end 
                 results.state[i] = state
-                result_dict = final_regression_results(X, Y, W = W, hc = hc)
+                result_dict = final_regression_results(X, Y, W = W, hc = hc, ID = ID, agg = agg)
                 results.att_s[i] = result_dict["beta_hat"]
                 results.se_att_s[i] = result_dict["beta_hat_se"]
                 results.pval_att_s[i] = result_dict["pval_att"] 
@@ -951,7 +959,7 @@ function didint(outcome::Union{AbstractString, Symbol},
             end
 
             # Sort results dataframe and compute aggregate ATT, return results
-            results.tuple_state = custom_sort_order.(results.state)
+            results.tuple_state = custom_sort_order.(results.state) # Just for you, Yunhan
             sort!(results,[order(:tuple_state)])
             select!(results, Not([:tuple_state]))
             results = scale_weights_final(results, weighting)
@@ -1040,7 +1048,8 @@ function design_matrix_time_agg(temp::DataFrame, dummy_cols::Vector{Symbol}, tre
     return X
 end
 
-function final_regression_results(X::Matrix, Y::Vector; W::Vector = [nothing], hc::AbstractString = "hc3")
+function final_regression_results(X::Matrix, Y::Vector; W::Vector = [nothing], hc::AbstractString = "hc3",
+                                  ID::Vector = [nothing], agg = nothing)
 
     n = length(Y)
 
@@ -1085,8 +1094,9 @@ function final_regression_results(X::Matrix, Y::Vector; W::Vector = [nothing], h
         end
         resid = Y - X * beta_hat
         beta_hat_cov = compute_hc_covariance(X, resid, hc)
-        beta_hat_se_jknife = compute_jknife_se(X, Y, beta_hat[ncolx]) 
+        beta_hat_se_jknife = compute_jknife_se(X, Y, beta_hat[ncolx], ID = ID, agg = agg) 
     elseif eltype(W) <: Number
+        W ./= sum(W)
         sw = sqrt.(W)           
         Xw = X .* sw            
         Yw = Y .* sw
@@ -1097,7 +1107,7 @@ function final_regression_results(X::Matrix, Y::Vector; W::Vector = [nothing], h
         end
         resid_w = Yw - Xw * beta_hat
         beta_hat_cov = compute_hc_covariance(Xw, resid_w, hc)
-        beta_hat_se_jknife = compute_jknife_se(Xw, Yw, beta_hat[ncolx]) 
+        beta_hat_se_jknife = compute_jknife_se(X, Y, beta_hat[ncolx], W = W, ID = ID, agg = agg) 
     end 
 
     beta_hat_var = diag(beta_hat_cov)
@@ -1435,25 +1445,91 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
 end
 
 ## compute_jknife_se() is used within final_regression_results()
-function compute_jknife_se(X::Matrix{<:Number}, Y::Vector{<:Number}, original_att::Number)
+function compute_jknife_se(X::Matrix{<:Number}, Y::Vector{<:Number},
+                           original_att::Number; W = [nothing], ID::Vector = [nothing],
+                           agg = nothing)
     
-    n = length(Y)
-    if n == 1 
-        return missing
-    end 
+    # This function needs to be able to take in both the X matrix
+    # from the diff_df (so with an intercept term)
+    # and then also the sub-aggregate level ATTs (without an intercept)
+    # For the latter case, we only need 2 sub-aggregate ATTs
+    # For the former case we need at least 2 treated states and 2 control states
+    
+    ncolx = size(X, 2)
+    n = ncolx == 1 ? length(Y) : length(unique(ID))
     jknife_beta = Vector{Float64}(undef, n)
-    ncolx = size(X,2)
-    treat_count = sum(X[:,ncolx] .!= 0)
-    control_count = sum(X[:,ncolx] .== 0)
-    if (treat_count < 2 || control_count < 2) & (ncolx > 1)
-        return missing
+    # From the diff_df to get the sub-aggregate ATTs jackknife SE
+    if ncolx > 1
+        treat_count = length(unique(ID[X[:, ncolx] .== 1]))
+        control_count = length(unique(ID[X[:, ncolx] .== 0]))
+        if (treat_count < 2 || control_count < 2)
+            return missing
+        end
+        X2 = X[:, ncolx]
+        ids = unique(ID)
+        for i in eachindex(ids)
+            id = ids[i]
+            idx = ID .!= id
+            Y_sub = Y[idx]
+            if agg != "time"
+                X_sub = X2[idx]
+                if eltype(W) <: Number
+                    W_sub = W[idx]
+                    W_sub ./= sum(W_sub)
+                    j_beta = (dot(W_sub[X_sub .== 1], Y_sub[X_sub .== 1]) / sum(W_sub[X_sub .== 1])) - 
+                                 (dot(W_sub[X_sub .== 0], Y_sub[X_sub .== 0]) / sum(W_sub[X_sub .== 0]))
+                else 
+                    j_beta = mean(Y_sub[X_sub .== 1]) - mean(Y_sub[X_sub .== 0])
+                end
+            elseif agg == "time"
+                X_sub = X[idx, :]  
+                if ncolx >= 3
+                    varied_dummies = [i for i in 2:ncolx-1 if length(unique(X_sub[:, i])) > 1]
+                    cols_to_keep = [1; varied_dummies; ncolx]
+                    X_sub = X_sub[:, cols_to_keep]
+                    X_sub_rank = rank(X_sub)
+                    X_sub_ncolx = size(X_sub, 2)
+                    v = 2
+                    while X_sub_rank < X_sub_ncolx
+                        cols_to_keep = [1; varied_dummies[v:end]; ncolx]
+                        X_sub = X[idx, cols_to_keep]
+                        X_sub_rank = rank(X_sub)
+                        X_sub_ncolx = size(X_sub, 2)
+                        v += 1
+                    end
+                end
+                if eltype(W) <: Number
+                    W_sub = W[idx]
+                    W_sub ./= sum(W_sub)
+                    sw = sqrt.(W_sub)
+                    X_sub = X_sub .* sw 
+                    Y_sub = Y_sub .* sw
+                end
+                j_beta = (X_sub \ Y_sub)[end]
+            end
+            jknife_beta[i] = j_beta
+        end
+
+    # To get aggregate ATT's jackknife SE
+    else 
+        if n < 2
+            return missing
+        end
+        for i in eachindex(Y)
+            idx = [1:i-1; i+1:size(X, 1)]
+            X_sub = X[idx, :]
+            Y_sub = Y[idx]
+            if eltype(W) <: Number
+                W_sub = W[idx]
+                W_sub ./= sum(W_sub)
+                j_beta = dot(W_sub, Y_sub)
+            else
+                j_beta = mean(Y_sub)
+            end
+            jknife_beta[i] = j_beta
+        end 
     end
-    for i in eachindex(Y)
-        idx = [1:i-1; i+1:size(X, 1)]
-        X_sub = X[idx, :]
-        Y_sub = Y[idx]
-        jknife_beta[i] = (X_sub \ Y_sub)[ncolx]
-    end 
+
     jknife_se = sqrt(sum((jknife_beta .- original_att).^2) * ((n - 1) / n))
     return jknife_se
 end 
