@@ -254,6 +254,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                                                                                    freq, start_date, end_date) 
 
     # In the case of staggered adoption, do date matching procedure should be done
+    match_to_these_dates, time_to_index = nothing, nothing
     if staggered_adoption
         data_copy, treatment_times, treated_states, match_to_these_dates, time_to_index, period = perform_date_matching(data_copy, all_times, freq, freq_multiplier,
                                                                                                                         start_date, end_date, treatment_times,
@@ -330,140 +331,14 @@ function didint(outcome::Union{AbstractString, Symbol},
     lambda_df, cornercase, cornercase_se = run_fixed_effects_model(data_copy, formula, ccc, covariates,
                                                                    common_adoption = common_adoption, staggered_adoption = staggered_adoption) 
 
-    # Compute diff for each treated state
-    unique_states = unique(lambda_df.state)
-    diff_df = DataFrame(state = String[], treated_time = Date[],
-                        t = Date[], r1 = Date[], diff = Float64[],
-                        treat = Int[], n = Int[], n_t = Int[])
-
     # Define a function that initializes the results dataframe columns
     init_column() = Vector{Union{Missing, Float64}}(missing, nrows)
 
     # Compute ATT
     if staggered_adoption
-        # Compute diffs for each treated_state
-        for i in eachindex(treated_states)
-            idx = time_to_index[treatment_times[i]]
-            one_period_prior_treatment = match_to_these_dates[idx - 1]
-            temp = lambda_df[(lambda_df.state .== treated_states[i]) .& (lambda_df.time .>= one_period_prior_treatment), :]
-            lambda_r1 = temp[temp.time .== one_period_prior_treatment, "lambda"]
-            lambda_r1 = isempty(lambda_r1) ? missing : lambda_r1[1]
-            temp = temp[temp.time .> one_period_prior_treatment, :]
-            sort!(temp, :time)
-            years = temp.time
-            diffs = Vector{Union{Float64, Missing}}(undef, nrow(temp))
-            n = Vector{Int}(undef, nrow(temp))
-            n_t = Vector{Int}(undef, nrow(temp))
-            for j in eachindex(diffs)
-                lambda_j = temp[j, "lambda"]
-                lambda_j = isempty(lambda_j) ? missing : lambda_j[1]
-                diffs[j] = lambda_j - lambda_r1
-                post = temp[j, "time"]
-                pre = one_period_prior_treatment
-                n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([post, pre])) .&& (data_copy.state_71X9yTx .== treated_states[i]))
-                n_t[j] = sum((data_copy.time_dmG5fpM .== post) .&& (data_copy.state_71X9yTx .== treated_states[i]))
-            end 
-            temp_df = DataFrame(state = treated_states[i], treated_time = treatment_times[i],
-                                t = years, r1 = one_period_prior_treatment, diff = diffs, treat = 1,
-                                n = n, n_t = n_t)
-            diff_df = vcat(diff_df, temp_df) 
-        end
         
-        # Compute diffs for control states
-        unique_diffs = unique(select(diff_df, :t, :r1, :treated_time))
-        control_states = setdiff(unique_states, treated_states)     
-        for i in eachindex(control_states)
-            temp = lambda_df[(lambda_df.state .== control_states[i]), :]
-            diffs = Vector{Union{Float64, Missing}}(undef, nrow(unique_diffs))
-            n = Vector{Int}(undef, nrow(unique_diffs))
-            n_t = Vector{Int}(undef, nrow(unique_diffs))
-            for j in 1:nrow(unique_diffs)
-                t = unique_diffs[j,"t"]
-                r1 = unique_diffs[j,"r1"]
-                lambda_t = temp[temp.time .== t, "lambda"]
-                lambda_t = isempty(lambda_t) ? missing : lambda_t[1]
-                lambda_r1 = temp[temp.time .== r1, "lambda"]
-                lambda_r1 = isempty(lambda_r1) ? missing : lambda_r1[1]
-                diffs[j] = lambda_t - lambda_r1
-                n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([t, r1])) .&& (data_copy.state_71X9yTx .== control_states[i]))
-                n_t[j] = sum((data_copy.time_dmG5fpM .== t) .&& (data_copy.state_71X9yTx .== control_states[i]))
-            end 
-            trtd_time = [match_to_these_dates[findfirst(==(t), match_to_these_dates) + 1] for t in unique_diffs.r1]
-            temp_df = DataFrame(state = control_states[i], treated_time = trtd_time,
-                                t = unique_diffs.t, r1 = unique_diffs.r1, diff = diffs, treat = 0,
-                                n = n, n_t = n_t)
-            diff_df = vcat(diff_df, temp_df)
-        end
-
-        # Compute diffs for randomization inference
-        ri_diff_df = DataFrame(state = String[], treated_time = Date[],
-                               t = Date[], r1 = Date[], diff = Float64[],
-                               treat = Int[], n = Int[], n_t = Int[])
-        for i in eachindex(treated_states)
-            ri_diffs = unique(select(diff_df[(diff_df.state .!= treated_states[i]) .& (diff_df.treated_time .!= treatment_times[i]), :], :t, :r1))
-            temp = lambda_df[(lambda_df.state .== treated_states[i]), :]
-            diffs = Vector{Union{Float64, Missing}}(undef, nrow(ri_diffs))
-            n = Vector{Int}(undef, nrow(ri_diffs))
-            n_t = Vector{Int}(undef, nrow(ri_diffs))
-            for j in 1:nrow(ri_diffs)
-                t = unique_diffs[j,"t"]
-                r1 = unique_diffs[j,"r1"]
-                lambda_t = temp[temp.time .== t, "lambda"]
-                lambda_t = isempty(lambda_t) ? missing : lambda_t[1]
-                lambda_r1 = temp[temp.time .== r1, "lambda"]
-                lambda_r1 = isempty(lambda_r1) ? missing : lambda_r1[1]
-                diffs[j] = lambda_t - lambda_r1
-                n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([t, r1])) .&& (data_copy.state_71X9yTx .== treated_states[i]))
-                n_t[j] = sum((data_copy.time_dmG5fpM .== t) .&& (data_copy.state_71X9yTx .== treated_states[i]))
-            end
-            trtd_time = [match_to_these_dates[findfirst(==(t), match_to_these_dates) + 1] for t in ri_diffs.r1]
-            temp_df = DataFrame(state = treated_states[i], treated_time = trtd_time,
-                                t = ri_diffs.t, r1 = ri_diffs.r1, diff = diffs, treat = -1,
-                                n = n, n_t = n_t)
-            ri_diff_df = vcat(ri_diff_df, temp_df)
-        end
-
-        # Add the periods since treatment column to ri_diff_df and diff_df
-        ordered_t = match_to_these_dates   
-        t_period = indexin(diff_df.t, ordered_t)             
-        treated_time_period = indexin(diff_df.treated_time, ordered_t) 
-        diff_df.time_since_treatment = t_period .- treated_time_period 
-        t_period = indexin(ri_diff_df.t, ordered_t)             
-        treated_time_period = indexin(ri_diff_df.treated_time, ordered_t) 
-        ri_diff_df.time_since_treatment = t_period .- treated_time_period 
-
-        # If use_pre_controls is true (default) re-structure the ri_diff_df and diff_df
-        # to add the pre-treatment periods from treated silos as control contrasts
-        if use_pre_controls
-            for (t,s) in zip(treatment_times, treated_states)
-                ri_diff_df[ri_diff_df.state .== s .&& ri_diff_df.t .< t, "treat"] .= 0
-            end
-            diff_df = vcat(diff_df, ri_diff_df[ri_diff_df.treat .== 0,:])
-            ri_diff_df = ri_diff_df[ri_diff_df.treat .== -1,:]
-            if missing_control_states
-                # If there are no pure control states, do extra processing to remove cells
-                # where there are no treat-control pairs
-                diff_df = subset(
-                            groupby(diff_df, [:t, :r1]),
-                            :treat => x -> any(x .== 1) && any(x .== 0)
-                          )
-                ri_diff_df = semijoin(ri_diff_df, diff_df, on=[:t, :r1])
-            end 
-        end
-
-        # In the case where the diff_df has missing values for diffs, drop those rows
-        if any(ismissing.(diff_df.diff))
-            diff_df = dropmissing(diff_df, :diff)
-            diff_df = subset(
-                            groupby(diff_df, [:t, :r1]),
-                            :treat => x -> any(x .== 1) && any(x .== 0)
-                          )
-            if nrow(diff_df) == 0
-                error("Could not find a single pair of non-missing valued treated & untreated differences for the same (g,t) group.\nUnable to compute any ATTs.")
-            end
-            ri_diff_df = semijoin(ri_diff_df, diff_df, on=[:t, :r1])
-            ri_diff_df = dropmissing(ri_diff_df, :diff)
-        end
+        diff_df, ri_diff_df = construct_diff_df(lambda_df, treated_states, treatment_times, time_to_index, match_to_these_dates, use_pre_controls,
+                                                 staggered_adoption, common_adoption, data_copy)
 
         # Do check to make sure that each state has each (g,t) group for RI 
         randomize = check_prior_to_ri(diff_df, ri_diff_df)
@@ -864,26 +739,8 @@ function didint(outcome::Union{AbstractString, Symbol},
     elseif common_adoption
 
         # Create diff matrix
-        states = unique(lambda_df.state)
-        diff_df = DataFrame(state = states,
-                            diff = Vector{Float64}(undef, length(states)),
-                            treat = Vector{Float64}(undef, length(states)),
-                            treated_time = fill(unique(treatment_times)[1], length(states)),
-                            n = Vector{Float64}(undef, length(states)),
-                            n_t = Vector{Float64}(undef, length(states)))
-        for i in eachindex(states)
-            state = states[i]
-            if state in treated_states
-                trt = 1
-            else 
-                trt = 0
-            end 
-            diff = lambda_df[(lambda_df.state .== state) .&& (lambda_df.time .== "post"), "lambda"][1] - lambda_df[(lambda_df.state .== state) .&& (lambda_df.time .== "pre"), "lambda"][1]
-            diff_df.diff[i] = diff
-            diff_df.treat[i] = trt
-            diff_df.n[i] = sum(data_copy.state_71X9yTx .== state)
-            diff_df.n_t[i] = sum((data_copy.state_71X9yTx .== state) .&& (data_copy.time_71X9yTx .== "post"))
-        end 
+        diff_df = construct_diff_df(lambda_df, treated_states, treatment_times, time_to_index, match_to_these_dates, use_pre_controls,
+                                    staggered_adoption, common_adoption, data_copy)
 
         # Compute results
         if in(agg, ["cohort", "simple", "none"]) || length(treated_states) == 1
@@ -1505,14 +1362,61 @@ function jackknife_procedure(diff_df, results, weighting,
         results.jknifepval_agg_att[1] = missing
     end
 
+    # Recycling this chunk from randomization_inference_v2 function
+    original_treated = unique(diff_df[diff_df.treat .== 1, [:state, :treated_time]])  
+    treatment_times = original_treated.treated_time
+    treatment_states = original_treated.state
+    all_states = unique(diff_df.state)
+
+    # Force agg arguments for common adoption to either none or state
+    if (length(unique(treatment_times)) == 1 && in(agg, ["cohort", "simple"])) || (length(unique(treatment_times)) == 1 && length(unique(treatment_states)) == 1)
+        agg = "none"
+    end 
+    if length(unique(treatment_times)) == 1 && agg == "sgt"
+        agg = "state"
+    end
+
+    # Define simple function to make the jackdf
+    make_jackdf = (sub_group) -> begin
+                                     without = repeat(all_states, inner = length(sub_group))
+                                     sub_group = repeat(sub_group, outer = length(all_states))
+                                     nrows = length(without)
+                                     att = Vector{Union{Float64, Missing}}(undef, nrows)
+                                     weights = Vector{Union{Nothing, Float64}}(nothing, nrows)
+                                     jackdf = DataFrame(without = without, sub_group = sub_group, att = att, weights = weights)
+                                     return jackdf
+                                 end
+
+    # Create preallocation dataframe for the jackknife coefficient estimates
+    unique_diffs = nothing
+    if agg == "cohort"
+        sub_group = sort(unique(diff_df.treated_time))
+    elseif agg == "state"
+        state_df = DataFrame(treated_states = treated_states)
+        state_df.tuple_state = custom_sort_order.(state_df.treated_states)
+        sort!(state_df,[order(:tuple_state)])
+        sub_group = state_df.treated_states
+    elseif agg == "simple"
+        unique_diffs = sort(unique(select(diff_df, :t, :r1, :treated_time)), [:treated_time, :t])
+        sub_group = string.(eachrow(unique_diffs))
+    elseif agg == "sgt"
+        unique_diffs = sort(unique(select(diff_df[diff_df.treat .== 1,:], :state, :t, :r1, :treated_time)), [:state, :treated_time, :t])
+        sub_group = string.(eachrow(unique_diffs))
+    elseif agg == "none"
+        sub_group = ["none"]
+    elseif agg == "time"
+        sub_group = sort(unique(diff_df.time_since_treatment))
+    end
+    jackdf = make_jackdf(sub_group)
+
     # Otherwise, do jackknife procedure
     if truejack
         jackdf = true_jackknife_procedure(data_copy, results, weighting, agg, ccc,
                                           formula, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls)
+                                          use_pre_controls, all_states, sub_group, unique_diffs, jackdf)
     elseif !truejack
-        jackdf = fast_jackknife_procedure(diff_df, results, weighting, agg, treated_states)
+        jackdf = fast_jackknife_procedure(diff_df, weighting, agg, jackdf, all_states, sub_group, unique_diffs)
     end
 
     # Once the jackknife df is populated, we can compute aggregate and potentially sub-aggregate ATTs jackknife SE and pvals
@@ -1568,53 +1472,7 @@ function jackknife_procedure(diff_df, results, weighting,
     return results
 end
 
-function fast_jackknife_procedure(diff_df, results, weighting, agg, treated_states)
-
-    # Recycling this chunk from randomization_inference_v2 function
-    original_treated = unique(diff_df[diff_df.treat .== 1, [:state, :treated_time]])  
-    treatment_times = original_treated.treated_time
-    treatment_states = original_treated.state
-    all_states = unique(diff_df.state)
-
-    # Force agg arguments for common adoption to either none or state
-    if (length(unique(treatment_times)) == 1 && in(agg, ["cohort", "simple"])) || (length(unique(treatment_times)) == 1 && length(unique(treatment_states)) == 1)
-        agg = "none"
-    end 
-    if length(unique(treatment_times)) == 1 && agg == "sgt"
-        agg = "state"
-    end
-
-    # Define simple function to make the jackdf
-    make_jackdf = (sub_group) -> begin
-                                     without = repeat(all_states, inner = length(sub_group))
-                                     sub_group = repeat(sub_group, outer = length(all_states))
-                                     nrows = length(without)
-                                     att = Vector{Union{Float64, Missing}}(undef, nrows)
-                                     weights = Vector{Union{Nothing, Float64}}(nothing, nrows)
-                                     jackdf = DataFrame(without = without, sub_group = sub_group, att = att, weights = weights)
-                                     return jackdf
-                                 end
-
-    # Create preallocation dataframe for the jackknife coefficient estimates
-    if agg == "cohort"
-        sub_group = sort(unique(diff_df.treated_time))
-    elseif agg == "state"
-        state_df = DataFrame(treated_states = treated_states)
-        state_df.tuple_state = custom_sort_order.(state_df.treated_states)
-        sort!(state_df,[order(:tuple_state)])
-        sub_group = state_df.treated_states
-    elseif agg == "simple"
-        unique_diffs = sort(unique(select(diff_df, :t, :r1, :treated_time)), [:treated_time, :t])
-        sub_group = string.(eachrow(unique_diffs))
-    elseif agg == "sgt"
-        unique_diffs = sort(unique(select(diff_df[diff_df.treat .== 1,:], :state, :t, :r1, :treated_time)), [:state, :treated_time, :t])
-        sub_group = string.(eachrow(unique_diffs))
-    elseif agg == "none"
-        sub_group = ["none"]
-    elseif agg == "time"
-        sub_group = sort(unique(diff_df.time_since_treatment))
-    end
-    jackdf = make_jackdf(sub_group)
+function fast_jackknife_procedure(diff_df, weighting, agg, jackdf, all_states, sub_group, unique_diffs)
 
     # Cycle through the withouts and sub_groups and compute coefficients
     idx_jack = 1
@@ -1640,37 +1498,7 @@ function fast_jackknife_procedure(diff_df, results, weighting, agg, treated_stat
                 temp = diff_df[without_mask, :]
             elseif agg == "time"
                 temp = diff_df[without_mask .& (diff_df.time_since_treatment .== sg), :]
-                if length(unique(temp.treat)) < 2
-                    temp = missing
-                    att = missing
-                else 
-                    tt_cols = [col for col in names(temp) if occursin(r"^tt_\d+$", string(col))]
-                    X = convert(Matrix{Float64}, hcat(ones(nrow(temp)), Matrix(temp[:, tt_cols]), temp[:, :treat]))
-                    ncolx = size(X, 2)
-                    varied_dummies = [i for i in 2:ncolx-1 if length(unique(X[:, i])) > 1]
-                    cols_to_keep = [1; varied_dummies; ncolx]
-                    X_sub = X[:, cols_to_keep]
-                    X_sub_rank = rank(X_sub)
-                    X_sub_ncolx = size(X_sub, 2)
-                    v = 2
-                    while (X_sub_rank < X_sub_ncolx) && X_sub_ncolx > 2
-                        cols_to_keep = [1; varied_dummies[v:end]; ncolx]
-                        X_sub = X[:, cols_to_keep]
-                        X_sub_rank = rank(X_sub)
-                        X_sub_ncolx = size(X_sub, 2)
-                        v += 1
-                    end
-                    X = X_sub
-                    Y = convert(Vector{Float64}, temp.diff)
-                    if in(weighting, ["diff", "both"]) 
-                        W_diff = convert(Vector{Float64}, temp.n)
-                        W_diff ./= sum(W_diff) 
-                        sw = sqrt.(W_diff)           
-                        X = X .* sw            
-                        Y = Y .* sw
-                    end 
-                    att = rank(X) == size(X, 2) ? (X \ Y)[end] : missing
-                end
+                att = jackknife_time_compute(temp, weighting)
             end
 
             # If there is no variation in temp.treat return missing
@@ -1700,4 +1528,303 @@ function fast_jackknife_procedure(diff_df, results, weighting, agg, treated_stat
         end
     end
     return jackdf
+end
+
+function true_jackknife_procedure(data_copy, results, weighting, agg, ccc,
+                                  formula, covariates, common_adoption, staggered_adoption,
+                                  treated_states, time_to_index, treatment_times, match_to_these_dates,
+                                  use_pre_controls, all_states, sub_group, unique_diffs, jackdf
+                                  )
+
+    # Cycle through the withouts and sub_groups and compute coefficients
+    idx_jack = 1
+    for without in all_states
+        idx_unique_diffs = 1
+
+        # Re-estimate fixed effects model
+        lambda_df, cornercase, cornercase_se = run_fixed_effects_model(data_copy[data_copy.state .!= without, :], formula, ccc, covariates,
+                                                                       common_adoption = common_adoption, staggered_adoption = staggered_adoption) 
+
+        # Construct diff_df
+        diff_df = construct_diff_df(lambda_df, treated_states, treatment_times, time_to_index, match_to_these_dates, use_pre_controls,
+                                    staggered_adoption, common_adoption, data_copy, jackknife = true, without = without)
+
+        if agg == "time"
+            treated_category = categorical(string.(diff_df.treated_time); ordered = true)
+            levels_tt   = levels(treated_category)                               
+            for i in eachindex(levels_tt) 
+                tt = levels_tt[i]                    
+                colname = Symbol("tt_", i)
+                diff[!, colname] = Int.(treated_category .== tt)
+            end
+        end
+
+        # Estimate sub-agg ATTs
+        for sg in sub_group
+            if agg == "cohort"
+                temp = diff_df[(diff_df.treated_time .== sg), :]
+            elseif agg == "state"
+                temp = sg == without ? missing : diff_df[((diff_df.state .== sg) .| (diff_df.treat .== 0)), :]
+            elseif agg == "simple"
+                t = unique_diffs.t[idx_unique_diffs]
+                r1 = unique_diffs.r1[idx_unique_diffs]
+                temp = diff_df[(diff_df.t .== t) .& (diff_df.r1 .== r1), :]
+            elseif agg == "sgt"
+                t = unique_diffs.t[idx_unique_diffs]
+                r1 = unique_diffs.r1[idx_unique_diffs]
+                s = unique_diffs.state[idx_unique_diffs]
+                temp = sg == without ? missing : diff_df[((diff_df.t .== t) .& (diff_df.r1 .== r1) .& (diff_df.treat .== 0)) .|
+                                                         ((diff_df.t .== t) .& (diff_df.r1 .== r1) .& (diff_df.state .== s)), :]
+            elseif agg == "none"
+                temp = diff_df
+            elseif agg == "time"
+                temp = diff_df[(diff_df.time_since_treatment .== sg), :]
+                att = jackknife_time_compute(temp, weighting)
+            end
+            
+            # If there is no variation in temp.treat return missing
+            if !ismissing(temp) && length(unique(temp.treat)) < 2
+                temp = missing
+            end
+
+            # Otherwise, do computation of att
+            if agg != "time"
+                att = ismissing(temp) ? missing : compute_ri_sub_agg_att(temp, weighting, :treat) # Note this works fine for the jackknife case too
+            end
+
+            # Also do keep track of treated obs for sub-agg att
+            if weighting in ["att", "both"]
+                w = ismissing(temp) ? 0 : sum(temp[temp.treat .== 1, :n_t])
+            else
+                w = nothing
+            end
+
+            # Assign to jackdf
+            jackdf.att[idx_jack] = att
+            jackdf.weights[idx_jack] = w
+
+            # Update counters
+            idx_unique_diffs += 1
+            idx_jack += 1
+        end
+
+    end
+    return jackdf
+end
+
+function construct_diff_df(lambda_df, treated_states, treatment_times, time_to_index, match_to_these_dates, use_pre_controls,
+                           staggered_adoption, common_adoption, data_copy; jackknife = false, without = nothing)
+
+    if jackknife
+        mask = treated_states .!= without
+        treated_states = treated_states[mask]
+        treatment_times = treatment_times[mask]
+    end
+
+    if staggered_adoption
+
+        # Initialize diff_df
+        unique_states = unique(lambda_df.state)
+        diff_df = DataFrame(state = String[], treated_time = Date[],
+                            t = Date[], r1 = Date[], diff = Float64[],
+                            treat = Int[], n = Int[], n_t = Int[])
+
+        for i in eachindex(treated_states)
+            idx = time_to_index[treatment_times[i]]
+            one_period_prior_treatment = match_to_these_dates[idx - 1]
+            temp = lambda_df[(lambda_df.state .== treated_states[i]) .& (lambda_df.time .>= one_period_prior_treatment), :]
+            lambda_r1 = temp[temp.time .== one_period_prior_treatment, "lambda"]
+            lambda_r1 = isempty(lambda_r1) ? missing : lambda_r1[1]
+            temp = temp[temp.time .> one_period_prior_treatment, :]
+            sort!(temp, :time)
+            years = temp.time
+            diffs = Vector{Union{Float64, Missing}}(undef, nrow(temp))
+            n = Vector{Int}(undef, nrow(temp))
+            n_t = Vector{Int}(undef, nrow(temp))
+            for j in eachindex(diffs)
+                lambda_j = temp[j, "lambda"]
+                lambda_j = isempty(lambda_j) ? missing : lambda_j[1]
+                diffs[j] = lambda_j - lambda_r1
+                post = temp[j, "time"]
+                pre = one_period_prior_treatment
+                n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([post, pre])) .&& (data_copy.state_71X9yTx .== treated_states[i]))
+                n_t[j] = sum((data_copy.time_dmG5fpM .== post) .&& (data_copy.state_71X9yTx .== treated_states[i]))
+            end 
+            temp_df = DataFrame(state = treated_states[i], treated_time = treatment_times[i],
+                                t = years, r1 = one_period_prior_treatment, diff = diffs, treat = 1,
+                                n = n, n_t = n_t)
+            diff_df = vcat(diff_df, temp_df) 
+        end
+        
+        # Compute diffs for control states
+        unique_diffs = unique(select(diff_df, :t, :r1, :treated_time))
+        control_states = setdiff(unique_states, treated_states)     
+        for i in eachindex(control_states)
+            temp = lambda_df[(lambda_df.state .== control_states[i]), :]
+            diffs = Vector{Union{Float64, Missing}}(undef, nrow(unique_diffs))
+            n = Vector{Int}(undef, nrow(unique_diffs))
+            n_t = Vector{Int}(undef, nrow(unique_diffs))
+            for j in 1:nrow(unique_diffs)
+                t = unique_diffs[j,"t"]
+                r1 = unique_diffs[j,"r1"]
+                lambda_t = temp[temp.time .== t, "lambda"]
+                lambda_t = isempty(lambda_t) ? missing : lambda_t[1]
+                lambda_r1 = temp[temp.time .== r1, "lambda"]
+                lambda_r1 = isempty(lambda_r1) ? missing : lambda_r1[1]
+                diffs[j] = lambda_t - lambda_r1
+                n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([t, r1])) .&& (data_copy.state_71X9yTx .== control_states[i]))
+                n_t[j] = sum((data_copy.time_dmG5fpM .== t) .&& (data_copy.state_71X9yTx .== control_states[i]))
+            end 
+            trtd_time = [match_to_these_dates[findfirst(==(t), match_to_these_dates) + 1] for t in unique_diffs.r1]
+            temp_df = DataFrame(state = control_states[i], treated_time = trtd_time,
+                                t = unique_diffs.t, r1 = unique_diffs.r1, diff = diffs, treat = 0,
+                                n = n, n_t = n_t)
+            diff_df = vcat(diff_df, temp_df)
+        end
+
+        # Add the periods since treatment column to diff_df
+        ordered_t = match_to_these_dates   
+        t_period = indexin(diff_df.t, ordered_t)             
+        treated_time_period = indexin(diff_df.treated_time, ordered_t) 
+        diff_df.time_since_treatment = t_period .- treated_time_period 
+
+        # Compute diffs for randomization inference
+        if !jackknife || use_pre_controls
+            ri_diff_df = DataFrame(state = String[], treated_time = Date[],
+                                   t = Date[], r1 = Date[], diff = Float64[],
+                                   treat = Int[], n = Int[], n_t = Int[])
+            for i in eachindex(treated_states)
+                ri_diffs = unique(select(diff_df[(diff_df.state .!= treated_states[i]) .& (diff_df.treated_time .!= treatment_times[i]), :], :t, :r1))
+                temp = lambda_df[(lambda_df.state .== treated_states[i]), :]
+                diffs = Vector{Union{Float64, Missing}}(undef, nrow(ri_diffs))
+                n = Vector{Int}(undef, nrow(ri_diffs))
+                n_t = Vector{Int}(undef, nrow(ri_diffs))
+                for j in 1:nrow(ri_diffs)
+                    t = unique_diffs[j,"t"]
+                    r1 = unique_diffs[j,"r1"]
+                    lambda_t = temp[temp.time .== t, "lambda"]
+                    lambda_t = isempty(lambda_t) ? missing : lambda_t[1]
+                    lambda_r1 = temp[temp.time .== r1, "lambda"]
+                    lambda_r1 = isempty(lambda_r1) ? missing : lambda_r1[1]
+                    diffs[j] = lambda_t - lambda_r1
+                    n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([t, r1])) .&& (data_copy.state_71X9yTx .== treated_states[i]))
+                    n_t[j] = sum((data_copy.time_dmG5fpM .== t) .&& (data_copy.state_71X9yTx .== treated_states[i]))
+                end
+                trtd_time = [match_to_these_dates[findfirst(==(t), match_to_these_dates) + 1] for t in ri_diffs.r1]
+                temp_df = DataFrame(state = treated_states[i], treated_time = trtd_time,
+                                    t = ri_diffs.t, r1 = ri_diffs.r1, diff = diffs, treat = -1,
+                                    n = n, n_t = n_t)
+                ri_diff_df = vcat(ri_diff_df, temp_df)
+            end
+            t_period = indexin(ri_diff_df.t, ordered_t)             
+            treated_time_period = indexin(ri_diff_df.treated_time, ordered_t) 
+            ri_diff_df.time_since_treatment = t_period .- treated_time_period 
+        end
+
+
+        # If use_pre_controls is true re-structure the ri_diff_df and diff_df
+        # to add the pre-treatment periods from treated silos as control contrasts
+        if use_pre_controls
+            for (t,s) in zip(treatment_times, treated_states)
+                ri_diff_df[ri_diff_df.state .== s .&& ri_diff_df.t .< t, "treat"] .= 0
+            end
+            diff_df = vcat(diff_df, ri_diff_df[ri_diff_df.treat .== 0,:])
+            ri_diff_df = ri_diff_df[ri_diff_df.treat .== -1,:]
+            unique_states = unique(diff_df.state)
+            control_states = setdiff(unique_states, treated_states)
+            if isempty(control_states)
+                # If there are no pure control states, do extra processing to remove cells
+                # where there are no treat-control pairs
+                diff_df = subset(
+                            groupby(diff_df, [:t, :r1]),
+                            :treat => x -> any(x .== 1) && any(x .== 0)
+                          )
+                ri_diff_df = semijoin(ri_diff_df, diff_df, on=[:t, :r1])
+            end 
+        end
+
+        # In the case where the diff_df has missing values for diffs, drop those rows
+        if any(ismissing.(diff_df.diff))
+            diff_df = dropmissing(diff_df, :diff)
+            diff_df = subset(
+                            groupby(diff_df, [:t, :r1]),
+                            :treat => x -> any(x .== 1) && any(x .== 0)
+                          )
+            if nrow(diff_df) == 0 && !jackknife
+                error("Could not find a single pair of non-missing valued treated & untreated differences for the same (g,t) group.\nUnable to compute any ATTs.")
+            end
+            if !jackknife
+                ri_diff_df = semijoin(ri_diff_df, diff_df, on=[:t, :r1])
+                ri_diff_df = dropmissing(ri_diff_df, :diff)
+            end
+        end
+
+        if !jackknife
+            return diff_df, ri_diff_df
+        end
+
+    elseif common_adoption
+
+        # Create diff matrix
+        states = unique(lambda_df.state)
+        diff_df = DataFrame(state = states,
+                            diff = Vector{Float64}(undef, length(states)),
+                            treat = Vector{Float64}(undef, length(states)),
+                            treated_time = fill(unique(treatment_times)[1], length(states)),
+                            n = Vector{Float64}(undef, length(states)),
+                            n_t = Vector{Float64}(undef, length(states)))
+        for i in eachindex(states)
+            state = states[i]
+            if state in treated_states
+                trt = 1
+            else 
+                trt = 0
+            end 
+            diff = lambda_df[(lambda_df.state .== state) .&& (lambda_df.time .== "post"), "lambda"][1] - lambda_df[(lambda_df.state .== state) .&& (lambda_df.time .== "pre"), "lambda"][1]
+            diff_df.diff[i] = diff
+            diff_df.treat[i] = trt
+            diff_df.n[i] = sum(data_copy.state_71X9yTx .== state)
+            diff_df.n_t[i] = sum((data_copy.state_71X9yTx .== state) .&& (data_copy.time_71X9yTx .== "post"))
+        end 
+
+    end
+
+    return diff_df
+
+end
+
+function jackknife_time_compute(temp, weighting)
+
+    if length(unique(temp.treat)) < 2
+        temp = missing
+        att = missing
+    else 
+        tt_cols = [col for col in names(temp) if occursin(r"^tt_\d+$", string(col))]
+        X = convert(Matrix{Float64}, hcat(ones(nrow(temp)), Matrix(temp[:, tt_cols]), temp[:, :treat]))
+        ncolx = size(X, 2)
+        varied_dummies = [i for i in 2:ncolx-1 if length(unique(X[:, i])) > 1]
+        cols_to_keep = [1; varied_dummies; ncolx]
+        X_sub = X[:, cols_to_keep]
+        X_sub_rank = rank(X_sub)
+        X_sub_ncolx = size(X_sub, 2)
+        v = 2
+        while (X_sub_rank < X_sub_ncolx) && X_sub_ncolx > 2
+            cols_to_keep = [1; varied_dummies[v:end]; ncolx]
+            X_sub = X[:, cols_to_keep]
+            X_sub_rank = rank(X_sub)
+            X_sub_ncolx = size(X_sub, 2)
+            v += 1
+        end
+        X = X_sub
+        Y = convert(Vector{Float64}, temp.diff)
+        if in(weighting, ["diff", "both"]) 
+            W_diff = convert(Vector{Float64}, temp.n)
+            W_diff ./= sum(W_diff) 
+            sw = sqrt.(W_diff)           
+            X = X .* sw            
+            Y = Y .* sw
+        end 
+        att = rank(X) == size(X, 2) ? (X \ Y)[end] : missing
+    end
+    return att
 end

@@ -7,7 +7,7 @@
                            treated_states = TREATED_STATES, 
                            seed = 1234,
                            covariates = [:male, :asian, :black],
-                           agg = "none")
+                           agg = "none", nperm = 399)
     @test !isnothing(result)
 end
 
@@ -17,7 +17,7 @@ end
                            treated_states = TREATED_STATES, 
                            seed = 1234,
                            covariates = [:male, :asian, :black],
-                           agg = "state")
+                           agg = "state", nperm = 399)
     @test !isnothing(result)
 end
 
@@ -28,7 +28,7 @@ end
                            treated_states = TREATED_STATES, 
                            seed = 1234, ccc = "state",
                            covariates = [:male, :asian, :black],
-                           agg = "cohort")
+                           agg = "cohort", nperm = 399)
     @test !isnothing(result)
 end
 
@@ -38,7 +38,7 @@ end
                            treated_states = TREATED_STATES, 
                            seed = 1234, ccc = "hom",
                            covariates = [:male, :asian, :black],
-                           agg = "simple")
+                           agg = "simple", nperm = 399)
     @test !isnothing(result)
 end
 
@@ -48,7 +48,7 @@ end
                            treated_states = TREATED_STATES, 
                            seed = 1234,  ccc = "add",
                            covariates = [:male, :asian, :black],
-                           agg = "sgt")
+                           agg = "sgt", nperm = 399)
     @test !isnothing(result)
 end
 
@@ -58,7 +58,7 @@ end
                            treated_states = TREATED_STATES, 
                            seed = 1234, ccc = "time",
                            covariates = [:male, :asian, :black],
-                           agg = "state")
+                           agg = "state", nperm = 399)
     @test !isnothing(result)
 end
 
@@ -68,7 +68,7 @@ end
                            treated_states = TREATED_STATES, 
                            seed = 1234, 
                            covariates = [:male, :asian, :black],
-                           agg = "time")
+                           agg = "time", nperm = 399)
     @test !isnothing(result)
 end
 
@@ -78,7 +78,7 @@ end
                            treated_states = TREATED_STATES, 
                            seed = 1234, 
                            covariates = [:male, :asian, :black],
-                           agg = "none")
+                           agg = "none", nperm = 399)
     @test !isnothing(result)
 end
 
@@ -87,7 +87,7 @@ end
     result = DiDInt.didint("coll", "state", "year", TEST_DATA_GVAR,
                            gvar = :gvar, 
                            seed = 1234, 
-                           covariates = [:male, :asian, :black])
+                           covariates = [:male, :asian, :black], nperm = 399)
     @test !isnothing(result)
 end
 
@@ -98,7 +98,7 @@ end
                            date_format = "yyyy", start_date = "1989", end_date = "2000", freq = "yearly",
                            treated_states = TREATED_STATES, 
                            seed = 1234, 
-                           covariates = [:male, :asian, :black])
+                           covariates = [:male, :asian, :black], nperm = 399)
     @test !isnothing(result)
 end
 
@@ -108,7 +108,7 @@ end
                            treatment_times = TREATED_TIMES,
                            treated_states = TREATED_STATES, 
                            seed = 1234, notyet = true, weighting = "none",
-                           covariates = [:male, :asian, :black])
+                           covariates = [:male, :asian, :black], nperm = 399)
     @test !isnothing(result)
 end
 
@@ -119,7 +119,7 @@ end
                            treated_states = TREATED_STATES, 
                            seed = 1234, 
                            covariates = [:male, :asian, :black],
-                           agg = "cohort")
+                           agg = "cohort", nperm = 399)
     @test !isnothing(result)
 end
 
@@ -129,6 +129,100 @@ end
                            treated_states = TREATED_STATES, 
                            seed = 1234, 
                            covariates = [:male, :asian, :black],
-                           agg = "cohort")
+                           agg = "cohort", nperm = 399)
+    @test !isnothing(result)
+end
+
+# Test that the truejack option works 
+@testset "truejack - common none" begin 
+    result = DiDInt.didint("coll", "state", "year", TEST_DATA_MISSING,
+                           treatment_times = TREATED_TIMES[1],
+                           treated_states = TREATED_STATES, 
+                           seed = 1234, 
+                           covariates = [:male, :asian, :black],
+                           agg = "none", nperm = 399, truejack = true)
+    @test !isnothing(result)
+end 
+
+@testset "truejack - common state" begin 
+    result = DiDInt.didint("coll", "state", "year", TEST_DATA_MISSING,
+                           treatment_times = TREATED_TIMES[1],
+                           treated_states = TREATED_STATES, 
+                           seed = 1234, 
+                           covariates = [:male, :asian, :black],
+                           agg = "state", nperm = 399, truejack = true)
+    @test !isnothing(result)
+end 
+
+@testset "truejack check staggered - cohort (default)" begin
+    result = DiDInt.didint("coll", "state", "year", TEST_DATA,
+                           treatment_times = TREATED_TIMES,
+                           treated_states = TREATED_STATES, 
+                           seed = 1234, ccc = "state",
+                           covariates = [:male, :asian, :black],
+                           agg = "cohort", nperm = 399, truejack = true)
+    @test !isnothing(result)
+end
+
+@testset "truejack check staggered - simple" begin
+    result = DiDInt.didint("coll", "state", "year", TEST_DATA,
+                           treatment_times = TREATED_TIMES,
+                           treated_states = TREATED_STATES, 
+                           seed = 1234, ccc = "hom",
+                           covariates = [:male, :asian, :black],
+                           agg = "simple", nperm = 399, truejack = true,
+                           notyet = true)
+    @test !isnothing(result)
+end
+
+@testset "truejack check staggered - sgt" begin
+    result = DiDInt.didint("coll", "state", "year", TEST_DATA,
+                           treatment_times = TREATED_TIMES,
+                           treated_states = TREATED_STATES, 
+                           seed = 1234,  ccc = "add",
+                           covariates = [:male, :asian, :black],
+                           agg = "sgt", nperm = 399, truejack = true,
+                           notyet = true)
+    @test !isnothing(result)
+end
+
+@testset "truejack check staggered - state" begin
+    result = DiDInt.didint("coll", "state", "year", TEST_DATA,
+                           treatment_times = TREATED_TIMES,
+                           treated_states = TREATED_STATES, 
+                           seed = 1234, ccc = "time",
+                           covariates = [:male, :asian, :black],
+                           agg = "state", nperm = 399, truejack = true)
+    @test !isnothing(result)
+end
+
+@testset "truejack check staggered - time" begin
+    result = DiDInt.didint("coll", "state", "year", TEST_DATA,
+                           treatment_times = TREATED_TIMES,
+                           treated_states = TREATED_STATES, 
+                           seed = 1234, 
+                           covariates = [:male, :asian, :black],
+                           agg = "time", nperm = 399, truejack = true)
+    @test !isnothing(result)
+end
+
+
+@testset "truejack and notyet check staggered - time" begin
+    result = DiDInt.didint("coll", "state", "year", TEST_DATA,
+                           treatment_times = TREATED_TIMES,
+                           treated_states = TREATED_STATES, 
+                           seed = 1234, 
+                           covariates = [:male, :asian, :black],
+                           agg = "time", nperm = 399, truejack = true, notyet = true)
+    @test !isnothing(result)
+end
+
+@testset "truejack check staggered - none" begin
+    result = DiDInt.didint("coll", "state", "year", TEST_DATA,
+                           treatment_times = TREATED_TIMES,
+                           treated_states = TREATED_STATES, 
+                           seed = 1234, 
+                           covariates = [:male, :asian, :black],
+                           agg = "none", nperm = 399, truejack = true)
     @test !isnothing(result)
 end
