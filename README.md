@@ -14,6 +14,8 @@ To learn more about the common causal covariates assumption and intersection dif
 
 A Stata wrapper for this package is available here: **[didintjl](https://github.com/ebjamieson97/didintjl)**.
 
+See more detailed documentation on the [documentation page](https://ebjamieson97.github.io/DiDInt.jl/).
+
 ## Installation 
 ```
 using Pkg
@@ -23,184 +25,95 @@ Pkg.add(url="https://github.com/ebjamieson97/DiDInt.jl")
 ## `didint()` - Estimate ATT
 
 The function `didint()` estimates the ATT while adjusting for covariates that may vary by state, time, or both.
-```julia
-didint(
-       outcome::Union{AbstractString, Symbol},
-       state::Union{AbstractString, Symbol},
-       time::Union{AbstractString, Symbol},
-       data::DataFrame;
-       gvar::Union{AbstractString, Symbol, Nothing} = nothing,
-       treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
-       treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing,
-       date_format::Union{AbstractString, Nothing} = nothing,
-       covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol} = nothing,
-       ccc::AbstractString = "int",
-       agg::AbstractString = "cohort",
-       weighting::AbstractString = "both",
-       ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
-       freq::Union{AbstractString, Nothing} = nothing,
-       freq_multiplier::Number = 1,
-       start_date::Union{AbstractString, Number, Date, Nothing} = nothing,
-       end_date::Union{AbstractString, Number, Date, Nothing} = nothing,
-       nperm::Number = 999,
-       verbose::Bool = true,
-       seed::Number = rand(1:1000000),
-       use_pre_controls::Bool = false,
-       notyet::Union{Nothing, Bool} = nothing,
-       hc::Union{AbstractString, Number} = "hc3"
-      )
-``` 
 
-### Example
 ```julia
 using DiDInt
-# Placeholder for now, sorry
+using CSV, DataFrames # To read in data
+
+# Define treated states and their respective treatment times
+treated_states = ["34", "57", "58", "59", "61", "64", "71", "72", "85", "88"]
+treated_times = [2000, 1998, 1993, 1997, 1999, 1996, 1991, 1998, 1997, 2000]
+
+# Load data
+test_data = CSV.read("merit.csv", DataFrame)
+
+# Run DID-INT model
+result = DiDInt.didint("coll", "state", "year", test_data,
+                       treatment_times = treated_times,
+                       treated_states = treated_states, 
+                       seed = 1234, ccc = "state",
+                       covariates = [:male, :asian, :black],
+                       agg = "cohort", nperm = 399)
+
+# Show aggregate level results
+result[:, 3:9]
+        
+# 7×7 DataFrame
+#  Row │ agg_att          se_agg_att       pval_agg_att      jknifese_agg_att  jknifepval_agg_att  ri_pval_agg_att  nperm     
+#      │ Float64?         Float64?         Float64?          Float64?          Float64?            Float64?         Float64?
+# ─────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#    1 │       0.0545816        0.0135013        0.00678187         0.0172599          0.00512895        0.0401003      399.0
+#    2 │ missing          missing          missing            missing            missing           missing          missing
+#    3 │ missing          missing          missing            missing            missing           missing          missing
+#    4 │ missing          missing          missing            missing            missing           missing          missing
+#    5 │ missing          missing          missing            missing            missing           missing          missing
+#    6 │ missing          missing          missing            missing            missing           missing          missing
+#    7 │ missing          missing          missing            missing            missing           missing          missing
+
+# Show sub-aggregate level results
+result[:, vcat([1,2], 10:end)]
+
+# 7×11 DataFrame
+#  Row │ treatment_time  att_cohort  se_att_cohort  pval_att_cohort  jknifese_att_cohort  jknifepval_att_cohort  ri_pval_att_cohort  weights    period  start_date  end_date 
+#      │ Dates.Date      Float64?    Float64?       Float64?         Float64?             Float64?               Float64?            Float64    String  String      String
+# ─────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#    1 │ 1991-01-01       0.0740159      0.0247873      0.00349694       missing                 missing                   0.255639  0.201796   1 year  1989        2000
+#    2 │ 1993-01-01       0.0845589      0.0210913      0.000129329      missing                 missing                   0.215539  0.191535   1 year  1989        2000
+#    3 │ 1996-01-01       0.0333588      0.0308039      0.283737         missing                 missing                   0.684211  0.0756734  1 year  1989        2000
+#    4 │ 1997-01-01       0.0654413      0.0289131      0.028375               0.0389711               0.109479            0.288221  0.321077   1 year  1989        2000
+#    5 │ 1998-01-01       0.0444878      0.0490408      0.370708               0.0900249               0.62685             0.528822  0.108593   1 year  1989        2000
+#    6 │ 1999-01-01      -0.0211062      0.0207727      0.321739         missing                 missing                   0.842105  0.0354853  1 year  1989        2000
+#    7 │ 2000-01-01      -0.0633142      0.0997027      0.539666               0.0971782               0.52251             0.401003  0.0658401  1 year  1989        2000
+
 ```
-
-### Parameters
-
-#### Required Parameters
-- **outcome**  
-  Name of the column which identifies the outcome of interest.
-- **state**  
-  Name of the column which identifies the state membership of the observation.
-- **time**  
-  Name of the column which identifies the date of the observation.
-- **data**   
-  The DataFrame to be used for the analysis.
-
-#### Treatment Specification
-- **gvar**  
-  Name of the column which indicates time of first treatment for each state.
-- **treated_states**  
-  A vector of strings (or a single string) noting the treated state(s).
-- **treatment_times**  
-  A vector (or single entry) denoting the associated treatment times of the treated_states. The order should match `treated_states` (i.e., the first treated state corresponds to the first treatment time, and so on).
-
-#### Model Specification
-- **ccc**  
-  Specify which version of DID-INT should be used. Options: `"hom"`, `"time"`, `"state"`, `"add"`, `"int"`.
-- **agg**  
-  Enter the aggregation method as a string. Options: `"cohort"`, `"simple"`, `"state"`, `"sgt"`, `"none"`.
-- **weighting**  
-  Specify which weighting method should be used. Options: `"both"`, `"att"`, `"diff"`, `"none"`.
-- **covariates**  
-  A vector of covariates entered as either strings or symbols (or a single covariate string or symbol), or `nothing` (default).
-- **notyet**  
-  Determine if pre-treatment periods from treated states should be used as controls.
-- **ref**  
-  A dictionary specifying which category in a categorical variable should be used as the reference (baseline) category.
-
-#### Date Processing & Period Grid Construction
-- **date_format**  
-  Date format (e.g., `"yyyy"` or `"yyyy-mm-dd"`) to be used when parsing string dates from the time column, or `start_date`, `end_date`, and `treatment_times` arguments.
-- **freq**  
-  A string indicating the desired timeframe of a period for the analysis for staggered adoption scenarios. Options: `"year"`, `"month"`, `"week"`, `"day"`.
-- **freq_multiplier**  
-  An integer by which the `freq` argument should be multiplied in a staggered adoption scenario (e.g., if a two-year period is desired, set `freq = "year"` and `freq_multiplier = 2`).
-- **start_date**  
-  Any data prior to this date is dropped, and serves as the starting date for the period grid construction if activated.
-- **end_date**  
-  Any data after this date is dropped, and serves as the end date for the period grid construction if activated.
-
-#### Inference
-- **nperm**  
-  The number of unique permutations (not including the initial assignment of treatment times) to be considered when performing the randomization inference.
-- **verbose**  
-  A boolean option for displaying progress of the randomization procedure.
-- **seed**  
-  An integer to set the random seed for the randomization inference procedure.
-- **hc**  
-  Specify which heteroskedasticity-consistent covariance matrix estimator (HCCME) should be used. Options: `0`, `1`, `2`, `3`, `4` (or `"hc0"`, `"hc1"`, `"hc2"`, `"hc3"`, `"hc4"`).
-
-### Returns
-A DataFrame of results including the estimate of the ATT as well as standard errors and p-values.
 
 ## `didint_plot()` - Prepare Data for Visualization
 
 The `didint_plot()` function produces a dataset in a long format that can easily be used for plotting parallel trends or event study plots.
+
 ```julia
-didint_plot(
-            outcome::Union{AbstractString, Symbol},
-            state::Union{AbstractString, Symbol},
-            time::Union{AbstractString, Symbol},
-            data::DataFrame;
-            gvar::Union{AbstractString, Symbol, Nothing} = nothing,
-            treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
-            treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing,
-            date_format::Union{AbstractString, Nothing} = nothing,
-            covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing} = nothing,
-            ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
-            ccc::Union{AbstractString, Vector{<:AbstractString}} = "all",
-            event::Bool = false,
-            weights::Bool = true,
-            ci::Number = 0.95,
-            freq::Union{AbstractString, Nothing} = nothing,
-            freq_multiplier::Number = 1,
-            start_date::Union{AbstractString, Number, Date, Nothing} = nothing,
-            end_date::Union{AbstractString, Number, Date, Nothing} = nothing,
-            hc::Union{AbstractString, Number} = "hc3"
-           )
+
+# Generate data for a parallel trends plot
+plot_parallel = DiDInt.didint_plot("coll", "state", "year", test_data,
+                                   treatment_times = treated_times, 
+                                   treated_states = treated_states,
+                                   event = false, covariates = ["asian", "black", "male"])
+plot_parallel[1:4, :]
+# 4×8 DataFrame
+#  Row │ state    time     lambda    ccc      period  start_date  treat_period  period_length 
+#      │ String?  String?  Float64?  String?  Int64?  String?     Int64?        String
+# ─────┼──────────────────────────────────────────────────────────────────────────────────────
+#    1 │ 12       1989     0.503763  hom           0  1989             missing  1 year
+#    2 │ 12       1990     0.483555  hom           1  1989             missing  1 year
+#    3 │ 12       1991     0.539888  hom           2  1989             missing  1 year
+#    4 │ 12       1992     0.226398  hom           3  1989             missing  1 year
+
+
+# Generate data for an event study plot
+plot_event = DiDInt.didint_plot("coll", "state", "year", test_data,
+                               treatment_times = treated_times, 
+                               treated_states = treated_states,
+                               event = true, covariates = ["asian", "black", "male"])
+plot_event[1:4, :]
+# 4×8 DataFrame
+#  Row │ ccc     time_since_treatment  y         se         ci_lower    ci_upper  ngroup  period_length 
+#      │ String  Int64                 Float64   Float64?   Float64?    Float64?  Int64   String
+# ─────┼────────────────────────────────────────────────────────────────────────────────────────────────
+#    1 │ hom                      -11  0.528292  0.243      -2.55931    3.6159         2  1 year
+#    2 │ hom                      -10  0.447675  0.116099   -0.0518564  0.947207       3  1 year
+#    3 │ hom                       -9  0.470806  0.0278348   0.393524   0.548087       5  1 year
+#    4 │ hom                       -8  0.452972  0.030141    0.37922    0.526725       7  1 year
 ```
-
-### Example
-```julia
-using DiDInt
-# Placeholder for now, sorry
-```
-
-### Parameters
-
-#### Required Parameters
-- **outcome**  
-  Input the name of the column which identifies the outcome of interest.
-- **state**  
-  Input the name of the column which identifies the state membership of the observation.
-- **time**  
-  Input the name of the column which identifies the date of the observation.
-- **data**  
-  The DataFrame to be used for the analysis.
-
-#### Treatment Specification
-- **gvar**  
-  Name of the column which indicates time of first treatment for each state.
-- **treatment_times**  
-  A vector (or single entry) denoting the associated treatment times of the treated_states. The order should match `treated_states` (i.e., the first treated state corresponds to the first treatment time, and so on).
-
-#### Model Specifications
-- **ccc**  
-  Specify which versions of DID-INT should be used. Options are either `"all"`, or any combination of: `"none"`, `"hom"`, `"time"`, `"state"`, `"add"`, `"int"`.
-- **covariates**  
-  A vector of covariates entered as either strings or symbols (or a single covariate string or symbol), or `nothing` (default).
-- **ref**  
-  A dictionary specifying which category in a categorical variable should be used as the reference (baseline) category.
-
-#### Event Study Plot Options
-- **event**  
-  Specify if data should be prepared for an event study plot as opposed to a parallel trends plot.
-- **treated_states**  
-  A vector of strings (or a single string) noting the treated state(s).
-- **weights**  
-  Whether to use weighted means when computing event study estimates. If `true`, estimates are computed as weighted averages of state-level means for each period relative to treatment; if `false`, uses simple unweighted averages.
-- **ci**  
-  Define the size of confidence bands for the event study plot.
-- **hc**  
-  Specify which heteroskedasticity-consistent covariance matrix estimator (HCCME) should be used. Options: `0`, `1`, `2`, `3`, `4` (or `"hc0"`, `"hc1"`, `"hc2"`, `"hc3"`, `"hc4"`).
-
-#### Date Processing & Period Grid Construction
-- **date_format**  
-  Date format (e.g., `"yyyy"` or `"yyyy-mm-dd"`) to be used when parsing string dates from the time column, or `start_date`, `end_date`, and `treatment_times` arguments.
-- **freq**  
-  A string indicating the desired timeframe of a period for the analysis for staggered adoption scenarios. Options: `"year"`, `"month"`, `"week"`, `"day"`.
-- **freq_multiplier**  
-  An integer by which the `freq` argument should be multiplied in a staggered adoption scenario (e.g., if a two-year period is desired, set `freq = "year"` and `freq_multiplier = 2`).
-- **start_date**  
-  Any data prior to this date is dropped, and serves as the starting date for the period grid construction if activated.
-- **end_date**  
-  Any data after this date is dropped, and serves as the end date for the period grid construction if activated.
-
-### Returns
-A DataFrame of means and means residualized by the specified covariates for each of the specified common causal covariates (CCC) violations by period for each state, or, a DataFrame of means of the treated states by periods before/after treatment (again, residualized by the specified covariates and for each of the specified CCC violations).
 
 ## Citations
 - Karim & Webb (2025). ["Good Controls Gone Bad: Difference-in-Differences with Covariates".](https://arxiv.org/abs/2412.14447)
