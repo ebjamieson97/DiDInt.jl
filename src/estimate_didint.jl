@@ -920,7 +920,6 @@ end
 function final_regression_results(X::Matrix, Y::Vector; W::Vector = [nothing], hc::AbstractString = "hc3")
 
     n = length(Y)
-
     # Check for and remove missing values
     # Build mask for each component
     x_valid = [!any(ismissing, X[i, :]) for i in 1:n]
@@ -943,7 +942,7 @@ function final_regression_results(X::Matrix, Y::Vector; W::Vector = [nothing], h
     # Check if we have enough observations left
     ncolx = size(X, 2)
     n = length(Y)
-    if n <= ncolx
+    if n < ncolx
         @warn "Insufficient observations after dropping missing values (n = $n, k = $ncolx)"
         return Dict("beta_hat" => missing, "beta_hat_se" => missing, 
                    "pval_att" => missing, "beta_hat_se_jknife" => missing, 
@@ -960,8 +959,10 @@ function final_regression_results(X::Matrix, Y::Vector; W::Vector = [nothing], h
             return Dict("beta_hat" => missing, "beta_hat_se" => missing, "pval_att" => missing,
                        "beta_hat_se_jknife" => missing, "pval_att_jknife" => missing)
         end
-        resid = Y - X * beta_hat
-        beta_hat_cov = compute_hc_covariance(X, resid, hc)
+        if n > ncolx
+            resid = Y - X * beta_hat
+            beta_hat_cov = compute_hc_covariance(X, resid, hc)
+        end
     elseif eltype(W) <: Number
         W ./= sum(W)
         sw = sqrt.(W)           
@@ -972,14 +973,20 @@ function final_regression_results(X::Matrix, Y::Vector; W::Vector = [nothing], h
             return Dict("beta_hat" => missing, "beta_hat_se" => missing, "pval_att" => missing,
                        "beta_hat_se_jknife" => missing, "pval_att_jknife" => missing)
         end
-        resid_w = Yw - Xw * beta_hat
-        beta_hat_cov = compute_hc_covariance(Xw, resid_w, hc)
+        if n > ncolx
+            resid_w = Yw - Xw * beta_hat
+            beta_hat_cov = compute_hc_covariance(Xw, resid_w, hc)
+        end
     end 
 
-    beta_hat_var = diag(beta_hat_cov)
-    beta_hat_se = sqrt(beta_hat_var[ncolx]) 
+    if n > ncolx
+        beta_hat_var = diag(beta_hat_cov)
+        beta_hat_se = sqrt(beta_hat_var[ncolx]) 
+    else 
+        beta_hat_se = missing
+    end
     dof = n - ncolx
-    pval_att = dof > 0 ? 2 * (1 - cdf(TDist(dof), abs(beta_hat[ncolx] / beta_hat_se))) : missing 
+    pval_att = dof > 0 && !ismissing(beta_hat_se) ? 2 * (1 - cdf(TDist(dof), abs(beta_hat[ncolx] / beta_hat_se))) : missing 
     result_dict = Dict("beta_hat" => beta_hat[ncolx], "beta_hat_se" => beta_hat_se, "pval_att" => pval_att)
     return result_dict
 end
