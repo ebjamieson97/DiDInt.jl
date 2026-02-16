@@ -144,8 +144,6 @@ function compute_hc_covariance(X::Matrix, resid::Vector, hc::AbstractString)
         omega_diag = (resid .^ 2) ./ ((1 .- h) .^ delta)
     end
     
-    Ω = Diagonal(omega_diag)
-    
     # Sandwich estimator: (X'X)⁻¹ X'ΩX (X'X)⁻¹
-    return XXinv * (X' * Ω * X) * XXinv
+    return XXinv * (X' * (omega_diag .* X)) * XXinv
 end
