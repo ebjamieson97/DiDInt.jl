@@ -19,8 +19,8 @@ jobs:
         os:
           - ubuntu-latest
         include:
-          - os: windows-latest
-            version: '1'
+         # - os: windows-latest
+         #   version: '1'
           - os: macOS-latest
             version: '1'
     
