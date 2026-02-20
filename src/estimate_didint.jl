@@ -22,7 +22,7 @@
            seed::Number = rand(1:1000000),
            use_pre_controls::Bool = false,
            notyet::Union{Nothing, Bool} = nothing,
-           hc::Union{AbstractString, Number} = "hc3",
+           hc::Union{AbstractString, Number} = "hc1",
            truejack::Bool = false
           )
 
@@ -99,7 +99,7 @@ in `treated_times`, and so on.
     A boolean option for displaying progress of the randomization procedure. 
 - `seed::Number = rand(1:1000000)`
     An integer to set the random seed for the randomization inference procedure.
-- `hc::Union{AbstractString, Number} = "hc3"`
+- `hc::Union{AbstractString, Number} = "hc1"`
     Specify which heteroskedasticity-consistent covariance matrix estimator (HCCME) should be used.
     Options are `0`, `1`, `2`, `3`, and `4` (or `"hc0"`, `"hc1"`, `"hc2"`, `"hc3"`, `"hc4"`).
 - `truejack::Bool = false`
@@ -138,7 +138,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 seed::Number = rand(1:1000000),
                 use_pre_controls::Bool = false,
                 notyet::Union{Nothing, Bool} = nothing,
-                hc::Union{AbstractString, Number} = "hc3",
+                hc::Union{AbstractString, Number} = "hc1",
                 wrapper::Union{AbstractString, Nothing} = nothing,
                 truejack::Bool = false)
 
@@ -917,7 +917,7 @@ function design_matrix_time_agg(temp::DataFrame, dummy_cols::Vector{Symbol}, tre
     return X
 end
 
-function final_regression_results(X::Matrix, Y::Vector; W::Vector = [nothing], hc::AbstractString = "hc3")
+function final_regression_results(X::Matrix, Y::Vector; W::Vector = [nothing], hc::AbstractString = "hc1")
 
     n = length(Y)
     # Check for and remove missing values

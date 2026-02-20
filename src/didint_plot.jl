@@ -18,7 +18,7 @@
                 freq_multiplier::Number = 1,
                 start_date::Union{AbstractString, Number, Date, Nothing} = nothing,
                 end_date::Union{AbstractString, Number, Date, Nothing} = nothing,
-                hc::Union{AbstractString, Number} = "hc3"
+                hc::Union{AbstractString, Number} = "hc1"
                )
 
 The `didint_plot()` function produces a dataset in a long format that can easily be used for plotting parallel
@@ -69,7 +69,7 @@ in `treated_times`, and so on.
     A vector of strings (or a single string) noting the treated state(s).
 - `ci::Number = 0.95`
     Define the size of confidence bands for the event study plot.
-- `hc::Union{AbstractString, Number} = "hc3"`
+- `hc::Union{AbstractString, Number} = "hc1"`
     Specify which heteroskedasticity-consistent covariance matrix estimator (HCCME) should be used.
     Options are `0`, `1`, `2`, `3`, and `4` (or `"hc0"`, `"hc1"`, `"hc2"`, `"hc3"`, `"hc4"`).
 
@@ -119,7 +119,7 @@ function didint_plot(
          freq_multiplier::Number = 1,
          start_date::Union{AbstractString, Number, Date, Nothing} = nothing,
          end_date::Union{AbstractString, Number, Date, Nothing} = nothing,
-         hc::Union{AbstractString, Number} = "hc3",
+         hc::Union{AbstractString, Number} = "hc1",
          wrapper::Union{AbstractString, Nothing} = nothing)
 
     # Check hc args
