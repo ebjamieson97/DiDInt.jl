@@ -120,7 +120,8 @@ function didint_plot(
          start_date::Union{AbstractString, Number, Date, Nothing} = nothing,
          end_date::Union{AbstractString, Number, Date, Nothing} = nothing,
          hc::Union{AbstractString, Number} = "hc1",
-         wrapper::Union{AbstractString, Nothing} = nothing)
+         wrapper::Union{AbstractString, Nothing} = nothing,
+         recover::Bool = false)
 
     # Check hc args
     if event
@@ -230,7 +231,7 @@ function didint_plot(
         formula = construct_formula(c, covariates_to_include; forplot = true)
 
         # Run the fixed effects model and get back the dataframe of means (or means residualized by covariates) for each period at each state
-        lambda_df, _, _ = run_fixed_effects_model(data_copy, formula, c, covariates)
+        lambda_df, vcov_lambda = run_fixed_effects_model(data_copy, formula, c, covariates, covariates_to_include, recover = recover)
 
         # Append master data
         master_lambda = [master_lambda;lambda_df]

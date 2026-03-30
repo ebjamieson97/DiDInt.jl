@@ -6,6 +6,7 @@ using DataFrames
 using Distributions
 using FixedEffectModels
 using LinearAlgebra
+using Logging
 using Random
 using Statistics
 

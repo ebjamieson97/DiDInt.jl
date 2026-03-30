@@ -151,7 +151,7 @@ function validate_data(data_copy, outcome, state, time, covariates, treatment_ti
         end
         missing_cov = [col for col in covariates if !(col in names(data_copy))]
         if !isempty(missing_cov)
-            error("$(join(missing_cov, ", ")) The preceding covariates could not be found in the data.")
+            error("The following covariates could not be found in the data $(join(missing_cov, ", "))")
         end
     elseif warn_missing_covariates
         @warn "No covariates specified!"

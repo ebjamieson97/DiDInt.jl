@@ -23,7 +23,8 @@
            use_pre_controls::Bool = false,
            notyet::Union{Nothing, Bool} = nothing,
            hc::Union{AbstractString, Number} = "hc1",
-           truejack::Bool = false
+           truejack::Bool = false,
+           recover::Union{Bool, Nothing} = nothing
           )
 
 The `didint()` function estimates the average effect of treatment on the treated (ATT)
@@ -70,6 +71,10 @@ in `treated_times`, and so on.
     or, `nothing` (default).
 - `notyet::Bool = false`
     Determine if pre-treatment periods from treated states should be used as controls.
+- `recover::Union{Bool, Nothing} = nothing`
+    Determine if "zero'd out" lambda coefficients should be re-estimated while dropping any covariates that had introduced
+    collinearity. Defaults to `true` for `ccc = "int"` and `false` otherwise. Note that for any `ccc` option besides `"int"`
+    that setting recover to `true` or `false` will not affect the calculated ATTs.
 - `ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing`
     A dictionary specifying which category in a categorical variable should be used
     as the reference (baseline) category.
@@ -140,7 +145,8 @@ function didint(outcome::Union{AbstractString, Symbol},
                 notyet::Union{Nothing, Bool} = nothing,
                 hc::Union{AbstractString, Number} = "hc1",
                 wrapper::Union{AbstractString, Nothing} = nothing,
-                truejack::Bool = false)
+                truejack::Bool = false,
+                recover::Union{Bool, Nothing} = nothing)
 
     # Check hc args
     hc = hc_checks(hc)
@@ -209,6 +215,7 @@ function didint(outcome::Union{AbstractString, Symbol},
     elseif length(unique(treatment_times)) > 1 
         common_adoption = false
         staggered_adoption = true
+        agg = agg == "none" ? "cohort" : agg
     else
         error("'treatment_times' must have at least one entry.")
     end
@@ -322,14 +329,20 @@ function didint(outcome::Union{AbstractString, Symbol},
     # Construct formula, depending on DID-INT variation
     formula = construct_formula(ccc, covariates_to_include)
 
+    # Check recover arg
+    # if nothing and ccc is int set recover to true, otherwise false
+    if isnothing(recover)
+        recover = ccc == "int" ? true : false
+    end
+
     # Overwrite truejack depending on the ccc arg
     if ccc in ["int", "state"]
         truejack = false
     end
  
     # Run the fixed effects model and get back the dataframe of means (or means residualized by covariates) for each period at each state
-    lambda_df, cornercase, cornercase_se = run_fixed_effects_model(data_copy, formula, ccc, covariates,
-                                                                   common_adoption = common_adoption, staggered_adoption = staggered_adoption) 
+    lambda_df, vcov_lambda = run_fixed_effects_model(data_copy, formula, ccc, covariates, covariates_to_include,
+                                        common_adoption = common_adoption, staggered_adoption = staggered_adoption, recover = recover) 
 
     # Define a function that initializes the results dataframe columns
     init_column() = Vector{Union{Missing, Float64}}(missing, nrows)
@@ -390,7 +403,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 results.treatment_time[i] = trt
                 result_dict = final_regression_results(X, Y, W = W, hc = hc)
                 results.att_cohort[i] = result_dict["beta_hat"]
-                results.se_att_cohort[i] = result_dict["beta_hat_se"]
+                results.se_att_cohort[i] = length(Y) == 2 ? edge_case_se(temp.lambda_idx, vcov_lambda) : result_dict["beta_hat_se"]
                 results.pval_att_cohort[i] = result_dict["pval_att"] 
                 if weighting in ["att", "both"]
                     results.weights[i] = sum(temp[temp.treat .== 1, "n_t"])
@@ -410,7 +423,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls)
+                                          use_pre_controls, covariates_to_include, recover)
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "cohort",
                                                                         verbose, seed, weighting, use_pre_controls)
 
@@ -458,7 +471,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 results.gvar[i] = gvar
                 result_dict = final_regression_results(X, Y, W = W, hc = hc)
                 results.att_gt[i] = result_dict["beta_hat"]
-                results.se_att_gt[i] = result_dict["beta_hat_se"]
+                results.se_att_gt[i] = length(Y) == 2 ? edge_case_se(temp.lambda_idx, vcov_lambda) : result_dict["beta_hat_se"]
                 results.pval_att_gt[i] = result_dict["pval_att"] 
                 if weighting in ["att", "both"]
                     results.weights[i] = sum(temp[temp.treat .== 1, "n_t"])
@@ -480,7 +493,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls)
+                                          use_pre_controls, covariates_to_include, recover)
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "simple",
                                                                         verbose, seed, weighting, use_pre_controls)
 
@@ -524,7 +537,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 results.state[i] = state
                 result_dict = final_regression_results(X, Y, W = W, hc = hc)
                 results.att_s[i] = result_dict["beta_hat"]
-                results.se_att_s[i] = result_dict["beta_hat_se"]
+                results.se_att_s[i] = length(Y) == 2 ? edge_case_se(temp.lambda_idx, vcov_lambda) : result_dict["beta_hat_se"]
                 results.pval_att_s[i] = result_dict["pval_att"] 
                 if weighting in ["att", "both"]
                     results.weights[i] = sum(temp[temp.treat .== 1, "n_t"])
@@ -547,7 +560,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls)
+                                          use_pre_controls, covariates_to_include, recover)
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "state",
                                                                         verbose, seed, weighting, use_pre_controls)
 
@@ -579,7 +592,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls)
+                                          use_pre_controls, covariates_to_include, recover)
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "none",
                                                                         verbose, seed, weighting, use_pre_controls)
 
@@ -629,7 +642,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 results.t[i] = t
                 result_dict = final_regression_results(X, Y, W = W, hc = hc)
                 results.att_sgt[i] = result_dict["beta_hat"]
-                results.se_att_sgt[i] = result_dict["beta_hat_se"]
+                results.se_att_sgt[i] = length(Y) == 2 ? edge_case_se(temp.lambda_idx, vcov_lambda) : result_dict["beta_hat_se"]
                 results.pval_att_sgt[i] = result_dict["pval_att"] 
                 if weighting in ["att", "both"]
                     results.weights[i] = sum(temp[temp.treat .== 1, "n_t"])
@@ -649,7 +662,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls)
+                                          use_pre_controls, covariates_to_include, recover)
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "sgt",
                                                                         verbose, seed, weighting, use_pre_controls)
 
@@ -723,7 +736,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls)
+                                          use_pre_controls, covariates_to_include, recover)
             results = !randomize ? results : randomization_inference_v2(diff, nperm, results, "time",
                                                                         verbose, seed, weighting, use_pre_controls,
                                                                         dummy_cols = dummy_cols)
@@ -762,17 +775,13 @@ function didint(outcome::Union{AbstractString, Symbol},
             end 
             result_dict = final_regression_results(X, Y, W = W, hc = hc)
             results.agg_att[1] = result_dict["beta_hat"]
-            if cornercase
-                results.se_agg_att[1] = cornercase_se
-            else
-                results.se_agg_att[1] = result_dict["beta_hat_se"]
-            end 
+            results.se_agg_att[1] = length(Y) == 2 ? edge_case_se(diff_df.lambda_idx, vcov_lambda) : result_dict["beta_hat_se"]
             results.pval_agg_att[1] = result_dict["pval_att"]
             results = jackknife_procedure(diff_df, results, weighting,
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, nothing, treatment_times, nothing,
-                                          use_pre_controls)
+                                          use_pre_controls, covariates_to_include, recover)
             results = randomization_inference_v2(diff_df, nperm, results, agg,
                                                  verbose, seed, weighting,
                                                  use_pre_controls)
@@ -817,7 +826,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 results.state[i] = state
                 result_dict = final_regression_results(X, Y, W = W, hc = hc)
                 results.att_s[i] = result_dict["beta_hat"]
-                results.se_att_s[i] = result_dict["beta_hat_se"]
+                results.se_att_s[i] = length(Y) == 2 ? edge_case_se(temp.lambda_idx, vcov_lambda) : result_dict["beta_hat_se"]
                 results.pval_att_s[i] = result_dict["pval_att"] 
                 if weighting in ["att", "both"]
                     results.weights[i] = sum(temp[temp.treat .== 1, "n_t"])
@@ -840,7 +849,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, nothing, treatment_times, nothing,
-                                          use_pre_controls)
+                                          use_pre_controls, covariates_to_include, recover)
             results = randomization_inference_v2(diff_df, nperm, results, "state",
                                                  verbose, seed, weighting, use_pre_controls)
 
@@ -1350,7 +1359,7 @@ function jackknife_procedure(diff_df, results, weighting,
                              truejack, agg, data_copy,
                              formula, ccc, covariates, common_adoption, staggered_adoption,
                              treated_states, time_to_index, treatment_times, match_to_these_dates,
-                             use_pre_controls)
+                             use_pre_controls, covariates_to_include, recover)
 
     # Do a simple check for edge case when there is less than 2 control or less than 2 treated states
     n_treated = length(unique(diff_df[diff_df.treat .== 1, :state]))
@@ -1421,7 +1430,7 @@ function jackknife_procedure(diff_df, results, weighting,
         jackdf = true_jackknife_procedure(data_copy, results, weighting, agg, ccc,
                                           formula, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls, all_states, sub_group, unique_diffs, jackdf)
+                                          use_pre_controls, all_states, sub_group, unique_diffs, jackdf, covariates_to_include, recover)
     elseif !truejack
         jackdf = fast_jackknife_procedure(diff_df, weighting, agg, jackdf, all_states, sub_group, unique_diffs)
     end
@@ -1540,8 +1549,8 @@ end
 function true_jackknife_procedure(data_copy, results, weighting, agg, ccc,
                                   formula, covariates, common_adoption, staggered_adoption,
                                   treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                  use_pre_controls, all_states, sub_group, unique_diffs, jackdf
-                                  )
+                                  use_pre_controls, all_states, sub_group, unique_diffs, jackdf, covariates_to_include,
+                                  recover)
 
     # Cycle through the withouts and sub_groups and compute coefficients
     idx_jack = 1
@@ -1549,8 +1558,8 @@ function true_jackknife_procedure(data_copy, results, weighting, agg, ccc,
         idx_unique_diffs = 1
 
         # Re-estimate fixed effects model
-        lambda_df, cornercase, cornercase_se = run_fixed_effects_model(data_copy[data_copy.state .!= without, :], formula, ccc, covariates,
-                                                                       common_adoption = common_adoption, staggered_adoption = staggered_adoption) 
+        lambda_df, _ = run_fixed_effects_model(data_copy[data_copy.state .!= without, :], formula, ccc, covariates, covariates_to_include,
+                                            common_adoption = common_adoption, staggered_adoption = staggered_adoption, recover = recover) 
 
         # Construct diff_df
         diff_df = construct_diff_df(lambda_df, treated_states, treatment_times, time_to_index, match_to_these_dates, use_pre_controls,
@@ -1634,24 +1643,31 @@ function construct_diff_df(lambda_df, treated_states, treatment_times, time_to_i
         unique_states = unique(lambda_df.state)
         diff_df = DataFrame(state = String[], treated_time = Date[],
                             t = Date[], r1 = Date[], diff = Float64[],
-                            treat = Int[], n = Int[], n_t = Int[])
+                            treat = Int[], n = Int[], n_t = Int[],
+                            lambda_idx = Union{Tuple{Int,Int}, Missing}[])
 
         for i in eachindex(treated_states)
             idx = time_to_index[treatment_times[i]]
             one_period_prior_treatment = match_to_these_dates[idx - 1]
             temp = lambda_df[(lambda_df.state .== treated_states[i]) .& (lambda_df.time .>= one_period_prior_treatment), :]
-            lambda_r1 = temp[temp.time .== one_period_prior_treatment, "lambda"]
-            lambda_r1 = isempty(lambda_r1) ? missing : lambda_r1[1]
+            lambda_r1 = temp[temp.time .== one_period_prior_treatment, [:lambda, :lambda_index]]
+            empty_check = isempty(lambda_r1.lambda)
+            lambda_r1_var_idx =  empty_check ? missing : lambda_r1.lambda_index[1]
+            lambda_r1 = empty_check ? missing : lambda_r1.lambda[1]
             temp = temp[temp.time .> one_period_prior_treatment, :]
             sort!(temp, :time)
             years = temp.time
             diffs = Vector{Union{Float64, Missing}}(undef, nrow(temp))
+            lambda_indices = Vector{Union{Tuple{Int,Int}, Missing}}(undef, nrow(temp))
             n = Vector{Int}(undef, nrow(temp))
             n_t = Vector{Int}(undef, nrow(temp))
             for j in eachindex(diffs)
-                lambda_j = temp[j, "lambda"]
-                lambda_j = isempty(lambda_j) ? missing : lambda_j[1]
+                lambda_j = temp[j, [:lambda, :lambda_index]]
+                empty_check = isempty(lambda_j.lambda)
+                lambda_j_var_idx = empty_check ? missing : lambda_j.lambda_index[1]
+                lambda_j = empty_check ? missing : lambda_j.lambda[1]
                 diffs[j] = lambda_j - lambda_r1
+                lambda_indices[j] = ismissing(lambda_j_var_idx) || ismissing(lambda_r1_var_idx) ? missing : (Int(lambda_j_var_idx), Int(lambda_r1_var_idx))
                 post = temp[j, "time"]
                 pre = one_period_prior_treatment
                 n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([post, pre])) .&& (data_copy.state_71X9yTx .== treated_states[i]))
@@ -1659,7 +1675,7 @@ function construct_diff_df(lambda_df, treated_states, treatment_times, time_to_i
             end 
             temp_df = DataFrame(state = treated_states[i], treated_time = treatment_times[i],
                                 t = years, r1 = one_period_prior_treatment, diff = diffs, treat = 1,
-                                n = n, n_t = n_t)
+                                n = n, n_t = n_t, lambda_idx = lambda_indices)
             diff_df = vcat(diff_df, temp_df) 
         end
         
@@ -1669,23 +1685,33 @@ function construct_diff_df(lambda_df, treated_states, treatment_times, time_to_i
         for i in eachindex(control_states)
             temp = lambda_df[(lambda_df.state .== control_states[i]), :]
             diffs = Vector{Union{Float64, Missing}}(undef, nrow(unique_diffs))
+            lambda_indices = Vector{Union{Tuple{Int,Int}, Missing}}(undef, nrow(unique_diffs))
             n = Vector{Int}(undef, nrow(unique_diffs))
             n_t = Vector{Int}(undef, nrow(unique_diffs))
             for j in 1:nrow(unique_diffs)
                 t = unique_diffs[j,"t"]
                 r1 = unique_diffs[j,"r1"]
-                lambda_t = temp[temp.time .== t, "lambda"]
-                lambda_t = isempty(lambda_t) ? missing : lambda_t[1]
-                lambda_r1 = temp[temp.time .== r1, "lambda"]
-                lambda_r1 = isempty(lambda_r1) ? missing : lambda_r1[1]
+
+                lambda_t = temp[temp.time .== t, [:lambda, :lambda_index]]
+                empty_check = isempty(lambda_t.lambda)
+                lambda_t_idx = empty_check ? missing : lambda_t.lambda_index[1]
+                lambda_t = empty_check ? missing : lambda_t.lambda[1]
+
+                lambda_r1 = temp[temp.time .== r1, [:lambda, :lambda_index]]
+                empty_check = isempty(lambda_r1.lambda)
+                lambda_r1_idx = empty_check ? missing : lambda_r1.lambda_index[1]
+                lambda_r1 = empty_check ? missing : lambda_r1.lambda[1]
+
                 diffs[j] = lambda_t - lambda_r1
+                lambda_indices[j] = ismissing(lambda_r1_idx) || ismissing(lambda_t_idx) ? missing : (Int(lambda_r1_idx), Int(lambda_t_idx))
+
                 n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([t, r1])) .&& (data_copy.state_71X9yTx .== control_states[i]))
                 n_t[j] = sum((data_copy.time_dmG5fpM .== t) .&& (data_copy.state_71X9yTx .== control_states[i]))
             end 
             trtd_time = [match_to_these_dates[findfirst(==(t), match_to_these_dates) + 1] for t in unique_diffs.r1]
             temp_df = DataFrame(state = control_states[i], treated_time = trtd_time,
                                 t = unique_diffs.t, r1 = unique_diffs.r1, diff = diffs, treat = 0,
-                                n = n, n_t = n_t)
+                                n = n, n_t = n_t, lambda_idx = lambda_indices)
             diff_df = vcat(diff_df, temp_df)
         end
 
@@ -1699,28 +1725,39 @@ function construct_diff_df(lambda_df, treated_states, treatment_times, time_to_i
         if !jackknife || use_pre_controls
             ri_diff_df = DataFrame(state = String[], treated_time = Date[],
                                    t = Date[], r1 = Date[], diff = Float64[],
-                                   treat = Int[], n = Int[], n_t = Int[])
+                                   treat = Int[], n = Int[], n_t = Int[],
+                                   lambda_idx = Union{Tuple{Int,Int}, Missing}[])
             for i in eachindex(treated_states)
                 ri_diffs = unique(select(diff_df[(diff_df.state .!= treated_states[i]) .& (diff_df.treated_time .!= treatment_times[i]), :], :t, :r1))
                 temp = lambda_df[(lambda_df.state .== treated_states[i]), :]
                 diffs = Vector{Union{Float64, Missing}}(undef, nrow(ri_diffs))
+                lambda_indices = Vector{Union{Tuple{Int,Int}, Missing}}(undef, nrow(ri_diffs))
                 n = Vector{Int}(undef, nrow(ri_diffs))
                 n_t = Vector{Int}(undef, nrow(ri_diffs))
                 for j in 1:nrow(ri_diffs)
                     t = unique_diffs[j,"t"]
                     r1 = unique_diffs[j,"r1"]
-                    lambda_t = temp[temp.time .== t, "lambda"]
-                    lambda_t = isempty(lambda_t) ? missing : lambda_t[1]
-                    lambda_r1 = temp[temp.time .== r1, "lambda"]
-                    lambda_r1 = isempty(lambda_r1) ? missing : lambda_r1[1]
+
+                    lambda_t = temp[temp.time .== t, [:lambda, :lambda_index]]
+                    empty_check = isempty(lambda_t.lambda)
+                    lambda_t_idx = empty_check ? missing : lambda_t.lambda_index[1]
+                    lambda_t = empty_check ? missing : lambda_t.lambda[1]
+
+                    lambda_r1 = temp[temp.time .== r1, [:lambda, :lambda_index]]
+                    empty_check = isempty(lambda_r1.lambda)
+                    lambda_r1_idx = empty_check ? missing : lambda_r1.lambda_index[1]
+                    lambda_r1 = empty_check ? missing : lambda_r1.lambda[1]
+
                     diffs[j] = lambda_t - lambda_r1
+                    lambda_indices[j] = ismissing(lambda_r1_idx) || ismissing(lambda_t_idx) ? missing : (Int(lambda_r1_idx), Int(lambda_t_idx))
+
                     n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([t, r1])) .&& (data_copy.state_71X9yTx .== treated_states[i]))
                     n_t[j] = sum((data_copy.time_dmG5fpM .== t) .&& (data_copy.state_71X9yTx .== treated_states[i]))
                 end
                 trtd_time = [match_to_these_dates[findfirst(==(t), match_to_these_dates) + 1] for t in ri_diffs.r1]
                 temp_df = DataFrame(state = treated_states[i], treated_time = trtd_time,
                                     t = ri_diffs.t, r1 = ri_diffs.r1, diff = diffs, treat = -1,
-                                    n = n, n_t = n_t)
+                                    n = n, n_t = n_t, lambda_idx = lambda_indices)
                 ri_diff_df = vcat(ri_diff_df, temp_df)
             end
             t_period = indexin(ri_diff_df.t, ordered_t)             
@@ -1779,7 +1816,8 @@ function construct_diff_df(lambda_df, treated_states, treatment_times, time_to_i
                             treat = Vector{Float64}(undef, length(states)),
                             treated_time = fill(unique(treatment_times)[1], length(states)),
                             n = Vector{Float64}(undef, length(states)),
-                            n_t = Vector{Float64}(undef, length(states)))
+                            n_t = Vector{Float64}(undef, length(states)),
+                            lambda_idx = Vector{Union{Tuple{Int,Int}, Missing}}(undef, length(states)))
         for i in eachindex(states)
             state = states[i]
             if state in treated_states
@@ -1788,6 +1826,10 @@ function construct_diff_df(lambda_df, treated_states, treatment_times, time_to_i
                 trt = 0
             end 
             diff = lambda_df[(lambda_df.state .== state) .&& (lambda_df.time .== "post"), "lambda"][1] - lambda_df[(lambda_df.state .== state) .&& (lambda_df.time .== "pre"), "lambda"][1]
+            lambda_idx_post = Int(lambda_df[(lambda_df.state .== state) .&& (lambda_df.time .== "post"), "lambda_index"][1])
+            lambda_idx_pre = Int(lambda_df[(lambda_df.state .== state) .&& (lambda_df.time .== "pre"), "lambda_index"][1])
+            lambda_indices = (lambda_idx_pre, lambda_idx_post)
+            diff_df.lambda_idx[i] = lambda_indices
             diff_df.diff[i] = diff
             diff_df.treat[i] = trt
             diff_df.n[i] = sum(data_copy.state_71X9yTx .== state)
@@ -1834,4 +1876,30 @@ function jackknife_time_compute(temp, weighting)
         att = rank(X) == size(X, 2) ? (X \ Y)[end] : missing
     end
     return att
+end
+
+function edge_case_se(lambda_indices, vcov_lambda)
+
+    # The fully expanded term var(ATT) involves multiple cov terms, that under different ccc options
+    # are zero. In order to not have a bunch of if else statements and clutter things up, only one 
+    # formula is provided here, but note that depending on the ccc selection some (or all for ccc = int)
+    # of the cov terms will be zero.
+
+    #s1_l1 short for state1_lambda1, etc
+    s1_l1_var = vcov_lambda[lambda_indices[1][1], lambda_indices[1][1]]
+    s1_l2_var = vcov_lambda[lambda_indices[1][2], lambda_indices[1][2]]
+    s2_l1_var = vcov_lambda[lambda_indices[2][1], lambda_indices[2][1]]
+    s2_l2_var = vcov_lambda[lambda_indices[2][2], lambda_indices[2][2]]
+
+    # If any of the variance terms for lambda are 0, NaN, or Inf then the var(ATT) is not computable
+    if any(x -> x == 0 || isnan(x) || isinf(x), [s1_l1_var, s1_l2_var, s2_l1_var, s2_l2_var])
+        return missing
+    end
+
+    se_att = sqrt(s1_l1_var + s1_l2_var + s2_l1_var + s2_l2_var - 2*vcov_lambda[lambda_indices[1][1], lambda_indices[1][2]] - 
+             2*vcov_lambda[lambda_indices[2][1], lambda_indices[2][2]] + vcov_lambda[lambda_indices[1][2], lambda_indices[2][2]] -
+             vcov_lambda[lambda_indices[1][2], lambda_indices[2][1]] - vcov_lambda[lambda_indices[1][1], lambda_indices[2][2]] +
+             vcov_lambda[lambda_indices[1][1], lambda_indices[2][1]])
+    return se_att
+
 end
