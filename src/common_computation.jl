@@ -40,7 +40,13 @@ function construct_formula(ccc, covariates_to_include; forplot = false)
 
 end
 
-function run_fixed_effects_model(data_copy, formula, ccc, covariates, covariates_to_include; common_adoption = false, staggered_adoption = true, recover = true)
+function run_fixed_effects_model(data_copy, formula, ccc, covariates, covariates_to_include; common_adoption = false, staggered_adoption = true, recover = true,
+                                 iterative = true, fem = false)
+
+    # If iterative is true and fem is false
+    if iterative == true && fem == false
+        return iterative_demean(data_copy, ccc, covariates_to_include, staggered_adoption)
+    end
 
     # For the particular case of ccc == "hom" and recover == true, we can check for and remove collinearity before running the FE model
     if ccc == "hom" && recover == true
@@ -241,4 +247,170 @@ function recover_lambdas_subset(lambda_df, data_copy, ccc, covariates, subset_ma
    
         return lambda_df, vcov_lambda
 
+end
+
+function iterative_demean(data_working, ccc, covariates_to_include, staggered_adoption)
+    data_working = copy(data_working)
+    y = Float64.(data_working.outcome_71X9yTx)
+
+
+    # Step 1: compute cell means of y and each covariate
+    cell_groups = groupby(data_working, [:state_71X9yTx, :time_71X9yTx])
+    
+    # Within-cell demean y and covariates
+    data_working.y_demeaned = Float64.(data_working.outcome_71X9yTx)
+    for cov in covariates_to_include
+        data_working[!, Symbol(cov * "_demeaned")] = Float64.(data_working[!, Symbol(cov)])
+    end
+
+    data_working = transform(groupby(data_working, [:state_71X9yTx, :time_71X9yTx])) do df
+        df = copy(df)
+        df.y_demeaned = df.y_demeaned .- mean(df.y_demeaned)
+        for cov in covariates_to_include
+            col = Symbol(cov * "_demeaned")
+            df[!, col] = df[!, col] .- mean(skipmissing(df[!, col]))
+        end
+        df
+    end
+
+    demeaned_covs = [cov * "_demeaned" for cov in covariates_to_include]
+
+    cell_means = combine(groupby(data_working, [:state_71X9yTx, :time_71X9yTx])) do df
+        row = DataFrame(cell_mean_y = mean(df.outcome_71X9yTx))
+        for cov in covariates_to_include
+            row[!, Symbol("cell_mean_" * cov)] = [mean(skipmissing(df[!, Symbol(cov)]))]
+        end
+        row
+    end
+
+    # Helper: estimate beta from within-cell-demeaned data, within a grouping
+    # No intercept because data is already cell-demeaned
+    function estimate_beta(df, demeaned_covs)
+        isempty(demeaned_covs) && return Float64[]
+        y = Float64.(collect(df.y_demeaned))
+        X = Matrix(Float64.(df[:, Symbol.(demeaned_covs)]))
+        return X \ y
+    end
+
+    if ccc == "int"
+        lambda_df = combine(groupby(data_working, [:state_71X9yTx, :time_71X9yTx])) do df
+            active_covs = filter(covariates_to_include) do c
+                length(unique(skipmissing(df[!, Symbol(c)]))) > 1
+            end
+            y = Float64.(collect(df.outcome_71X9yTx))
+            X = isempty(active_covs) ? ones(nrow(df), 1) :
+                hcat(ones(nrow(df)), Matrix(Float64.(df[:, Symbol.(active_covs)])))
+            beta = X \ y
+            DataFrame(lambda = [beta[1]])
+        end
+
+    elseif ccc == "time"
+        # Beta is time-specific - estimate within each time period using cell-demeaned data
+        betas = combine(groupby(data_working, :time_71X9yTx)) do df
+            b = estimate_beta(df, demeaned_covs)
+            DataFrame(beta = isempty(b) ? [zeros(0)] : [b])
+        end
+
+    elseif ccc == "state"
+        # Beta is state-specific
+        betas = combine(groupby(data_working, :state_71X9yTx)) do df
+            b = estimate_beta(df, demeaned_covs)
+            DataFrame(beta = isempty(b) ? [zeros(0)] : [b])
+        end
+
+  elseif ccc == "add"
+    states = sort(unique(data_working.state_71X9yTx))
+    times = sort(unique(data_working.time_71X9yTx))
+    n = nrow(data_working)
+    ncovs = length(demeaned_covs)
+    
+    state_idx = Dict(s => i for (i,s) in enumerate(states))
+    time_idx = Dict(t => i for (i,t) in enumerate(times))
+
+    I_rows = Int[]
+    J_cols = Int[]
+    V_vals = Float64[]
+
+    for (row_i, row) in enumerate(eachrow(data_working))
+        s = state_idx[row.state_71X9yTx]
+        t = time_idx[row.time_71X9yTx]
+        for (j, cov) in enumerate(demeaned_covs)
+            x_val = Float64(row[Symbol(cov)])
+            push!(I_rows, row_i); push!(J_cols, (s-1)*ncovs + j);                              push!(V_vals, x_val)
+            push!(I_rows, row_i); push!(J_cols, length(states)*ncovs + (t-1)*ncovs + j); push!(V_vals, x_val)
+        end
+    end
+
+    Z_sparse = sparse(I_rows, J_cols, V_vals, n, (length(states) + length(times)) * ncovs)
+    y_dem = Float64.(data_working.y_demeaned)
+    β_all = Z_sparse \ y_dem
+
+    β_s_all = reshape(β_all[1:length(states)*ncovs], ncovs, length(states))
+    β_t_all = reshape(β_all[length(states)*ncovs+1:end], ncovs, length(times))
+
+    lambda_df = cell_means
+    lambda_df.lambda = map(eachrow(lambda_df)) do row
+        isempty(covariates_to_include) && return row.cell_mean_y
+        xmeans = [row[Symbol("cell_mean_" * cov)] for cov in covariates_to_include]
+        s_i = state_idx[row.state_71X9yTx]
+        t_i = time_idx[row.time_71X9yTx]
+        row.cell_mean_y - dot(β_s_all[:, s_i], xmeans) - dot(β_t_all[:, t_i], xmeans)
+    end
+    elseif ccc == "hom"
+        # Single global beta
+        b = isempty(demeaned_covs) ? Float64[] : begin
+            y2 = Float64.(data_working.y_demeaned)
+            X2 = Matrix(Float64.(data_working[:, Symbol.(demeaned_covs)]))
+            X2 \ y2
+        end
+    end    
+
+    # Apply lambda = cell_mean_y - beta' * cell_mean_X
+    if ccc == "time"
+        lambda_df = leftjoin(cell_means, betas, on = :time_71X9yTx)
+        lambda_df.lambda = map(eachrow(lambda_df)) do row
+            isempty(covariates_to_include) && return row.cell_mean_y
+            b = row.beta
+            xmeans = [row[Symbol("cell_mean_" * cov)] for cov in covariates_to_include]
+            row.cell_mean_y - dot(b, xmeans)
+        end
+
+    elseif ccc == "state"
+        lambda_df = leftjoin(cell_means, betas, on = :state_71X9yTx)
+        lambda_df.lambda = map(eachrow(lambda_df)) do row
+            isempty(covariates_to_include) && return row.cell_mean_y
+            b = row.beta
+            xmeans = [row[Symbol("cell_mean_" * cov)] for cov in covariates_to_include]
+            row.cell_mean_y - dot(b, xmeans)
+        end
+
+    elseif ccc == "none"
+        lambda_df = cell_means
+        lambda_df.lambda = lambda_df.cell_mean_y
+
+    elseif ccc == "hom"
+        lambda_df = cell_means
+        lambda_df.lambda = map(eachrow(lambda_df)) do row
+            isempty(covariates_to_include) && return row.cell_mean_y
+            xmeans = [row[Symbol("cell_mean_" * cov)] for cov in covariates_to_include]
+            row.cell_mean_y - dot(b, xmeans)
+        end
+    end
+
+    rename!(lambda_df, :state_71X9yTx => :state, :time_71X9yTx => :time)
+    select!(lambda_df, [:state, :time, :lambda])
+    sort!(lambda_df, [:state, :time])
+
+    n = nrow(lambda_df)
+    vcov_lambda = fill(NaN, n, n)
+
+    lambda_df.lambda_index = 1:nrow(lambda_df)
+
+    if staggered_adoption
+        lambda_df.time = Date.(lambda_df.time)
+    end
+
+    lambda_df.ccc .= ccc
+
+    return lambda_df, vcov_lambda
 end

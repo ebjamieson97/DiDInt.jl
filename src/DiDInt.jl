@@ -8,6 +8,7 @@ using FixedEffectModels
 using LinearAlgebra
 using Logging
 using Random
+using SparseArrays
 using Statistics
 
 include("data_checks.jl")

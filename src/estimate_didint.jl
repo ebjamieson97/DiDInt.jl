@@ -146,7 +146,9 @@ function didint(outcome::Union{AbstractString, Symbol},
                 hc::Union{AbstractString, Number} = "hc1",
                 wrapper::Union{AbstractString, Nothing} = nothing,
                 truejack::Bool = false,
-                recover::Union{Bool, Nothing} = nothing)
+                recover::Union{Bool, Nothing} = nothing,
+                iterative::Bool = true,
+                fem::Bool = false)
 
     # Check hc args
     hc = hc_checks(hc)
@@ -342,7 +344,8 @@ function didint(outcome::Union{AbstractString, Symbol},
  
     # Run the fixed effects model and get back the dataframe of means (or means residualized by covariates) for each period at each state
     lambda_df, vcov_lambda = run_fixed_effects_model(data_copy, formula, ccc, covariates, covariates_to_include,
-                                        common_adoption = common_adoption, staggered_adoption = staggered_adoption, recover = recover) 
+                                        common_adoption = common_adoption, staggered_adoption = staggered_adoption, recover = recover,
+                                        iterative = iterative, fem = fem) 
 
     # Define a function that initializes the results dataframe columns
     init_column() = Vector{Union{Missing, Float64}}(missing, nrows)
@@ -423,7 +426,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls, covariates_to_include, recover)
+                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "cohort",
                                                                         verbose, seed, weighting, use_pre_controls)
 
@@ -493,7 +496,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls, covariates_to_include, recover)
+                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "simple",
                                                                         verbose, seed, weighting, use_pre_controls)
 
@@ -560,7 +563,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls, covariates_to_include, recover)
+                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "state",
                                                                         verbose, seed, weighting, use_pre_controls)
 
@@ -592,7 +595,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls, covariates_to_include, recover)
+                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "none",
                                                                         verbose, seed, weighting, use_pre_controls)
 
@@ -662,7 +665,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls, covariates_to_include, recover)
+                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "sgt",
                                                                         verbose, seed, weighting, use_pre_controls)
 
@@ -736,7 +739,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls, covariates_to_include, recover)
+                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
             results = !randomize ? results : randomization_inference_v2(diff, nperm, results, "time",
                                                                         verbose, seed, weighting, use_pre_controls,
                                                                         dummy_cols = dummy_cols)
@@ -781,7 +784,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, nothing, treatment_times, nothing,
-                                          use_pre_controls, covariates_to_include, recover)
+                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
             results = randomization_inference_v2(diff_df, nperm, results, agg,
                                                  verbose, seed, weighting,
                                                  use_pre_controls)
@@ -849,7 +852,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                           truejack, agg, data_copy,
                                           formula, ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, nothing, treatment_times, nothing,
-                                          use_pre_controls, covariates_to_include, recover)
+                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
             results = randomization_inference_v2(diff_df, nperm, results, "state",
                                                  verbose, seed, weighting, use_pre_controls)
 
@@ -1359,7 +1362,7 @@ function jackknife_procedure(diff_df, results, weighting,
                              truejack, agg, data_copy,
                              formula, ccc, covariates, common_adoption, staggered_adoption,
                              treated_states, time_to_index, treatment_times, match_to_these_dates,
-                             use_pre_controls, covariates_to_include, recover)
+                             use_pre_controls, covariates_to_include, recover, iterative, fem)
 
     # Do a simple check for edge case when there is less than 2 control or less than 2 treated states
     n_treated = length(unique(diff_df[diff_df.treat .== 1, :state]))
@@ -1430,7 +1433,8 @@ function jackknife_procedure(diff_df, results, weighting,
         jackdf = true_jackknife_procedure(data_copy, results, weighting, agg, ccc,
                                           formula, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls, all_states, sub_group, unique_diffs, jackdf, covariates_to_include, recover)
+                                          use_pre_controls, all_states, sub_group, unique_diffs, jackdf, covariates_to_include, recover,
+                                          iterative, fem)
     elseif !truejack
         jackdf = fast_jackknife_procedure(diff_df, weighting, agg, jackdf, all_states, sub_group, unique_diffs)
     end
@@ -1550,7 +1554,7 @@ function true_jackknife_procedure(data_copy, results, weighting, agg, ccc,
                                   formula, covariates, common_adoption, staggered_adoption,
                                   treated_states, time_to_index, treatment_times, match_to_these_dates,
                                   use_pre_controls, all_states, sub_group, unique_diffs, jackdf, covariates_to_include,
-                                  recover)
+                                  recover, iterative, fem)
 
     # Cycle through the withouts and sub_groups and compute coefficients
     idx_jack = 1
@@ -1559,7 +1563,8 @@ function true_jackknife_procedure(data_copy, results, weighting, agg, ccc,
 
         # Re-estimate fixed effects model
         lambda_df, _ = run_fixed_effects_model(data_copy[data_copy.state .!= without, :], formula, ccc, covariates, covariates_to_include,
-                                            common_adoption = common_adoption, staggered_adoption = staggered_adoption, recover = recover) 
+                                            common_adoption = common_adoption, staggered_adoption = staggered_adoption, recover = recover,
+                                            iterative = iterative, fem = fem) 
 
         # Construct diff_df
         diff_df = construct_diff_df(lambda_df, treated_states, treatment_times, time_to_index, match_to_these_dates, use_pre_controls,
