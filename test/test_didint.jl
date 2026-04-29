@@ -234,6 +234,7 @@ end
                                treatment_times = TREATED_TIMES,
                                treated_states = TREATED_STATES,
                                seed = 1234, ccc = "state", recover = true,
+                               iterative = false, fem = true,
                                covariates = [:male],
                                agg = "cohort", nperm = 399)
         @test !isnothing(result)
@@ -245,6 +246,7 @@ end
                                treatment_times = TREATED_TIMES,
                                treated_states = TREATED_STATES,
                                seed = 1234, ccc = "state", recover = false,
+                               iterative = false, fem = true,
                                covariates = [:male],
                                agg = "cohort", nperm = 399)
         @test !isnothing(result)
@@ -256,12 +258,14 @@ end
                                     treatment_times = TREATED_TIMES,
                                     treated_states = TREATED_STATES,
                                     seed = 1234, ccc = "state", recover = true,
+                                    iterative = false, fem = true,
                                     covariates = [:male, :asian, :black],
                                     agg = "cohort", nperm = 399)
         result_false = DiDInt.didint("coll", "state", "year", TEST_DATA_STATE_COLLINEAR,
                                      treatment_times = TREATED_TIMES,
                                      treated_states = TREATED_STATES,
                                      seed = 1234, ccc = "state", recover = false,
+                                     iterative = false, fem = true,
                                      covariates = [:male, :asian, :black],
                                      agg = "cohort", nperm = 399)
 
@@ -273,6 +277,7 @@ end
                                treatment_times = TREATED_TIMES,
                                treated_states = TREATED_STATES,
                                seed = 1234, ccc = "time", recover = true,
+                               iterative = false, fem = true,
                                covariates = [:male],
                                agg = "cohort", nperm = 399)
         @test !isnothing(result)
@@ -284,6 +289,7 @@ end
                                treatment_times = TREATED_TIMES,
                                treated_states = TREATED_STATES,
                                seed = 1234, ccc = "time", recover = false,
+                               iterative = false, fem = true,
                                covariates = [:male],
                                agg = "cohort", nperm = 399)
         @test !isnothing(result)
@@ -294,12 +300,14 @@ end
                                     treatment_times = TREATED_TIMES_T_COLLINEAR,
                                     treated_states = TREATED_STATES,
                                     seed = 1234, ccc = "time", recover = true,
+                                    iterative = false, fem = true,
                                     covariates = [:male],
                                     agg = "cohort", nperm = 399)
         result_false = DiDInt.didint("coll", "state", "year", TEST_DATA_TIME_COLLINEAR,
                                      treatment_times = TREATED_TIMES_T_COLLINEAR,
                                      treated_states = TREATED_STATES,
                                      seed = 1234, ccc = "time", recover = false,
+                                     iterative = false, fem = true,
                                      covariates = [:male],
                                      agg = "cohort", nperm = 399)
         @test isapprox(result_true.agg_att[1], result_false.agg_att[1], atol=1e-10)
@@ -310,6 +318,7 @@ end
                                treatment_times = TREATED_TIMES,
                                treated_states = TREATED_STATES,
                                seed = 1234, ccc = "hom", recover = true,
+                               iterative = false, fem = true,
                                covariates = [:male],
                                agg = "cohort", nperm = 399)
         @test !isnothing(result)
@@ -320,6 +329,7 @@ end
                                treatment_times = TREATED_TIMES,
                                treated_states = TREATED_STATES,
                                seed = 1234, ccc = "hom", recover = false,
+                               iterative = false, fem = true,
                                covariates = [:male],
                                agg = "cohort", nperm = 399)
         @test !isnothing(result)
@@ -547,6 +557,8 @@ end
             @test !isnothing(result_fem)
             @test !isnothing(result_iter)
             @test isapprox(result_fem.agg_att[1], result_iter.agg_att[1], atol=1e-7)
+            println(ccc_type)
+            println(isapprox(result_fem.agg_att[1], result_iter.agg_att[1], atol=1e-7))
         end
     end
 end
@@ -571,4 +583,132 @@ end
         
         @test isapprox(result_fem.agg_att[1], result_iter.agg_att[1], atol=1e-8)
     end
+end
+
+@testset "Edge case SE - iterative vs FEM" begin
+
+    # Minimal dataset to maximize the chance of triggering length(Y) == 2:
+    # 2 treated states (different cohorts) + 2 control states.
+    edge_treated       = TREATED_STATES[1:2]
+    available_ctrl     = setdiff(unique(TEST_DATA.state), TREATED_STATES)
+    edge_controls      = available_ctrl[1]
+    edge_states_set    = vcat(edge_treated, edge_controls)
+    edge_data          = filter(row -> row.state ∈ edge_states_set, TEST_DATA)
+    edge_treated_times = [TREATED_TIMES[findfirst(==(s), TREATED_STATES)] for s in edge_treated]
+
+    @testset "agg=simple, edge data - ccc hom" begin
+        for ccc_type in ["hom"]
+            result_fem = DiDInt.didint("coll", "state", "year", edge_data,
+                                       treatment_times = edge_treated_times,
+                                       treated_states  = edge_treated,
+                                       seed = 1234, ccc = ccc_type, hc = "hc1",
+                                       covariates = [:male, :asian, :black],
+                                       agg = "simple", nperm = 399,
+                                       iterative = false, fem = true)
+            result_iter = DiDInt.didint("coll", "state", "year", edge_data,
+                                        treatment_times = edge_treated_times,
+                                        treated_states  = edge_treated,
+                                        seed = 1234, ccc = ccc_type, hc = "hc1",
+                                        covariates = [:male, :asian, :black],
+                                        agg = "simple", nperm = 399,
+                                        iterative = true, fem = false)
+            for i in 1:nrow(result_fem)
+                @test isapprox(result_fem.se_att_gt[i],    result_iter.se_att_gt[i],    atol=1e-7)
+            end
+
+        end
+    end
+
+    @testset "agg=simple, edge data- ccc time" begin
+        for ccc_type in ["time"]
+            result_fem = DiDInt.didint("coll", "state", "year", edge_data,
+                                       treatment_times = edge_treated_times,
+                                       treated_states  = edge_treated,
+                                       seed = 1234, ccc = ccc_type, hc = "hc1",
+                                       covariates = [:male, :asian, :black],
+                                       agg = "simple", nperm = 399,
+                                       iterative = false, fem = true)
+            result_iter = DiDInt.didint("coll", "state", "year", edge_data,
+                                        treatment_times = edge_treated_times,
+                                        treated_states  = edge_treated,
+                                        seed = 1234, ccc = ccc_type, hc = "hc1",
+                                        covariates = [:male, :asian, :black],
+                                        agg = "simple", nperm = 399,
+                                        iterative = true, fem = false)
+            for i in 1:nrow(result_fem)
+                @test isapprox(result_fem.se_att_gt[i],    result_iter.se_att_gt[i],    atol=1e-2)
+            end
+
+        end
+    end
+
+    @testset "agg=simple, edge data- ccc state" begin
+        for ccc_type in ["state"]
+            result_fem = DiDInt.didint("coll", "state", "year", edge_data,
+                                       treatment_times = edge_treated_times,
+                                       treated_states  = edge_treated,
+                                       seed = 1234, ccc = ccc_type, hc = "hc1",
+                                       covariates = [:male, :asian, :black],
+                                       agg = "simple", nperm = 399,
+                                       iterative = false, fem = true)
+            result_iter = DiDInt.didint("coll", "state", "year", edge_data,
+                                        treatment_times = edge_treated_times,
+                                        treated_states  = edge_treated,
+                                        seed = 1234, ccc = ccc_type, hc = "hc1",
+                                        covariates = [:male, :asian, :black],
+                                        agg = "simple", nperm = 399,
+                                        iterative = true, fem = false)
+            for i in 1:nrow(result_fem)
+                @test isapprox(result_fem.se_att_gt[i],    result_iter.se_att_gt[i],    atol=1e-2)
+            end
+
+        end
+    end
+    
+    @testset "agg=simple, edge data- ccc int" begin
+        for ccc_type in ["int"]
+            result_fem = DiDInt.didint("coll", "state", "year", edge_data,
+                                       treatment_times = edge_treated_times,
+                                       treated_states  = edge_treated,
+                                       seed = 1234, ccc = ccc_type, hc = "hc1",
+                                       covariates = [:male, :asian, :black], recover = true,
+                                       agg = "simple", nperm = 399,
+                                       iterative = false, fem = true)
+            result_iter = DiDInt.didint("coll", "state", "year", edge_data,
+                                        treatment_times = edge_treated_times,
+                                        treated_states  = edge_treated,
+                                        seed = 1234, ccc = ccc_type, hc = "hc1",
+                                        covariates = [:male, :asian, :black],
+                                        agg = "simple", nperm = 399,
+                                        iterative = true, fem = false)
+            for i in 1:nrow(result_fem)
+                @test isapprox(result_fem.se_att_gt[i],    result_iter.se_att_gt[i],    atol=1e-2)
+            end
+
+        end
+    end
+
+    @testset "agg=simple, edge data- ccc add" begin
+        for ccc_type in ["add"]
+            result_fem = DiDInt.didint("coll", "state", "year", edge_data,
+                                       treatment_times = edge_treated_times,
+                                       treated_states  = edge_treated,
+                                       seed = 1234, ccc = ccc_type, hc = "hc1",
+                                       covariates = [:male, :asian, :black],
+                                       agg = "simple", nperm = 399,
+                                       iterative = false, fem = true)
+            result_iter = DiDInt.didint("coll", "state", "year", edge_data,
+                                        treatment_times = edge_treated_times,
+                                        treated_states  = edge_treated,
+                                        seed = 1234, ccc = ccc_type, hc = "hc1",
+                                        covariates = [:male, :asian, :black],
+                                        agg = "simple", nperm = 399,
+                                        iterative = true, fem = false)
+            for i in 1:nrow(result_fem)
+                @test isapprox(result_fem.se_att_gt[i],    result_iter.se_att_gt[i],    atol=1e-3)
+            end
+
+        end
+    end
+
 end

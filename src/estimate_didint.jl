@@ -343,7 +343,7 @@ function didint(outcome::Union{AbstractString, Symbol},
     end
  
     # Run the fixed effects model and get back the dataframe of means (or means residualized by covariates) for each period at each state
-    lambda_df, vcov_lambda = run_fixed_effects_model(data_copy, formula, ccc, covariates, covariates_to_include,
+    lambda_df, vcov_lambda = run_fixed_effects_model(data_copy, formula, ccc, covariates, covariates_to_include, hc,
                                         common_adoption = common_adoption, staggered_adoption = staggered_adoption, recover = recover,
                                         iterative = iterative, fem = fem) 
 
@@ -1562,7 +1562,7 @@ function true_jackknife_procedure(data_copy, results, weighting, agg, ccc,
         idx_unique_diffs = 1
 
         # Re-estimate fixed effects model
-        lambda_df, _ = run_fixed_effects_model(data_copy[data_copy.state .!= without, :], formula, ccc, covariates, covariates_to_include,
+        lambda_df, _ = run_fixed_effects_model(data_copy[data_copy.state .!= without, :], formula, ccc, covariates, covariates_to_include, "skip",
                                             common_adoption = common_adoption, staggered_adoption = staggered_adoption, recover = recover,
                                             iterative = iterative, fem = fem) 
 

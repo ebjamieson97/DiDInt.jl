@@ -40,12 +40,12 @@ function construct_formula(ccc, covariates_to_include; forplot = false)
 
 end
 
-function run_fixed_effects_model(data_copy, formula, ccc, covariates, covariates_to_include; common_adoption = false, staggered_adoption = true, recover = true,
+function run_fixed_effects_model(data_copy, formula, ccc, covariates, covariates_to_include, hc; common_adoption = false, staggered_adoption = true, recover = true,
                                  iterative = true, fem = false)
 
     # If iterative is true and fem is false
     if iterative == true && fem == false
-        return iterative_demean(data_copy, ccc, covariates_to_include, staggered_adoption)
+        return iterative_demean(data_copy, ccc, covariates_to_include, staggered_adoption, hc)
     end
 
     # For the particular case of ccc == "hom" and recover == true, we can check for and remove collinearity before running the FE model
@@ -249,13 +249,9 @@ function recover_lambdas_subset(lambda_df, data_copy, ccc, covariates, subset_ma
 
 end
 
-function iterative_demean(data_working, ccc, covariates_to_include, staggered_adoption)
+function iterative_demean(data_working, ccc, covariates_to_include, staggered_adoption, hc)
     data_working = copy(data_working)
     y = Float64.(data_working.outcome_71X9yTx)
-
-
-    # Step 1: compute cell means of y and each covariate
-    cell_groups = groupby(data_working, [:state_71X9yTx, :time_71X9yTx])
     
     # Within-cell demean y and covariates
     data_working.y_demeaned = Float64.(data_working.outcome_71X9yTx)
@@ -336,7 +332,7 @@ function iterative_demean(data_working, ccc, covariates_to_include, staggered_ad
         t = time_idx[row.time_71X9yTx]
         for (j, cov) in enumerate(demeaned_covs)
             x_val = Float64(row[Symbol(cov)])
-            push!(I_rows, row_i); push!(J_cols, (s-1)*ncovs + j);                              push!(V_vals, x_val)
+            push!(I_rows, row_i); push!(J_cols, (s-1)*ncovs + j);                        push!(V_vals, x_val)
             push!(I_rows, row_i); push!(J_cols, length(states)*ncovs + (t-1)*ncovs + j); push!(V_vals, x_val)
         end
     end
@@ -356,6 +352,7 @@ function iterative_demean(data_working, ccc, covariates_to_include, staggered_ad
         t_i = time_idx[row.time_71X9yTx]
         row.cell_mean_y - dot(β_s_all[:, s_i], xmeans) - dot(β_t_all[:, t_i], xmeans)
     end
+
     elseif ccc == "hom"
         # Single global beta
         b = isempty(demeaned_covs) ? Float64[] : begin
@@ -397,14 +394,20 @@ function iterative_demean(data_working, ccc, covariates_to_include, staggered_ad
         end
     end
 
-    rename!(lambda_df, :state_71X9yTx => :state, :time_71X9yTx => :time)
-    select!(lambda_df, [:state, :time, :lambda])
-    sort!(lambda_df, [:state, :time])
-
+    sort!(lambda_df, [:state_71X9yTx, :time_71X9yTx])
     n = nrow(lambda_df)
-    vcov_lambda = fill(NaN, n, n)
-
     lambda_df.lambda_index = 1:nrow(lambda_df)
+    rename!(lambda_df, :state_71X9yTx => :state, :time_71X9yTx => :time)
+    if hc != "skip"
+        vcov_lambda = compute_vcov_lambda(data_working, ccc, covariates_to_include,
+                                          lambda_df, hc)
+    else
+        vcov_lambda = fill(NaN, n, n)
+    end
+
+
+    # Only keep needed columns
+    select!(lambda_df, [:state, :time, :lambda, :lambda_index])
 
     if staggered_adoption
         lambda_df.time = Date.(lambda_df.time)
@@ -413,4 +416,158 @@ function iterative_demean(data_working, ccc, covariates_to_include, staggered_ad
     lambda_df.ccc .= ccc
 
     return lambda_df, vcov_lambda
+end
+
+function compute_vcov_lambda(data_working, ccc, covariates_to_include, lambda_df, hc)
+    n_lambda = nrow(lambda_df)
+    ncovs    = length(covariates_to_include)
+    vcov_lambda = zeros(n_lambda, n_lambda)
+
+    cell_id_map = Dict((lambda_df.state[i], lambda_df.time[i]) =>
+                       lambda_df.lambda_index[i] for i in 1:n_lambda)
+
+    # ------------------------------------------------------------------
+    # Drop rows with missing covariate values to mirror what skipmissing
+    # gives the demean step.
+    # ------------------------------------------------------------------
+    if ncovs > 0
+        cov_syms = Symbol.(covariates_to_include)
+        keep = trues(nrow(data_working))
+        for s in cov_syms
+            keep .&= .!ismissing.(data_working[!, s])
+        end
+        data_working = data_working[keep, :]
+    end
+
+    # ------------------------------------------------------------------
+    # Per-block OLS of y on [D_block | W_block] with within-cell-constant
+    # covariates dropped from W_block. Returns the cell-dummy block of the
+    # HC-robust vcov plus global lambda_index for each row/col.
+    # ------------------------------------------------------------------
+    function block_regression(sub_df)
+        n_sub = nrow(sub_df)
+
+        cells_seen = sort(unique([(sub_df.state_71X9yTx[i], sub_df.time_71X9yTx[i])
+                                  for i in 1:n_sub]))
+        local_idx  = Dict(c => i for (i, c) in enumerate(cells_seen))
+        n_cells    = length(cells_seen)
+        global_idx = [cell_id_map[c] for c in cells_seen]
+
+        D_block = zeros(n_sub, n_cells)
+        for i in 1:n_sub
+            ci = local_idx[(sub_df.state_71X9yTx[i], sub_df.time_71X9yTx[i])]
+            D_block[i, ci] = 1.0
+        end
+
+        active = filter(covariates_to_include) do c
+            stds = combine(groupby(sub_df, [:state_71X9yTx, :time_71X9yTx])) do df
+                vals = collect(skipmissing(df[!, Symbol(c)]))
+                DataFrame(has_var = length(unique(vals)) > 1)
+            end
+            any(stds.has_var)
+        end
+
+        W_block = isempty(active) ? zeros(n_sub, 0) :
+                  Matrix(Float64.(sub_df[:, Symbol.(active)]))
+        Z = hcat(D_block, W_block)
+
+        if size(Z, 1) <= size(Z, 2)
+            return fill(NaN, n_cells, n_cells), global_idx
+        end
+
+        y     = Float64.(sub_df.outcome_71X9yTx)
+        β̂    = Z \ y
+        resid = y .- Z * β̂
+        V     = compute_hc_covariance(Z, resid, hc)
+        return V[1:n_cells, 1:n_cells], global_idx
+    end
+
+    function place_block!(V_block, idx)
+        for j in 1:length(idx), i in 1:length(idx)
+            vcov_lambda[idx[i], idx[j]] = V_block[i, j]
+        end
+    end
+
+    if ccc == "int"
+        for grp in groupby(data_working, [:state_71X9yTx, :time_71X9yTx])
+            place_block!(block_regression(grp)...)
+        end
+
+    elseif ccc == "state"
+        for grp in groupby(data_working, :state_71X9yTx)
+            place_block!(block_regression(grp)...)
+        end
+
+    elseif ccc == "time"
+        for grp in groupby(data_working, :time_71X9yTx)
+            place_block!(block_regression(grp)...)
+        end
+
+    elseif ccc == "hom" || ccc == "none"
+        place_block!(block_regression(data_working)...)
+
+    elseif ccc == "add"
+        # ------------------------------------------------------------------
+        # state and time effects on β are jointly estimated -- can't decouple.
+        # Build Z = [D | state-interacted X (drop state 1) | time-interacted X]
+        # and prune any remaining collinear W columns via rank-revealing QR.
+        # All D columns are always retained (they're independent by construction).
+        # ------------------------------------------------------------------
+        n_obs    = nrow(data_working)
+        states   = sort(unique(data_working.state_71X9yTx))
+        times    = sort(unique(data_working.time_71X9yTx))
+        S, T     = length(states), length(times)
+        s_idx    = Dict(s => i for (i, s) in enumerate(states))
+        t_idx    = Dict(t => i for (i, t) in enumerate(times))
+
+        # D: cell dummies aligned to lambda_df.lambda_index
+        D = zeros(n_obs, n_lambda)
+        for i in 1:n_obs
+            ci = cell_id_map[(data_working.state_71X9yTx[i],
+                              data_working.time_71X9yTx[i])]
+            D[i, ci] = 1.0
+        end
+
+        if ncovs == 0
+            Z = D
+        else
+            X_raw = Matrix(Float64.(data_working[:, Symbol.(covariates_to_include)]))
+            # state 1 dropped as reference -> (S - 1 + T) * ncovs columns
+            W = zeros(n_obs, (S - 1 + T) * ncovs)
+            for i in 1:n_obs
+                s = s_idx[data_working.state_71X9yTx[i]]
+                t = t_idx[data_working.time_71X9yTx[i]]
+                for j in 1:ncovs
+                    if s > 1
+                        W[i, (s - 2) * ncovs + j] = X_raw[i, j]
+                    end
+                    W[i, (S - 1) * ncovs + (t - 1) * ncovs + j] = X_raw[i, j]
+                end
+            end
+            Z = hcat(D, W)
+        end
+
+        # Rank-revealing QR: prune redundant W columns, keep all D columns.
+        if size(Z, 2) > n_lambda
+            F   = qr(Z, ColumnNorm())
+            tol = size(Z, 1) * eps(Float64) * maximum(abs.(diag(F.R)))
+            r   = count(>(tol), abs.(diag(F.R)))
+            if r < size(Z, 2)
+                keep = sort(union(1:n_lambda, F.p[1:r]))
+                Z = Z[:, keep]
+            end
+        end
+
+        if size(Z, 1) <= size(Z, 2)
+            vcov_lambda .= NaN
+        else
+            y      = Float64.(data_working.outcome_71X9yTx)
+            α̂     = Z \ y
+            resid  = y .- Z * α̂
+            V_full = compute_hc_covariance(Z, resid, hc)
+            vcov_lambda = V_full[1:n_lambda, 1:n_lambda]
+        end
+    end
+
+    return vcov_lambda
 end
