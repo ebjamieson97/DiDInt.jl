@@ -24,7 +24,7 @@
            notyet::Union{Nothing, Bool} = nothing,
            hc::Union{AbstractString, Number} = "hc1",
            truejack::Bool = false,
-           recover::Union{Bool, Nothing} = nothing
+           edgecase::Union{Bool, Nothing} = nothing
           )
 
 The `didint()` function estimates the average effect of treatment on the treated (ATT)
@@ -71,10 +71,6 @@ in `treated_times`, and so on.
     or, `nothing` (default).
 - `notyet::Bool = false`
     Determine if pre-treatment periods from treated states should be used as controls.
-- `recover::Union{Bool, Nothing} = nothing`
-    Determine if "zero'd out" lambda coefficients should be re-estimated while dropping any covariates that had introduced
-    collinearity. Defaults to `true` for `ccc = "int"` and `false` otherwise. Note that for any `ccc` option besides `"int"`
-    that setting recover to `true` or `false` will not affect the calculated ATTs.
 - `ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing`
     A dictionary specifying which category in a categorical variable should be used
     as the reference (baseline) category.
@@ -111,7 +107,13 @@ in `treated_times`, and so on.
     When aggregation is set to either `"add"`, `"time"`, or `"hom"`, then in order to get valid jackknife
     standard errors, we need to re-estimate the DID-INT model from square one (running the large FixedEffectsModels).
     This is because the covariate effects in those cases depend on values from across states, so dropping a state will change
-    the lambda values, this is not true for the aggregation options of `"int"` or `"state"`.
+    the lambda values, this is not true for the aggregation options of `"int"` or `"state"`
+- `edgecase::Union{Bool, Nothing} = nothing`
+    When there are at least three states for which a difference can be calculated, then standard errors for an ATT can be calculated
+    directly from the regression of differences on the intercept term and treatment indicator. However, in cases when there are only two states
+    for a particular ATT, the standard error can still be constructed from the variance and covariance terms of the relevant means. Calculating these
+    `edgecase` standard errors can be computationally expensive, hence, by default, are only calculated when it is detected that they may be
+    needed. Otherwise you can control whether or not the `edgecase` standard errors should be calculated by setting `edgecase` to either `true` or `false`.
 
 # Returns
 A DataFrame of results including the estimate of the ATT as well as standard errors and p-values.
@@ -146,9 +148,8 @@ function didint(outcome::Union{AbstractString, Symbol},
                 hc::Union{AbstractString, Number} = "hc1",
                 wrapper::Union{AbstractString, Nothing} = nothing,
                 truejack::Bool = false,
-                recover::Union{Bool, Nothing} = nothing,
-                iterative::Bool = true,
-                fem::Bool = false)
+                edgecase::Union{Bool, Nothing} = nothing
+                )
 
     # Check hc args
     hc = hc_checks(hc)
@@ -328,13 +329,14 @@ function didint(outcome::Union{AbstractString, Symbol},
     # Force outcome to float64 to speed up regression (runs faster if <:Number rather than <:Union{Number, Missing})
     data_copy.outcome_71X9yTx = convert(Vector{Float64}, data_copy.outcome_71X9yTx)
 
-    # Construct formula, depending on DID-INT variation
-    formula = construct_formula(ccc, covariates_to_include)
-
-    # Check recover arg
-    # if nothing and ccc is int set recover to true, otherwise false
-    if isnothing(recover)
-        recover = ccc == "int" ? true : false
+    # Check edgecase arg
+    # if nothing revert to defaults
+    if isnothing(edgecase)
+        n_control_states = length(unique_states) - length(treated_states)
+        # If common adoption with only 2 states, or staggered adoption with agg simple and any treatment time only appears once and only one control state, or
+        # staggered adoption with agg sgt and only 1 control state, then in all those cases, do edgecase SE computations by default
+        edgecase = (common_adoption && length(unique_states) == 2) || (staggered_adoption && 
+                            ((agg == "sgt" && n_control_states == 1) || (agg == "simple" && n_control_states == 1 && any(x -> count(==(x), treatment_times) < 2, treatment_times))))
     end
 
     # Overwrite truejack depending on the ccc arg
@@ -343,9 +345,7 @@ function didint(outcome::Union{AbstractString, Symbol},
     end
  
     # Run the fixed effects model and get back the dataframe of means (or means residualized by covariates) for each period at each state
-    lambda_df, vcov_lambda = run_fixed_effects_model(data_copy, formula, ccc, covariates, covariates_to_include, hc,
-                                        common_adoption = common_adoption, staggered_adoption = staggered_adoption, recover = recover,
-                                        iterative = iterative, fem = fem) 
+    lambda_df, vcov_lambda = iterative_demean(data_copy, ccc, covariates_to_include, staggered_adoption, hc, edgecase)
 
     # Define a function that initializes the results dataframe columns
     init_column() = Vector{Union{Missing, Float64}}(missing, nrows)
@@ -424,9 +424,9 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.pval_agg_att[1] = result_dict["pval_att"]
             results = jackknife_procedure(diff_df, results, weighting,
                                           truejack, agg, data_copy,
-                                          formula, ccc, covariates, common_adoption, staggered_adoption,
+                                          ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
+                                          use_pre_controls, covariates_to_include)
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "cohort",
                                                                         verbose, seed, weighting, use_pre_controls)
 
@@ -494,9 +494,9 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.pval_agg_att[1] = result_dict["pval_att"]
             results = jackknife_procedure(diff_df, results, weighting,
                                           truejack, agg, data_copy,
-                                          formula, ccc, covariates, common_adoption, staggered_adoption,
+                                          ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
+                                          use_pre_controls, covariates_to_include)
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "simple",
                                                                         verbose, seed, weighting, use_pre_controls)
 
@@ -561,9 +561,9 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.pval_agg_att[1] = result_dict["pval_att"]
             results = jackknife_procedure(diff_df, results, weighting,
                                           truejack, agg, data_copy,
-                                          formula, ccc, covariates, common_adoption, staggered_adoption,
+                                          ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
+                                          use_pre_controls, covariates_to_include)
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "state",
                                                                         verbose, seed, weighting, use_pre_controls)
 
@@ -593,9 +593,9 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.pval_agg_att[1] = result_dict["pval_att"]
             results = jackknife_procedure(diff_df, results, weighting,
                                           truejack, agg, data_copy,
-                                          formula, ccc, covariates, common_adoption, staggered_adoption,
+                                          ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
+                                          use_pre_controls, covariates_to_include)
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "none",
                                                                         verbose, seed, weighting, use_pre_controls)
 
@@ -663,9 +663,9 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.pval_agg_att[1] = result_dict["pval_att"]
             results = jackknife_procedure(diff_df, results, weighting,
                                           truejack, agg, data_copy,
-                                          formula, ccc, covariates, common_adoption, staggered_adoption,
+                                          ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
+                                          use_pre_controls, covariates_to_include)
             results = !randomize ? results : randomization_inference_v2(vcat(diff_df, ri_diff_df), nperm, results, "sgt",
                                                                         verbose, seed, weighting, use_pre_controls)
 
@@ -737,9 +737,9 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.pval_agg_att[1] = result_dict["pval_att"]
             results = jackknife_procedure(diff[diff.treat .!= -1, :], results, weighting,
                                           truejack, agg, data_copy,
-                                          formula, ccc, covariates, common_adoption, staggered_adoption,
+                                          ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
+                                          use_pre_controls, covariates_to_include)
             results = !randomize ? results : randomization_inference_v2(diff, nperm, results, "time",
                                                                         verbose, seed, weighting, use_pre_controls,
                                                                         dummy_cols = dummy_cols)
@@ -782,9 +782,9 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.pval_agg_att[1] = result_dict["pval_att"]
             results = jackknife_procedure(diff_df, results, weighting,
                                           truejack, agg, data_copy,
-                                          formula, ccc, covariates, common_adoption, staggered_adoption,
+                                          ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, nothing, treatment_times, nothing,
-                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
+                                          use_pre_controls, covariates_to_include)
             results = randomization_inference_v2(diff_df, nperm, results, agg,
                                                  verbose, seed, weighting,
                                                  use_pre_controls)
@@ -850,9 +850,9 @@ function didint(outcome::Union{AbstractString, Symbol},
             results.pval_agg_att[1] = result_dict["pval_att"]
             results = jackknife_procedure(diff_df, results, weighting,
                                           truejack, agg, data_copy,
-                                          formula, ccc, covariates, common_adoption, staggered_adoption,
+                                          ccc, covariates, common_adoption, staggered_adoption,
                                           treated_states, nothing, treatment_times, nothing,
-                                          use_pre_controls, covariates_to_include, recover, iterative, fem)
+                                          use_pre_controls, covariates_to_include)
             results = randomization_inference_v2(diff_df, nperm, results, "state",
                                                  verbose, seed, weighting, use_pre_controls)
 
@@ -1360,9 +1360,9 @@ end
 ## The following functions are for the jackknife procedure
 function jackknife_procedure(diff_df, results, weighting,
                              truejack, agg, data_copy,
-                             formula, ccc, covariates, common_adoption, staggered_adoption,
+                             ccc, covariates, common_adoption, staggered_adoption,
                              treated_states, time_to_index, treatment_times, match_to_these_dates,
-                             use_pre_controls, covariates_to_include, recover, iterative, fem)
+                             use_pre_controls, covariates_to_include)
 
     # Do a simple check for edge case when there is less than 2 control or less than 2 treated states
     n_treated = length(unique(diff_df[diff_df.treat .== 1, :state]))
@@ -1431,10 +1431,9 @@ function jackknife_procedure(diff_df, results, weighting,
     # Otherwise, do jackknife procedure
     if truejack
         jackdf = true_jackknife_procedure(data_copy, results, weighting, agg, ccc,
-                                          formula, covariates, common_adoption, staggered_adoption,
+                                          covariates, common_adoption, staggered_adoption,
                                           treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                          use_pre_controls, all_states, sub_group, unique_diffs, jackdf, covariates_to_include, recover,
-                                          iterative, fem)
+                                          use_pre_controls, all_states, sub_group, unique_diffs, jackdf, covariates_to_include)
     elseif !truejack
         jackdf = fast_jackknife_procedure(diff_df, weighting, agg, jackdf, all_states, sub_group, unique_diffs)
     end
@@ -1551,10 +1550,9 @@ function fast_jackknife_procedure(diff_df, weighting, agg, jackdf, all_states, s
 end
 
 function true_jackknife_procedure(data_copy, results, weighting, agg, ccc,
-                                  formula, covariates, common_adoption, staggered_adoption,
+                                  covariates, common_adoption, staggered_adoption,
                                   treated_states, time_to_index, treatment_times, match_to_these_dates,
-                                  use_pre_controls, all_states, sub_group, unique_diffs, jackdf, covariates_to_include,
-                                  recover, iterative, fem)
+                                  use_pre_controls, all_states, sub_group, unique_diffs, jackdf, covariates_to_include)
 
     # Cycle through the withouts and sub_groups and compute coefficients
     idx_jack = 1
@@ -1562,9 +1560,7 @@ function true_jackknife_procedure(data_copy, results, weighting, agg, ccc,
         idx_unique_diffs = 1
 
         # Re-estimate fixed effects model
-        lambda_df, _ = run_fixed_effects_model(data_copy[data_copy.state .!= without, :], formula, ccc, covariates, covariates_to_include, "skip",
-                                            common_adoption = common_adoption, staggered_adoption = staggered_adoption, recover = recover,
-                                            iterative = iterative, fem = fem) 
+        lambda_df, _ = iterative_demean(data_copy[data_copy.state .!= without, :], ccc, covariates_to_include, staggered_adoption, "hc0", false)
 
         # Construct diff_df
         diff_df = construct_diff_df(lambda_df, treated_states, treatment_times, time_to_index, match_to_these_dates, use_pre_controls,

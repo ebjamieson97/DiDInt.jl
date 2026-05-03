@@ -3,7 +3,6 @@ using Test
 using DataFrames
 using CSV  
 using Random
-using Logging
 Random.seed!(1234)
 
 # Load merit data for testing and build treated_states and treated_times
