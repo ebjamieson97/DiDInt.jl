@@ -16,13 +16,13 @@ More explicitly:
 **Step 1.** In principle, the following regression is estimated to obtain conditional outcome means $\hat{\lambda}_{s,t}$:
 
 ```math
-Y_{i,s,t} = \sum_s \sum_t \lambda_{s,t} I(s,t) + f\!\left(X^k_{i,s,t}\right) + \epsilon_{i,s,t} \hspace{0.5cm} \tag{1}
+Y_{i,s,t} = \sum_s \sum_t \lambda_{s,t} I(s,t) + f\!\left(X^k_{i,s,t}\right) + \epsilon_{i,s,t}
 ```
 
 where $I(s,t)$ is a dummy variable equal to 1 if observation $i$ belongs to state $s$ in period $t$, and $f\!\left(X^k_{i,s,t}\right)$ is a function of covariates whose form depends on the common causal covariates (CCC) violation that is being accounted for. The estimated $\hat{\lambda}_{s,t}$ values are the covariate-adjusted means of the outcome for state $s$ in period $t$. For common adoption scenarios, the data is flattened into two periods: pre-treatment and post-treatment.
 
 !!! note "Implementation"
-    In practice, regression (1) is not estimated directly on the full dataset as this would be computationally prohibitive for datasets with many states, periods, and covariates. Rather, the Frisch-Waugh-Lovell theorem is applied in the case of homogenous DID-INT, state-varying DID-INT, and time-varying DID-INT to recover covariate coefficients which can then be used in conjunction with the outcome means per $(s,t)$ group to retrieve the $\hat{\lambda}_{s,t}$ values. For two-way intersection DID-INT, regression (1) is run separately for each $(s,t)$ group. Finally, for two one-way DID-INT, a sparse matrix procedure is used. The resulting $\hat{\lambda}_{s,t}$ values are numerically equivalent to those from regression (1). More details on estimating $\hat{\lambda}_{s,t}$ can be found in the [Estimating Lambda](@ref) section.
+    In practice, this regression is not estimated directly on the full dataset as this would be computationally prohibitive for datasets with many states, periods, and covariates. Rather, the Frisch-Waugh-Lovell theorem is applied in the case of homogenous DID-INT, state-varying DID-INT, and time-varying DID-INT to recover covariate coefficients which can then be used in conjunction with the outcome means per $(s,t)$ group to retrieve the $\hat{\lambda}_{s,t}$ values. For two-way intersection DID-INT, the regression is run separately for each $(s,t)$ group. Finally, for two one-way DID-INT, a sparse matrix procedure is used. The resulting $\hat{\lambda}_{s,t}$ values are numerically equivalent to those from combined regression. More details on estimating $\hat{\lambda}_{s,t}$ can be found in the [Estimating Lambda](@ref) section.
 
 
 **Step 2.** For each treated state $s$ belonging to treatment cohort $g$, long differences are computed between each post-treatment period $t$ and the period immediately prior to treatment $t^{-g}$:
