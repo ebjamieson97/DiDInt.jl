@@ -206,7 +206,7 @@ function didint_plot(
     end
 
     # Ensure state column is a string
-    data_copy, treated_states = validate_string_treated_states(data_copy; treated_states = treated_states, event = event)
+    data_copy, treated_states = validate_string_treated_states(data_copy; treated_states = treated_states)
 
     # Once any date matching procedures are done, convert time_71X9yTx back to a string for processing in `categorical()`
     # Also keep a column vector copy as a date

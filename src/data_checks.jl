@@ -356,16 +356,14 @@ function validate_treated_states(treated_states, treatment_times, data_copy)
     return treated_states, treatment_times
 end
 
-function validate_string_treated_states(data_copy; treated_states = nothing, event = false)
+function validate_string_treated_states(data_copy; treated_states = nothing)
 
     data_copy.state_71X9yTx = string.(data_copy.state_71X9yTx)
-    if event == true
-        treated_states = string.(treated_states)
-        check_states = unique(data_copy.state_71X9yTx)
-        missing_states = setdiff(treated_states, check_states)
-        if !isempty(missing_states)
-            error("The states $missing_states could not be found among the states in the data $check_states")
-        end
+    treated_states = string.(treated_states)
+    check_states = unique(data_copy.state_71X9yTx)
+    missing_states = setdiff(treated_states, check_states)
+    if !isempty(missing_states)
+        error("The states $missing_states could not be found among the states in the data $check_states")
     end
     return data_copy, treated_states
 

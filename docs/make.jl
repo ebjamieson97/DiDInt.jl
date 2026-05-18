@@ -4,7 +4,9 @@ using DiDInt
 makedocs(
     sitename = "DiDInt.jl",
     modules = [DiDInt],
-    format = Documenter.HTML(),
+    format = Documenter.HTML(
+        size_threshold      = 200_000_000,  # 200 MB
+        size_threshold_warn = 100_000_000,),
     pages = [
         "Home" => "index.md",
         "Functions" => "functions.md",
