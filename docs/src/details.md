@@ -136,9 +136,12 @@ The randomization procedure used in **DiDInt.jl** follows the procedure describe
 
 The **DiDInt.jl** implementation of the randomization inference procedure is as follows:
 
-1. The total number of unique treatment assignment permutations is calculated as: $\frac{N!}{(N-n)! \prod_{m \in M} n_m!}$, where $N$ is the total number of states, $n$ is the number of treated states, $M$ is the set of unique treatment times, and $n_{m}$ is the number of states treated at time $m$. The term $\frac{N!}{(N-n)!}$ counts the number of ways to assign $n$ states from $N$ total states to the initially specified treatment times, while the division by $\prod_{m \in M}n_m!$ removes the overcounting that arises when there are treatment times that were initially assigned to more than one treated state.
+1. The total number of unique treatment assignment permutations is calculated as: $\frac{N!}{(N-n)! \prod_{m \in M} n_m!}$, where $N$ is the total number of states, $n$ is the number of treated states, $M$ is the set of unique treatment times, and $n_{m}$ is the number of states treated at time $m$. The minimum of either the inputted `nperm` value or the total number of unique treatment assignments is used as the number of randomized treatment assignments to consider during the randomization inference procedure.
 2. 
 
+!!! note "Number of Unique Treatment Assignments"
+    The term $\frac{N!}{(N-n)!}$ counts the number of ways to assign $n$ states from $N$ total states to the initially specified set of treatment times, while the division by $\prod_{m \in M}n_m!$ removes the overcounting that arises when there are treatment times that were initially assigned to more than one treated state. The expression can be interpreted as the product of a choose $n$ out of $N$ combination term and a multinomial coefficient term.
+    
 ## Jackknife
 
 ## Estimating Lambda
