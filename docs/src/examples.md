@@ -120,13 +120,8 @@ result_common = DiDInt.didint(
     ccc        = "hom",
     covariates = [:male, :asian, :black],
     agg        = "cohort"
-);
+)
 ```
-
-```@example didint
-result_common
-```
-
 
 ### Trying a different CCC assumption
 
@@ -144,11 +139,7 @@ result_common_int = DiDInt.didint(
     ccc        = "int",
     covariates = [:male, :asian, :black],
     agg        = "cohort"
-);
-```
-
-```@example didint
-result_common_int
+)
 ```
 
 See the [Functions](@ref) for function syntax and the [Under the Hood](@ref) page for more details.

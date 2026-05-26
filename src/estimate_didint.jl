@@ -1898,9 +1898,9 @@ function edge_case_se(lambda_indices, vcov_lambda)
     end
 
     se_att = sqrt(s1_l1_var + s1_l2_var + s2_l1_var + s2_l2_var - 2*vcov_lambda[lambda_indices[1][1], lambda_indices[1][2]] - 
-             2*vcov_lambda[lambda_indices[2][1], lambda_indices[2][2]] + vcov_lambda[lambda_indices[1][2], lambda_indices[2][2]] -
+             2*vcov_lambda[lambda_indices[2][1], lambda_indices[2][2]] + -2*(vcov_lambda[lambda_indices[1][2], lambda_indices[2][2]] -
              vcov_lambda[lambda_indices[1][2], lambda_indices[2][1]] - vcov_lambda[lambda_indices[1][1], lambda_indices[2][2]] +
-             vcov_lambda[lambda_indices[1][1], lambda_indices[2][1]])
+             vcov_lambda[lambda_indices[1][1], lambda_indices[2][1]]))
     return se_att
 
 end

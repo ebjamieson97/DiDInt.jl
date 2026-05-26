@@ -231,11 +231,7 @@ function compute_vcov_lambda(data_working, ccc, covariates_to_include, lambda_df
         data_working = data_working[keep, :]
     end
 
-    # ------------------------------------------------------------------
-    # Per-block OLS of y on [D_block | W_block] with within-cell-constant
-    # covariates dropped from W_block. Returns the cell-dummy block of the
-    # HC-robust vcov plus global lambda_index for each row/col.
-    # ------------------------------------------------------------------
+    # Per-block (group) OLS of: diff ~ (s,t) dummies +  covariates
     function block_regression(sub_df)
         n_sub = nrow(sub_df)
 
@@ -245,6 +241,7 @@ function compute_vcov_lambda(data_working, ccc, covariates_to_include, lambda_df
         n_cells    = length(cells_seen)
         global_idx = [cell_id_map[c] for c in cells_seen]
 
+        # This builds the cell dummy matrix D
         D_block = zeros(n_sub, n_cells)
         for i in 1:n_sub
             ci = local_idx[(sub_df.state_71X9yTx[i], sub_df.time_71X9yTx[i])]
@@ -258,7 +255,8 @@ function compute_vcov_lambda(data_working, ccc, covariates_to_include, lambda_df
             end
             any(stds.has_var)
         end
-
+        
+        # W block is just all the covariates
         W_block = isempty(active) ? zeros(n_sub, 0) :
                   Matrix(Float64.(sub_df[:, Symbol.(active)]))
         Z = hcat(D_block, W_block)
