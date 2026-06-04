@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ebjamieson97/DiDInt.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/ebjamieson97/DiDInt.jl/actions/workflows/CI.yml)
 [![codecov](https://codecov.io/gh/ebjamieson97/DiDInt.jl/graph/badge.svg?token=7Y95RD0P9N)](https://codecov.io/gh/ebjamieson97/DiDInt.jl)
-[![Docs Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://ebjamieson97.github.io/DiDInt.jl/dev)
+[![Docs Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://ebjamieson97.github.io/DiDInt.jl/stable)
 
 Intersection difference-in-differences!
 
@@ -13,6 +13,8 @@ Intersection difference-in-differences!
 To learn more about the common causal covariates assumption and intersection difference-in-differences please see [Karim & Webb (2025)](https://arxiv.org/abs/2412.14447).
 
 A Stata wrapper for this package is available here: **[didintjl](https://github.com/ebjamieson97/didintjl)**.
+
+An R wrapper for this package is available here: **[didintrjl](https://github.com/ebjamieson97/didintrjl)**.
 
 See more detailed documentation on the [documentation page](https://ebjamieson97.github.io/DiDInt.jl/).
 

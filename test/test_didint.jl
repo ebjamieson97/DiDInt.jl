@@ -226,34 +226,3 @@ end
                            agg = "none", nperm = 399, truejack = true)
     @test !isnothing(result)
 end
-
-@testset "make sure that edge case se works" begin
-    
-    @testset "common adoption" begin
-        result = DiDInt.didint("coll", "state", "year", TEST_DATA_FULL[(TEST_DATA_FULL.state .== "71") .| (TEST_DATA_FULL.state .== "73"), :],
-                            treatment_times = 1991,
-                            treated_states = "71",
-                            seed = 1234, ccc = "state", 
-                            covariates = nothing,
-                            agg = "cohort", nperm = 399)
-        @test (!ismissing(result.se_agg_att))
-    end
-
-    @testset "staggered adoption" begin
-        result_sgt = DiDInt.didint("coll", "state", "year", filter(row -> row.state ∈ vcat(CONTROL_STATES[1], TREATED_STATES), TEST_DATA_FULL),
-                                     treatment_times = TREATED_TIMES,
-                                     treated_states = TREATED_STATES,
-                                     seed = 1234, ccc = "int",
-                                     covariates = [:male, :asian, :black],
-                                     agg = "sgt", nperm = 399)
-
-        result_simple = DiDInt.didint("coll", "state", "year", filter(row -> row.state ∈ vcat(CONTROL_STATES[1], TREATED_STATES), TEST_DATA_FULL),
-                                     treatment_times = TREATED_TIMES,
-                                     treated_states = TREATED_STATES,
-                                     seed = 1234, ccc = "add",
-                                     covariates = [:male, :asian, :black],
-                                     agg = "simple", nperm = 399)
-        @test (all(x -> !ismissing(x), result_sgt.se_att_sgt) && all(x -> !ismissing(x), result_simple.se_att_gt))
-    end
-
-end

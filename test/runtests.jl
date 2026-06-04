@@ -68,6 +68,23 @@ TEST_DATA_TIME_COLLINEAR[TEST_DATA_TIME_COLLINEAR.year .== target_time, :male] .
 const TEST_DATA_HOM_COLLINEAR = copy(TEST_DATA)
 TEST_DATA_HOM_COLLINEAR[:, :male] .= 1
 
+
+# ── Edgecase test data ──────────────────────────────────────────────
+# two treated states with DIFFERENT cohorts (forces staggered_adoption = true)
+_t1 = "88"
+_t2 = "71"
+
+const EC_CONTROL    = CONTROL_STATES[1]
+const EC_CONTROL_2  = CONTROL_STATES[2]
+
+# staggered, 2 treated + 1 control 
+const EC_STATES_STAG = [_t1, _t2]
+const EC_TIMES_STAG  = [2000, 1991]
+const TEST_DATA_EC_STAG = filter(r -> r.state ∈ [_t1, _t2, EC_CONTROL], TEST_DATA_FULL)
+
+# common adoption, 1 treated + 1 control → saturated
+const TEST_DATA_EC_COMMON = filter(r -> r.state ∈ [_t1, EC_CONTROL], TEST_DATA_FULL)
+
 # Run tests
 @testset "DiDInt.jl" begin
     @testset "didint()" begin
@@ -75,5 +92,8 @@ TEST_DATA_HOM_COLLINEAR[:, :male] .= 1
     end
     @testset "didint_plot()" begin
         include("test_didint_plot.jl")
+    end
+    @testset "test_edgecase.jl" begin
+        include("test_edgecase.jl")
     end
 end

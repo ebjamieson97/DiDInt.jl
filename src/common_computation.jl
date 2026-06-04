@@ -41,10 +41,165 @@ function compute_hc_covariance(X::Matrix, resid::Vector, hc::AbstractString)
     return XXinv * (X' * (omega_diag .* X)) * XXinv
 end
 
-function iterative_demean(data_working, ccc, covariates_to_include, staggered_adoption, hc, edgecase)
+function iterative_demean(data_working, ccc, covariates_to_include, staggered_adoption, hc, edgecase; 
+                          agg = nothing, time_to_index = nothing, treatment_times = nothing, match_to_these_dates = nothing,
+                          treated_states = nothing, unique_states = nothing, use_pre_controls = nothing)
+
+    affected_cells   = nothing
+    do_full_edgecase = false
+
+    if edgecase 
+        # Case 1: Common adoption, only 1 control state, everything gets computed as edgecase
+        if !staggered_adoption
+            do_full_edgecase = true
+        else
+            # Case 2: Staggered adoption, check all gts
+            states = eltype(treated_states)[]
+            cohorts = eltype(treatment_times)[]
+            ts = eltype(match_to_these_dates)[]
+            r1s = eltype(match_to_these_dates)[]
+            for (i, trt_state) in enumerate(treated_states)
+                g = treatment_times[i]
+                r1 = match_to_these_dates[time_to_index[g] - 1]
+            
+                for t in match_to_these_dates[match_to_these_dates .>= g]
+                    push!(states, trt_state)
+                    push!(cohorts, g)
+                    push!(ts, t)
+                    push!(r1s, r1)
+                end
+            end
+            gts = DataFrame(state = states, cohort = cohorts, t = ts, r1 = r1s)
+            treated_count = Vector{Int}(undef, nrow(gts))
+            observed = Set(zip(data_working.state_71X9yTx, data_working.time_dmG5fpM))
+            for (i, row) in enumerate(eachrow(gts))
+                treated_count[i] = Int(((row.state, row.t) in observed) && ((row.state, row.r1) in observed))
+            end
+            gts.treated_count = treated_count
+            gts = gts[treated_count .== 1, :]
+            gts_individual = copy(gts)
+
+            treated_time_map = Dict(state => treatment_times[i] for (i, state) in enumerate(treated_states))
+            if agg in ["simple", "cohort", "time"]
+                    gts = combine(groupby(gts, [:cohort, :t, :r1]), :treated_count => sum => :treated_count)
+            end
+            control_states_names = Vector{Vector{eltype(unique_states)}}(undef, nrow(gts))
+            control_count = Vector{Int}(undef, nrow(gts))
+            for (i, row) in enumerate(eachrow(gts))
+                cs_candidates = filter(s -> get(treated_time_map, s, nothing) != row.cohort, unique_states)
+                if !use_pre_controls
+                    cs_candidates = cs_candidates[.!in.(cs_candidates, Ref(treated_states))]
+                end
+                valid = eltype(unique_states)[]
+                for cs in cs_candidates
+                    ok = if haskey(treated_time_map, cs)
+                        ((cs, row.t) in observed) && ((cs, row.r1) in observed) && (row.t < treated_time_map[cs])
+                    else
+                        ((cs, row.t) in observed) && ((cs, row.r1) in observed)
+                    end
+                    ok && push!(valid, cs)
+                end
+                control_count[i] = length(valid)
+                control_states_names[i] = valid
+            end
+            gts.control_count = control_count
+            gts.control_states = control_states_names
+            gts = gts[control_count .>= 1, :]
+
+            # The check for time agg actually works out since the edgecase is also the only time where the cohort dummy vars arent used in the diff regression
+            # that is, when there is only one control long diff and one treated long diff at a specific (g,t)
+            if agg == "cohort"
+                gts_check = combine(groupby(gts, [:cohort]), :treated_count => sum => :treated_count, :control_count => sum => :control_count)
+            elseif agg == "state"
+                gts_check = combine(groupby(gts, [:state, :cohort]), :treated_count => sum => :treated_count, :control_count => sum => :control_count)
+            else
+                gts_check = gts
+            end
+            long_diff_count = gts_check.control_count .+ gts_check.treated_count
+            gts_check = gts_check[long_diff_count .== 2, :]
+
+            join_key = if agg == "cohort"
+                [:cohort]
+            elseif agg == "state"
+                [:state, :cohort]
+            elseif agg in ["simple", "time"]
+                [:cohort, :t, :r1]
+            else
+                [:state, :cohort, :t, :r1]
+            end
+            gts_saturated = innerjoin(gts_individual, select(gts_check, join_key), on = join_key)
+                
+            gts_join_key = agg in ["cohort", "simple", "time"] ? [:cohort, :t, :r1] : [:state, :cohort, :t, :r1]
+            gts_saturated = innerjoin(gts_saturated, select(gts, [gts_join_key..., :control_states]),
+                                      on = gts_join_key)
+                
+            # Build final (state, time) output
+            out_states = eltype(unique_states)[]
+            out_times  = eltype(match_to_these_dates)[]
+                
+            for row in eachrow(gts_saturated)
+                push!(out_states, row.state, row.state)
+                push!(out_times,  row.r1,    row.t)
+                for cs in row.control_states
+                    push!(out_states, cs,      cs)
+                    push!(out_times,  row.r1,  row.t)
+                end
+            end
+
+            if !isempty(out_states)
+                affected_cells = unique(DataFrame(state = out_states, time = out_times))
+                if ccc in ["hom"]
+                    do_full_edgecase = true
+                end
+            end
+        end
+    end 
+
     data_working = copy(data_working)
     y = Float64.(data_working.outcome_71X9yTx)
-    
+
+    # Divide data: edgecase cells get lambda+vcov from compute_lambda_edgecase;
+    # the remainder get lambda only from the normal procedure below.
+    has_edgecase = edgecase && (do_full_edgecase || affected_cells !== nothing)
+    skeleton = nothing; vcov_lambda_global = nothing
+
+    if has_edgecase
+        if do_full_edgecase
+            data_ec     = data_working
+            data_normal = data_working[1:0, :]
+        elseif ccc == "state"
+            m = in.(data_working.state_71X9yTx, Ref(unique(affected_cells.state)))
+            data_ec = data_working[m, :]; data_normal = data_working[.!m, :]
+        elseif ccc == "time"
+            m = in.(data_working.time_dmG5fpM, Ref(unique(affected_cells.time)))
+            data_ec = data_working[m, :]; data_normal = data_working[.!m, :]
+        elseif ccc == "int"
+            ec_pairs = Set(zip(affected_cells.state, affected_cells.time))
+            m = [(row.state_71X9yTx, row.time_dmG5fpM) in ec_pairs for row in eachrow(data_working)]
+            data_ec = data_working[m, :]; data_normal = data_working[.!m, :]
+        end
+
+        # Global skeleton uses time_71X9yTx (String) as the time key so that
+        # cell_id_map inside compute_lambda_edgecase matches sub_df.time_71X9yTx
+        skeleton = sort!(unique(select(data_working, [:state_71X9yTx, :time_71X9yTx])),
+                         [:state_71X9yTx, :time_71X9yTx])
+        n_sk = nrow(skeleton)
+        skeleton.lambda       = fill(NaN, n_sk)
+        skeleton.lambda_index = 1:n_sk
+        rename!(skeleton, :state_71X9yTx => :state, :time_71X9yTx => :time)
+        vcov_lambda_global = fill(0.0, n_sk, n_sk)
+
+        skeleton, vcov_lambda_global = compute_lambda_edgecase(data_ec, ccc, covariates_to_include,
+                                                               skeleton, vcov_lambda_global, hc)
+        if isempty(data_normal)
+            staggered_adoption && (skeleton.time = Date.(skeleton.time))
+            select!(skeleton, [:state, :time, :lambda, :lambda_index])
+            skeleton.ccc .= ccc
+            return skeleton, vcov_lambda_global
+        end
+        data_working = data_normal   # normal procedure runs only on non-affected data
+    end
+
     # Within-cell demean y and covariates
     data_working.y_demeaned = Float64.(data_working.outcome_71X9yTx)
     for cov in covariates_to_include
@@ -86,10 +241,19 @@ function iterative_demean(data_working, ccc, covariates_to_include, staggered_ad
                 length(unique(skipmissing(df[!, Symbol(c)]))) > 1
             end
             y = Float64.(collect(df.outcome_71X9yTx))
-            X = isempty(active_covs) ? ones(nrow(df), 1) :
-                hcat(ones(nrow(df)), Matrix(Float64.(df[:, Symbol.(active_covs)])))
+            if isempty(active_covs)
+                X = ones(nrow(df), 1)
+            else
+                X = hcat(ones(nrow(df)), prune_covariates(Matrix(Float64.(df[:, Symbol.(active_covs)]))))
+            end
             beta = X \ y
             DataFrame(lambda = [beta[1]])
+        end
+
+    elseif ccc == "none"
+        lambda_df = combine(groupby(data_working, [:state_71X9yTx, :time_71X9yTx])) do df
+            y = Float64.(collect(df.outcome_71X9yTx))
+            DataFrame(lambda = [mean(y)])
         end
 
     elseif ccc == "time"
@@ -173,10 +337,6 @@ function iterative_demean(data_working, ccc, covariates_to_include, staggered_ad
             row.cell_mean_y - dot(b, xmeans)
         end
 
-    elseif ccc == "none"
-        lambda_df = cell_means
-        lambda_df.lambda = lambda_df.cell_mean_y
-
     elseif ccc == "hom"
         lambda_df = cell_means
         lambda_df.lambda = map(eachrow(lambda_df)) do row
@@ -190,49 +350,34 @@ function iterative_demean(data_working, ccc, covariates_to_include, staggered_ad
     n = nrow(lambda_df)
     lambda_df.lambda_index = 1:nrow(lambda_df)
     rename!(lambda_df, :state_71X9yTx => :state, :time_71X9yTx => :time)
-    if edgecase
-        vcov_lambda = compute_vcov_lambda(data_working, ccc, covariates_to_include,
-                                          lambda_df, hc)
-    else
-        vcov_lambda = fill(NaN, n, n)
-    end
-
-
-    # Only keep needed columns
     select!(lambda_df, [:state, :time, :lambda, :lambda_index])
 
-    if staggered_adoption
-        lambda_df.time = Date.(lambda_df.time)
+    # Merge normal-procedure lambdas into global skeleton (both still have String time here)
+    if has_edgecase
+        cell_map = Dict((skeleton.state[i], skeleton.time[i]) => i for i in 1:nrow(skeleton))
+        for row in eachrow(lambda_df)
+            skeleton.lambda[cell_map[(row.state, row.time)]] = row.lambda
+        end
+        staggered_adoption && (skeleton.time = Date.(skeleton.time))
+        skeleton.ccc .= ccc
+        return skeleton, vcov_lambda_global
     end
 
+    staggered_adoption && (lambda_df.time = Date.(lambda_df.time))
     lambda_df.ccc .= ccc
-
+    vcov_lambda = fill(NaN, n, n)
     return lambda_df, vcov_lambda
 end
 
-function compute_vcov_lambda(data_working, ccc, covariates_to_include, lambda_df, hc)
+function compute_lambda_edgecase(data_working, ccc, covariates_to_include, lambda_df, vcov_lambda, hc)
     n_lambda = nrow(lambda_df)
-    ncovs    = length(covariates_to_include)
-    vcov_lambda = zeros(n_lambda, n_lambda)
 
+    # lambda_df.time is String matches data_working.time_71X9yTx
     cell_id_map = Dict((lambda_df.state[i], lambda_df.time[i]) =>
                        lambda_df.lambda_index[i] for i in 1:n_lambda)
 
-    # ------------------------------------------------------------------
-    # Drop rows with missing covariate values to mirror what skipmissing
-    # gives the demean step.
-    # ------------------------------------------------------------------
-    if ncovs > 0
-        cov_syms = Symbol.(covariates_to_include)
-        keep = trues(nrow(data_working))
-        for s in cov_syms
-            keep .&= .!ismissing.(data_working[!, s])
-        end
-        data_working = data_working[keep, :]
-    end
-
-    # Per-block (group) OLS of: diff ~ (s,t) dummies +  covariates
-    function block_regression(sub_df)
+    # Returns (V_block, global_idx, lambda_vals) where lambda_vals are the (s,t) cell intercepts
+    function block_regression(sub_df; int = false)
         n_sub = nrow(sub_df)
 
         cells_seen = sort(unique([(sub_df.state_71X9yTx[i], sub_df.time_71X9yTx[i])
@@ -241,13 +386,14 @@ function compute_vcov_lambda(data_working, ccc, covariates_to_include, lambda_df
         n_cells    = length(cells_seen)
         global_idx = [cell_id_map[c] for c in cells_seen]
 
-        # This builds the cell dummy matrix D
+        # Dummy block
         D_block = zeros(n_sub, n_cells)
         for i in 1:n_sub
             ci = local_idx[(sub_df.state_71X9yTx[i], sub_df.time_71X9yTx[i])]
             D_block[i, ci] = 1.0
         end
 
+        # Filter to covariates with variation
         active = filter(covariates_to_include) do c
             stds = combine(groupby(sub_df, [:state_71X9yTx, :time_71X9yTx])) do df
                 vals = collect(skipmissing(df[!, Symbol(c)]))
@@ -256,31 +402,39 @@ function compute_vcov_lambda(data_working, ccc, covariates_to_include, lambda_df
             any(stds.has_var)
         end
         
-        # W block is just all the covariates
-        W_block = isempty(active) ? zeros(n_sub, 0) :
-                  Matrix(Float64.(sub_df[:, Symbol.(active)]))
-        Z = hcat(D_block, W_block)
-
-        if size(Z, 1) <= size(Z, 2)
-            return fill(NaN, n_cells, n_cells), global_idx
+        if isempty(active)
+            Z = D_block
+        elseif int
+            Z = hcat(D_block, prune_covariates(Matrix(Float64.(sub_df[:, Symbol.(active)]))))
+        else
+            Z = hcat(D_block, Matrix(Float64.(sub_df[:, Symbol.(active)])))
         end
 
+
         y     = Float64.(sub_df.outcome_71X9yTx)
-        β̂    = Z \ y
-        resid = y .- Z * β̂
-        V     = compute_hc_covariance(Z, resid, hc)
-        return V[1:n_cells, 1:n_cells], global_idx
+        β = Z \ y
+        # If Z is not full rank or not enough rows then in this edgecase of an edgecase we cannot compute the se(ATT)
+        if (size(Z, 1) > size(Z, 2)) && (rank(Z) == size(Z, 2))
+            resid = y .- Z * β
+            V     = compute_hc_covariance(Z, resid, hc)
+        else
+            V = fill(NaN, n_cells, n_cells)
+        end
+        return V[1:n_cells, 1:n_cells], global_idx, β[1:n_cells]
     end
 
-    function place_block!(V_block, idx)
+    function place_block!(V_block, idx, lambda_vals)
         for j in 1:length(idx), i in 1:length(idx)
             vcov_lambda[idx[i], idx[j]] = V_block[i, j]
+        end
+        for i in 1:length(idx)
+            lambda_df.lambda[idx[i]] = lambda_vals[i]
         end
     end
 
     if ccc == "int"
         for grp in groupby(data_working, [:state_71X9yTx, :time_71X9yTx])
-            place_block!(block_regression(grp)...)
+            place_block!(block_regression(grp, int = true)...)
         end
 
     elseif ccc == "state"
@@ -293,71 +447,47 @@ function compute_vcov_lambda(data_working, ccc, covariates_to_include, lambda_df
             place_block!(block_regression(grp)...)
         end
 
-    elseif ccc == "hom" || ccc == "none"
+    elseif ccc == "hom"
         place_block!(block_regression(data_working)...)
 
-    elseif ccc == "add"
-        # ------------------------------------------------------------------
-        # state and time effects on β are jointly estimated -- can't decouple.
-        # Build Z = [D | state-interacted X (drop state 1) | time-interacted X]
-        # and prune any remaining collinear W columns via rank-revealing QR.
-        # All D columns are always retained (they're independent by construction).
-        # ------------------------------------------------------------------
-        n_obs    = nrow(data_working)
-        states   = sort(unique(data_working.state_71X9yTx))
-        times    = sort(unique(data_working.time_71X9yTx))
-        S, T     = length(states), length(times)
-        s_idx    = Dict(s => i for (i, s) in enumerate(states))
-        t_idx    = Dict(t => i for (i, t) in enumerate(times))
-
-        # D: cell dummies aligned to lambda_df.lambda_index
-        D = zeros(n_obs, n_lambda)
-        for i in 1:n_obs
-            ci = cell_id_map[(data_working.state_71X9yTx[i],
-                              data_working.time_71X9yTx[i])]
-            D[i, ci] = 1.0
-        end
-
-        if ncovs == 0
-            Z = D
-        else
-            X_raw = Matrix(Float64.(data_working[:, Symbol.(covariates_to_include)]))
-            # state 1 dropped as reference -> (S - 1 + T) * ncovs columns
-            W = zeros(n_obs, (S - 1 + T) * ncovs)
-            for i in 1:n_obs
-                s = s_idx[data_working.state_71X9yTx[i]]
-                t = t_idx[data_working.time_71X9yTx[i]]
-                for j in 1:ncovs
-                    if s > 1
-                        W[i, (s - 2) * ncovs + j] = X_raw[i, j]
-                    end
-                    W[i, (S - 1) * ncovs + (t - 1) * ncovs + j] = X_raw[i, j]
-                end
-            end
-            Z = hcat(D, W)
-        end
-
-        # Rank-revealing QR: prune redundant W columns, keep all D columns.
-        if size(Z, 2) > n_lambda
-            F   = qr(Z, ColumnNorm())
-            tol = size(Z, 1) * eps(Float64) * maximum(abs.(diag(F.R)))
-            r   = count(>(tol), abs.(diag(F.R)))
-            if r < size(Z, 2)
-                keep = sort(union(1:n_lambda, F.p[1:r]))
-                Z = Z[:, keep]
-            end
-        end
-
-        if size(Z, 1) <= size(Z, 2)
-            vcov_lambda .= NaN
-        else
-            y      = Float64.(data_working.outcome_71X9yTx)
-            α̂     = Z \ y
-            resid  = y .- Z * α̂
-            V_full = compute_hc_covariance(Z, resid, hc)
-            vcov_lambda = V_full[1:n_lambda, 1:n_lambda]
-        end
     end
 
-    return vcov_lambda
+    return lambda_df, vcov_lambda
 end
+
+function prune_covariates(W)
+    # This function is to be used when calculating lambda with the two-way intersection (int) DID-INT model
+    # its necessary since we cant allow for non-uniquely identified lambda values, whereas we can with the
+    # other ccc options as the ATTs calculated from the those DID-INT variations ultimately yield a uniquely
+    # identified ATT
+
+    Wcol = size(W, 2)
+    Wrow = size(W, 1)
+
+    Wqr = qr(W, ColumnNorm())
+    m = min(Wcol, Wrow)
+    tol = abs(Wqr.factors[1,1]) * eps(Float64) * m
+    # Search for first column below tolerance
+    rank = something(findfirst(i -> abs(Wqr.factors[i,i]) <= tol, 1:m), m+1) - 1
+
+    # Reorder from most to least informative columns
+    W = W[:, Wqr.p]
+
+    if Wcol != rank
+        # Keep only the first rank columns in pivoted order
+        W = W[:, 1:rank]
+    end
+
+    # Account for fact that we are adding an intercept column afterwards
+    Wcol = size(W, 2)
+    row_surplus = Wrow - Wcol # Needs to be >= 1
+
+    # Prune the least important covariates according to RRQR if theres still a dimensionality issue
+    if row_surplus < 1
+        nprune = iszero(row_surplus) ? 1 : abs(row_surplus) + 1
+        # Drop the last nprune columns in pivoted order (least informative)
+        W = W[:, 1:Wcol - nprune]
+    end
+
+    return W
+end 

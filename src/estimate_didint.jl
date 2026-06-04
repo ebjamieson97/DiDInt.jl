@@ -24,7 +24,7 @@
            notyet::Union{Nothing, Bool} = nothing,
            hc::Union{AbstractString, Number} = "hc1",
            truejack::Bool = false,
-           edgecase::Union{Bool, Nothing} = nothing
+           edgecase::Bool = false
           )
 
 The `didint()` function estimates the average effect of treatment on the treated (ATT)
@@ -108,12 +108,12 @@ in `treated_times`, and so on.
     standard errors, we need to re-estimate the DID-INT model from square one (running the large FixedEffectsModels).
     This is because the covariate effects in those cases depend on values from across states, so dropping a state will change
     the lambda values, this is not true for the aggregation options of `"int"` or `"state"`
-- `edgecase::Union{Bool, Nothing} = nothing`
-    When there are at least three states for which a difference can be calculated, then standard errors for an ATT can be calculated
+- `edgecase::Bool = false`
+    When there are at least three states for which a long difference can be calculated, then standard errors for an ATT can be calculated
     directly from the regression of differences on the intercept term and treatment indicator. However, in cases when there are only two states
-    for a particular ATT, the standard error can still be constructed from the variance and covariance terms of the relevant means. Calculating these
-    `edgecase` standard errors can be computationally expensive, hence, by default, are only calculated when it is detected that they may be
-    needed. Otherwise you can control whether or not the `edgecase` standard errors should be calculated by setting `edgecase` to either `true` or `false`.
+    for a particular long difference regression, the standard error can still be constructed from the variance and covariance terms of the relevant
+    means. Calculating these `edgecase` standard errors can be computationally expensive, therefore by default this argument is set to `false`, but
+    may be toggled on by setting `edgecase = true`.
 
 # Returns
 A DataFrame of results including the estimate of the ATT as well as standard errors and p-values.
@@ -148,7 +148,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 hc::Union{AbstractString, Number} = "hc1",
                 wrapper::Union{AbstractString, Nothing} = nothing,
                 truejack::Bool = false,
-                edgecase::Union{Bool, Nothing} = nothing
+                edgecase::Bool = false
                 )
 
     # Check hc args
@@ -241,6 +241,10 @@ function didint(outcome::Union{AbstractString, Symbol},
         end 
     end
 
+    if common_adoption 
+        agg = (in(agg, ["cohort", "simple", "none", "time"]) || length(treated_states) == 1) ? "none" : "state"
+    end
+
     # Do intial check before filtering that treatment_times length is equal treated_states length
     if staggered_adoption && length(treatment_times) != length(treated_states)
         error("'treatment_times' should be the same length as the 'treated_states'.")
@@ -329,14 +333,13 @@ function didint(outcome::Union{AbstractString, Symbol},
     # Force outcome to float64 to speed up regression (runs faster if <:Number rather than <:Union{Number, Missing})
     data_copy.outcome_71X9yTx = convert(Vector{Float64}, data_copy.outcome_71X9yTx)
 
-    # Check edgecase arg
-    # if nothing revert to defaults
-    if isnothing(edgecase)
-        n_control_states = length(unique_states) - length(treated_states)
-        # If common adoption with only 2 states, or staggered adoption with agg simple and any treatment time only appears once and only one control state, or
-        # staggered adoption with agg sgt and only 1 control state, then in all those cases, do edgecase SE computations by default
-        edgecase = (common_adoption && length(unique_states) == 2) || (staggered_adoption && 
-                            ((agg == "sgt" && n_control_states == 1) || (agg == "simple" && n_control_states == 1 && any(x -> count(==(x), treatment_times) < 2, treatment_times))))
+    # Check edgecase arg, if true, make sure that its even possible to be in an edgecase situation
+    if edgecase == true && ccc == "add"
+        @warn "'edgecase' standard errors are not available for the 'ccc = add' option."
+        edgecase == false
+    end
+    if (edgecase && common_adoption) && !((length(unique_states) == 2) || (agg == "state" && ((length(unique_states) - length(treated_states)) == 1)))
+        edgecase = false
     end
 
     # Overwrite truejack depending on the ccc arg
@@ -345,7 +348,9 @@ function didint(outcome::Union{AbstractString, Symbol},
     end
  
     # Run the fixed effects model and get back the dataframe of means (or means residualized by covariates) for each period at each state
-    lambda_df, vcov_lambda = iterative_demean(data_copy, ccc, covariates_to_include, staggered_adoption, hc, edgecase)
+    lambda_df, vcov_lambda = iterative_demean(data_copy, ccc, covariates_to_include, staggered_adoption, hc, edgecase,
+                                              agg = agg, time_to_index = time_to_index, treatment_times = treatment_times, match_to_these_dates = match_to_these_dates,
+                                              treated_states = treated_states, unique_states = unique_states, use_pre_controls = use_pre_controls)
 
     # Define a function that initializes the results dataframe columns
     init_column() = Vector{Union{Missing, Float64}}(missing, nrows)
@@ -719,7 +724,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 results.periods_post_treat[i] = t
                 result_dict = final_regression_results(X, Y, W = W, hc = hc)
                 results.att_t[i] = result_dict["beta_hat"]
-                results.se_att_t[i] = result_dict["beta_hat_se"]
+                results.se_att_t[i] = length(Y) == 2 ? edge_case_se(temp.lambda_idx, vcov_lambda) : result_dict["beta_hat_se"]
                 results.pval_att_t[i] = result_dict["pval_att"] 
                 if weighting in ["att", "both"]
                     results.weights[i] = sum(temp[temp.treat .== 1, "n_t"])
