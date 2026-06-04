@@ -77,6 +77,9 @@ function iterative_demean(data_working, ccc, covariates_to_include, staggered_ad
             end
             gts.treated_count = treated_count
             gts = gts[treated_count .== 1, :]
+            if agg == "time"
+                gts.periods_since_treatment = [time_to_index[t] - time_to_index[g] for (g,t) in zip(gts.cohort, gts.t)]
+            end
             gts_individual = copy(gts)
 
             treated_time_map = Dict(state => treatment_times[i] for (i, state) in enumerate(treated_states))
@@ -108,7 +111,10 @@ function iterative_demean(data_working, ccc, covariates_to_include, staggered_ad
 
             # The check for time agg actually works out since the edgecase is also the only time where the cohort dummy vars arent used in the diff regression
             # that is, when there is only one control long diff and one treated long diff at a specific (g,t)
-            if agg == "cohort"
+            if agg == "time"
+                gts.periods_since_treatment = [time_to_index[t] - time_to_index[g] for (g,t) in zip(gts.cohort, gts.t)]
+                gts_check = combine(groupby(gts, [:periods_since_treatment]), :treated_count => sum => :treated_count, :control_count => sum => :control_count)
+            elseif agg == "cohort"
                 gts_check = combine(groupby(gts, [:cohort]), :treated_count => sum => :treated_count, :control_count => sum => :control_count)
             elseif agg == "state"
                 gts_check = combine(groupby(gts, [:state, :cohort]), :treated_count => sum => :treated_count, :control_count => sum => :control_count)
@@ -122,17 +128,20 @@ function iterative_demean(data_working, ccc, covariates_to_include, staggered_ad
                 [:cohort]
             elseif agg == "state"
                 [:state, :cohort]
-            elseif agg in ["simple", "time"]
+            elseif agg in ["simple"]
                 [:cohort, :t, :r1]
+            elseif agg == "time"
+                [:periods_since_treatment]
             else
                 [:state, :cohort, :t, :r1]
             end
             gts_saturated = innerjoin(gts_individual, select(gts_check, join_key), on = join_key)
-                
+            
+
             gts_join_key = agg in ["cohort", "simple", "time"] ? [:cohort, :t, :r1] : [:state, :cohort, :t, :r1]
             gts_saturated = innerjoin(gts_saturated, select(gts, [gts_join_key..., :control_states]),
-                                      on = gts_join_key)
-                
+                          on = gts_join_key)
+
             # Build final (state, time) output
             out_states = eltype(unique_states)[]
             out_times  = eltype(match_to_these_dates)[]

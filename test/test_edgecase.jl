@@ -33,7 +33,6 @@
                               covariates = [:male, :asian, :black], ccc = ccc, agg = agg, nperm = 1)
 
             # First test that edge is never missing standard errors for the subaggregate ATTs
-            @show "ccc = " ccc, "agg = " agg
             @test all(x -> !ismissing(x) && isfinite(x), edge[:,sub_se])
 
             # Then test that some for the non edge case are missing
