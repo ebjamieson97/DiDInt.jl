@@ -119,8 +119,12 @@ result_common = DiDInt.didint(
     seed       = 1234,
     ccc        = "hom",
     covariates = [:male, :asian, :black],
-    agg        = "cohort"
+    agg        = "cohort",
+    edgecase = true
 )
+# Note here that I am setting `edgecase = true` in order to recover the standard error
+# For more information, see the section "Computation of Edge Case Standard Errors" on the
+# "Details" page of the docoumentation site
 ```
 
 ### Trying a different CCC assumption
@@ -138,7 +142,8 @@ result_common_int = DiDInt.didint(
     seed       = 1234,
     ccc        = "int",
     covariates = [:male, :asian, :black],
-    agg        = "cohort"
+    agg        = "cohort",
+    edgecase = true
 )
 ```
 
