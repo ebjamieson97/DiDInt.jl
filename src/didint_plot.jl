@@ -234,8 +234,10 @@ function didint_plot(
     end
 
     # Add periods
-    
     master_lambda.period = [time_to_index[date] for date in master_lambda.time] .- 1
+
+    # Remove lambda_index
+    master_lambda = select(master_lambda, Not(:lambda_index))
     
     if event == true
         # If we are doing an event plot then we need to properly match the treatment times to states
