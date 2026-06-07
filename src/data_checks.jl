@@ -359,6 +359,9 @@ end
 function validate_string_treated_states(data_copy; treated_states = nothing)
 
     data_copy.state_71X9yTx = string.(data_copy.state_71X9yTx)
+    if isnothing(treated_states)
+        return data_copy, treated_states
+    end
     treated_states = string.(treated_states)
     check_states = unique(data_copy.state_71X9yTx)
     missing_states = setdiff(treated_states, check_states)

@@ -4,7 +4,6 @@
 @testset "Basic run - parallel trends" begin
     test_plot_parallel = DiDInt.didint_plot("coll", "state", "year", TEST_DATA,
                                             treatment_times = TREATED_TIMES, 
-                                            treated_states = TREATED_STATES,
                                             event = false, covariates = ["asian", "black", "male"])
     @test !isnothing(test_plot_parallel)
 end
@@ -21,7 +20,6 @@ end
 @testset "Missing run - parallel trends" begin
     test_plot_parallel = DiDInt.didint_plot("coll", "state", "year", TEST_DATA_MISSING,
                                             treatment_times = TREATED_TIMES, 
-                                            treated_states = TREATED_STATES,
                                             event = false, covariates = ["asian", "black", "male"])
     @test !isnothing(test_plot_parallel)
 end
