@@ -1,8 +1,15 @@
 using DiDInt
 using Test
 using DataFrames
-using CSV  
+using CSV
 using Random
+
+# Regenerate the snapshot files instead of testing (see test/update_snapshots.jl)
+if "--update-snapshots" in ARGS
+    include("update_snapshots.jl")
+    exit()
+end
+
 Random.seed!(1234)
 
 # Load merit data for testing and build treated_states and treated_times
@@ -28,7 +35,7 @@ for i in eachindex(TREATED_STATES)
     year_values = TEST_DATA[(string.(TEST_DATA.state) .== TREATED_STATES[i]) .& (TEST_DATA.merit .== 1), "year"]
     treated_times[i] = minimum(year_values)
 end
-treated_times_time_collinear = treated_times
+treated_times_time_collinear = copy(treated_times)
 treated_times_time_collinear[1] = 1990
 const TREATED_TIMES = treated_times
 const TREATED_TIMES_T_COLLINEAR = treated_times_time_collinear
@@ -95,5 +102,8 @@ const TEST_DATA_EC_COMMON = filter(r -> r.state ∈ [_t1, EC_CONTROL], TEST_DATA
     end
     @testset "test_edgecase.jl" begin
         include("test_edgecase.jl")
+    end
+    @testset "snapshots" begin
+        include("test_snapshots.jl")
     end
 end
