@@ -10,3 +10,12 @@ time_dummy.pdf
 docs/build/
 BRFSSfull.arrow
 test_bigdata.jl
+dev/
+CLAUDE.md
+
+# Coverage output (generated locally by Pkg.test(coverage=true) or by CI for Codecov)
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+lcov.info
+coverage/
