@@ -32,7 +32,7 @@ diff_test_times = [Date(2005), Date(2007)]
 function run_construct_diff_df(use_pre_controls)
     return DiDInt.construct_diff_df(diff_test_lambda_df, diff_test_treated, diff_test_times,
                                     diff_test_time_to_index, diff_test_dates, use_pre_controls,
-                                    true, false, diff_test_data)
+                                    diff_test_data)
 end
 
 # Hand-computed long difference, cell sizes and lambda indices for state s in cell (t, r1)

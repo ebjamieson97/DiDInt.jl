@@ -36,133 +36,66 @@ function compute_hc_covariance(X::Matrix, resid::Vector, hc::AbstractString)
         delta = min.(Ref(4), h ./ h_bar)
         omega_diag = (resid .^ 2) ./ ((1 .- h) .^ delta)
     end
-    
+
+    # A row with leverage 1 (such as the single treated row of an ATT(s,t) regression) leaves
+    # HC2-HC4 undefined. Rounding can put h a hair below 1 and turn 0/0 into an arbitrary
+    # finite number, so such rows are set to NaN and the SE is NaN (update spec D17).
+    if hc in ["hc2", "hc3", "hc4"]
+        omega_diag[h .> 1 - 1e-10] .= NaN
+    end
+
     # Sandwich estimator: (X'X)⁻¹ X'ΩX (X'X)⁻¹
     return XXinv * (X' * (omega_diag .* X)) * XXinv
 end
 
-function iterative_demean(data_working, ccc, covariates_to_include, staggered_adoption, hc, edgecase; 
-                          agg = nothing, time_to_index = nothing, treatment_times = nothing, match_to_these_dates = nothing,
-                          treated_states = nothing, unique_states = nothing, use_pre_controls = nothing)
+function iterative_demean(data_working, ccc, covariates_to_include, hc, edgecase;
+                          time_to_index = nothing, treatment_times = nothing, match_to_these_dates = nothing,
+                          treated_states = nothing, use_pre_controls = nothing)
 
     affected_cells   = nothing
     do_full_edgecase = false
 
-    if edgecase 
-        # Case 1: Common adoption, only 1 control state, everything gets computed as edgecase
-        if !staggered_adoption
-            do_full_edgecase = true
-        else
-            # Case 2: Staggered adoption, check all gts
-            states = eltype(treated_states)[]
-            cohorts = eltype(treatment_times)[]
-            ts = eltype(match_to_these_dates)[]
-            r1s = eltype(match_to_these_dates)[]
-            for (i, trt_state) in enumerate(treated_states)
-                g = treatment_times[i]
-                r1 = match_to_these_dates[time_to_index[g] - 1]
-            
-                for t in match_to_these_dates[match_to_these_dates .>= g]
-                    push!(states, trt_state)
-                    push!(cohorts, g)
-                    push!(ts, t)
-                    push!(r1s, r1)
-                end
-            end
-            gts = DataFrame(state = states, cohort = cohorts, t = ts, r1 = r1s)
-            treated_count = Vector{Int}(undef, nrow(gts))
-            observed = Set(zip(data_working.state_71X9yTx, data_working.time_dmG5fpM))
-            for (i, row) in enumerate(eachrow(gts))
-                treated_count[i] = Int(((row.state, row.t) in observed) && ((row.state, row.r1) in observed))
-            end
-            gts.treated_count = treated_count
-            gts = gts[treated_count .== 1, :]
-            if agg == "time"
-                gts.periods_since_treatment = [time_to_index[t] - time_to_index[g] for (g,t) in zip(gts.cohort, gts.t)]
-            end
-            gts_individual = copy(gts)
+    if edgecase
+        # Edge case (update spec §3.6): an ATT(s,t) whose regression has exactly two rows, the
+        # treated state s and a single valid control c, whatever the agg. Its SE comes from the
+        # covariances of the lambdas of the cells (s, r1), (s, t), (c, r1) and (c, t), so those
+        # cells are collected here and estimated by compute_lambda_edgecase below.
+        observed = Set(zip(data_working.state_71X9yTx, data_working.time_dmG5fpM))
+        states = unique(data_working.state_71X9yTx)
+        treated_time_map = Dict(state => treatment_times[i] for (i, state) in enumerate(treated_states))
+        out_states = eltype(states)[]
+        out_times  = eltype(match_to_these_dates)[]
+        for (i, trt_state) in enumerate(treated_states)
+            g = treatment_times[i]
+            r1 = match_to_these_dates[time_to_index[g] - 1]
+            for t in match_to_these_dates[match_to_these_dates .>= g]
+                ((trt_state, t) in observed && (trt_state, r1) in observed) || continue
 
-            treated_time_map = Dict(state => treatment_times[i] for (i, state) in enumerate(treated_states))
-            if agg in ["simple", "cohort", "time"]
-                    gts = combine(groupby(gts, [:cohort, :t, :r1]), :treated_count => sum => :treated_count)
-            end
-            control_states_names = Vector{Vector{eltype(unique_states)}}(undef, nrow(gts))
-            control_count = Vector{Int}(undef, nrow(gts))
-            for (i, row) in enumerate(eachrow(gts))
-                cs_candidates = filter(s -> get(treated_time_map, s, nothing) != row.cohort, unique_states)
-                if !use_pre_controls
-                    cs_candidates = cs_candidates[.!in.(cs_candidates, Ref(treated_states))]
-                end
-                valid = eltype(unique_states)[]
-                for cs in cs_candidates
-                    ok = if haskey(treated_time_map, cs)
-                        ((cs, row.t) in observed) && ((cs, row.r1) in observed) && (row.t < treated_time_map[cs])
-                    else
-                        ((cs, row.t) in observed) && ((cs, row.r1) in observed)
+                # Valid controls: never-treated states and, with use_pre_controls, states not yet
+                # treated at t, observed in both t and r1
+                valid_controls = eltype(states)[]
+                for cs in states
+                    cs_time = get(treated_time_map, cs, nothing)
+                    is_control = isnothing(cs_time) || (use_pre_controls && t < cs_time)
+                    if is_control && ((cs, t) in observed) && ((cs, r1) in observed)
+                        push!(valid_controls, cs)
                     end
-                    ok && push!(valid, cs)
                 end
-                control_count[i] = length(valid)
-                control_states_names[i] = valid
-            end
-            gts.control_count = control_count
-            gts.control_states = control_states_names
-            gts = gts[control_count .>= 1, :]
-
-            # The check for time agg actually works out since the edgecase is also the only time where the cohort dummy vars arent used in the diff regression
-            # that is, when there is only one control long diff and one treated long diff at a specific (g,t)
-            if agg == "time"
-                gts.periods_since_treatment = [time_to_index[t] - time_to_index[g] for (g,t) in zip(gts.cohort, gts.t)]
-                gts_check = combine(groupby(gts, [:periods_since_treatment]), :treated_count => sum => :treated_count, :control_count => sum => :control_count)
-            elseif agg == "cohort"
-                gts_check = combine(groupby(gts, [:cohort]), :treated_count => sum => :treated_count, :control_count => sum => :control_count)
-            elseif agg == "state"
-                gts_check = combine(groupby(gts, [:state, :cohort]), :treated_count => sum => :treated_count, :control_count => sum => :control_count)
-            else
-                gts_check = gts
-            end
-            long_diff_count = gts_check.control_count .+ gts_check.treated_count
-            gts_check = gts_check[long_diff_count .== 2, :]
-
-            join_key = if agg == "cohort"
-                [:cohort]
-            elseif agg == "state"
-                [:state, :cohort]
-            elseif agg in ["simple"]
-                [:cohort, :t, :r1]
-            elseif agg == "time"
-                [:periods_since_treatment]
-            else
-                [:state, :cohort, :t, :r1]
-            end
-            gts_saturated = innerjoin(gts_individual, select(gts_check, join_key), on = join_key)
-            
-
-            gts_join_key = agg in ["cohort", "simple", "time"] ? [:cohort, :t, :r1] : [:state, :cohort, :t, :r1]
-            gts_saturated = innerjoin(gts_saturated, select(gts, [gts_join_key..., :control_states]),
-                          on = gts_join_key)
-
-            # Build final (state, time) output
-            out_states = eltype(unique_states)[]
-            out_times  = eltype(match_to_these_dates)[]
-                
-            for row in eachrow(gts_saturated)
-                push!(out_states, row.state, row.state)
-                push!(out_times,  row.r1,    row.t)
-                for cs in row.control_states
-                    push!(out_states, cs,      cs)
-                    push!(out_times,  row.r1,  row.t)
-                end
-            end
-
-            if !isempty(out_states)
-                affected_cells = unique(DataFrame(state = out_states, time = out_times))
-                if ccc in ["hom"]
-                    do_full_edgecase = true
+                if length(valid_controls) == 1
+                    cs = valid_controls[1]
+                    push!(out_states, trt_state, trt_state, cs, cs)
+                    push!(out_times,  r1,        t,         r1, t)
                 end
             end
         end
-    end 
+
+        if !isempty(out_states)
+            affected_cells = unique(DataFrame(state = out_states, time = out_times))
+            if ccc in ["hom"]
+                do_full_edgecase = true
+            end
+        end
+    end
 
     data_working = copy(data_working)
     y = Float64.(data_working.outcome_71X9yTx)
@@ -201,7 +134,7 @@ function iterative_demean(data_working, ccc, covariates_to_include, staggered_ad
         skeleton, vcov_lambda_global = compute_lambda_edgecase(data_ec, ccc, covariates_to_include,
                                                                skeleton, vcov_lambda_global, hc)
         if isempty(data_normal)
-            staggered_adoption && (skeleton.time = Date.(skeleton.time))
+            skeleton.time = Date.(skeleton.time)
             select!(skeleton, [:state, :time, :lambda, :lambda_index])
             skeleton.ccc .= ccc
             return skeleton, vcov_lambda_global
@@ -367,12 +300,12 @@ function iterative_demean(data_working, ccc, covariates_to_include, staggered_ad
         for row in eachrow(lambda_df)
             skeleton.lambda[cell_map[(row.state, row.time)]] = row.lambda
         end
-        staggered_adoption && (skeleton.time = Date.(skeleton.time))
+        skeleton.time = Date.(skeleton.time)
         skeleton.ccc .= ccc
         return skeleton, vcov_lambda_global
     end
 
-    staggered_adoption && (lambda_df.time = Date.(lambda_df.time))
+    lambda_df.time = Date.(lambda_df.time)
     lambda_df.ccc .= ccc
     vcov_lambda = fill(NaN, n, n)
     return lambda_df, vcov_lambda

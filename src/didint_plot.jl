@@ -227,7 +227,7 @@ function didint_plot(
     for c in ccc
 
         # Run the fixed effects model and get back the dataframe of means (or means residualized by covariates) for each period at each state
-        lambda_df, _ = iterative_demean(data_copy, c, covariates_to_include, true, hc, false)
+        lambda_df, _ = iterative_demean(data_copy, c, covariates_to_include, hc, false)
 
         # Append master data
         master_lambda = [master_lambda;lambda_df]

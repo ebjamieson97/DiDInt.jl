@@ -154,7 +154,7 @@ end
 
 # ── Case grid ─────────────────────────────────────────────────────────────────────────
 
-const SNAPSHOT_AGGS = ["cohort", "simple", "state", "sgt", "time"]
+const SNAPSHOT_AGGS = ["cohort", "simple", "state", "sgt", "time", "calendar"]
 const SNAPSHOT_WEIGHTINGS = ["both", "att", "diff", "none"]
 
 """
@@ -162,8 +162,9 @@ const SNAPSHOT_WEIGHTINGS = ["both", "att", "diff", "none"]
 
 Vector of cases, each a NamedTuple (id, file, dataset, kwargs). The main grid (spec §12.1)
 crosses every dataset with: no covariates (ccc irrelevant, run as "int") or covariates
-with ccc ∈ ("int", "hom"); every `agg`; every `weighting`; `use_pre_controls` false/true.
-The "extras" file adds `truejack = true` and `edgecase = true` runs.
+with ccc ∈ ("int", "hom"); every `agg`; every `weighting`; `use_pre_controls` false/true,
+all with the default `treated_weight = "treated"`. The "extras" file adds
+`treated_weight = "population"`, `truejack = true` and `edgecase = true` runs.
 """
 function snapshot_cases()
     cases = NamedTuple[]
@@ -176,6 +177,13 @@ function snapshot_cases()
                 push!(cases, (id = id, file = dataset, dataset = dataset, covariates = covs, kwargs = kwargs))
             end
         end
+    end
+
+    # treated_weight = "population" (it only matters when weighting uses observation counts)
+    for dataset in ["merit_stag", "synth_stag"], agg in SNAPSHOT_AGGS, weighting in ["both", "att", "diff"], upc in [false, true]
+        id = join([dataset, "nocov", "ccc=int", "agg=$agg", "w=$weighting", "upc=$upc", "tw=population"], "|")
+        kwargs = (ccc = "int", agg = agg, weighting = weighting, use_pre_controls = upc, treated_weight = "population")
+        push!(cases, (id = id, file = "extras", dataset = dataset, covariates = false, kwargs = kwargs))
     end
 
     # truejack: the refit jackknife path, only used for ccc ∉ ("int", "state")
@@ -191,8 +199,7 @@ function snapshot_cases()
         kwargs = (ccc = ccc, agg = agg, edgecase = true)
         push!(cases, (id = id, file = "extras", dataset = "ec_stag", covariates = true, kwargs = kwargs))
     end
-    for ccc in ["int", "hom"], dataset in ["ec_common_1t", "ec_common_2t"]
-        agg = dataset == "ec_common_1t" ? "cohort" : "state"
+    for ccc in ["int", "hom"], dataset in ["ec_common_1t", "ec_common_2t"], agg in [dataset == "ec_common_1t" ? "cohort" : "state", "sgt"]
         id = join([dataset, "cov", "ccc=$ccc", "agg=$agg", "w=both", "upc=false", "edgecase"], "|")
         kwargs = (ccc = ccc, agg = agg, edgecase = true)
         push!(cases, (id = id, file = "extras", dataset = dataset, covariates = true, kwargs = kwargs))
