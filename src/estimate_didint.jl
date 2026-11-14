@@ -1299,12 +1299,12 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
     if agg == "cohort"
         for i in eachindex(treatment_times)
             sub_agg_att = results[results.treatment_time .== treatment_times[i], "att_cohort"][1]
-            results[results.treatment_time .== treatment_times[i], "ri_pval_att_cohort"] .= (sum(abs.(att_ri_cohort[:,i]) .> abs(sub_agg_att))) / length(att_ri_cohort[:,i])
+            results[results.treatment_time .== treatment_times[i], "ri_pval_att_cohort"] .= ri_pvalue(att_ri_cohort[:,i], sub_agg_att)
         end
     elseif agg == "state"
         for i in eachindex(treatment_states)
             sub_agg_att = results[results.state .== treatment_states[i], "att_s"][1]
-            results[results.state .== treatment_states[i], "ri_pval_att_s"] .= (sum(abs.(att_ri_state[:,i]) .> abs(sub_agg_att))) / length(att_ri_state[:,i])
+            results[results.state .== treatment_states[i], "ri_pval_att_s"] .= ri_pvalue(att_ri_state[:,i], sub_agg_att)
         end 
     elseif agg == "simple"
         for i in 1:nrow(unique_diffs)
@@ -1312,7 +1312,7 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
             r1 = unique_diffs[i,"r1"]
             gvar = unique_diffs[i, "treated_time"]
             sub_agg_att = results[(results.time .== t) .&& (results.r1 .== r1) .&& (results.gvar .== gvar), "att_gt"][1]
-            results[(results.time .== t) .&& (results.r1 .== r1) .&& (results.gvar .== gvar), "ri_pval_att_gt"] .= (sum(abs.(att_ri_simple[:,i]) .> abs(sub_agg_att))) / length(att_ri_simple[:,i])
+            results[(results.time .== t) .&& (results.r1 .== r1) .&& (results.gvar .== gvar), "ri_pval_att_gt"] .= ri_pvalue(att_ri_simple[:,i], sub_agg_att)
         end
     elseif agg == "sgt"
         for i in 1:nrow(unique_diffs)
@@ -1320,20 +1320,41 @@ function randomization_inference_v2(diff_df::DataFrame, nperm::Int, results::Dat
             gvar = unique_diffs[i, "treated_time"]
             state = unique_diffs[i, "state"]
             sub_agg_att = results[(results.t .== t) .&& (results.gvar .== gvar) .&& (results.state .== state), "att_sgt"][1]
-            results[(results.t .== t) .&& (results.gvar .== gvar) .&& (results.state .== state), "ri_pval_att_sgt"] .= (sum(abs.(att_ri_sgt[:,i]) .> abs(sub_agg_att))) / length(att_ri_sgt[:,i])
+            results[(results.t .== t) .&& (results.gvar .== gvar) .&& (results.state .== state), "ri_pval_att_sgt"] .= ri_pvalue(att_ri_sgt[:,i], sub_agg_att)
         end 
     elseif agg == "time"
         for i in eachindex(times)
             sub_agg_att = results[results.periods_post_treat .== times[i], "att_t"][1]
-            results[results.periods_post_treat .== times[i], "ri_pval_att_t"] .= (sum(abs.(att_ri_time[:,i]) .> abs(sub_agg_att))) / length(att_ri_time[:,i])
+            results[results.periods_post_treat .== times[i], "ri_pval_att_t"] .= ri_pvalue(att_ri_time[:,i], sub_agg_att)
         end 
     end
-    results.ri_pval_agg_att[1] = ((sum(abs.(att_ri) .> abs(agg_att))) / length(att_ri))
+    results.ri_pval_agg_att[1] = ri_pvalue(att_ri, agg_att)
     results.nperm[1] = nperm
     return results
 end
 
 ## The following functions are used within randomization_inference_v2():
+
+# Relative tolerance for ties between a placebo estimate and the observed estimate
+const RI_TIE_RTOL = sqrt(eps(Float64))
+
+function ri_pvalue(att_ri::AbstractVector, observed::Real)
+    # RI p-value p = (1 + #{|T*| >= |T|}) / (S + 1) over the S finite placebo estimates T*,
+    # the more conservative of the two versions in MacKinnon & Webb (2020) (update spec D8).
+    # Ties count as hits. A placebo assignment that leaves a group's treated states and
+    # its controls unchanged (common with use_pre_controls = true) reproduces the observed
+    # estimate exactly in exact arithmetic, but the two are computed along different paths
+    # and can differ by rounding (~1e-16), which also varies with compiler flags such as
+    # --check-bounds. Treating |T*| within a relative RI_TIE_RTOL of |T| as a tie keeps
+    # the count deterministic. Returns missing if there is no finite placebo estimate.
+    finite_att_ri = filter(isfinite, att_ri)
+    n_placebo = length(finite_att_ri)
+    n_placebo == 0 && return missing
+    threshold = abs(observed) * (1 - RI_TIE_RTOL)
+    n_hits = count(x -> abs(x) >= threshold, finite_att_ri)
+    return (1 + n_hits) / (n_placebo + 1)
+end
+
 function compute_n_unique_assignments(treatment_times::Vector, total_n_states::Number)
     # This computes the combinations formula * the multinomial coefficient
     n_assignments = length(treatment_times)
@@ -1577,7 +1598,7 @@ function true_jackknife_procedure(data_copy, results, weighting, agg, ccc,
             for i in eachindex(levels_tt) 
                 tt = levels_tt[i]                    
                 colname = Symbol("tt_", i)
-                diff[!, colname] = Int.(treated_category .== tt)
+                diff_df[!, colname] = Int.(treated_category .== tt)
             end
         end
 
