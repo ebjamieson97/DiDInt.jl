@@ -1694,7 +1694,9 @@ function construct_diff_df(lambda_df, treated_states, treatment_times, time_to_i
                 lambda_j_var_idx = empty_check ? missing : lambda_j.lambda_index[1]
                 lambda_j = empty_check ? missing : lambda_j.lambda[1]
                 diffs[j] = lambda_j - lambda_r1
-                lambda_indices[j] = ismissing(lambda_j_var_idx) || ismissing(lambda_r1_var_idx) ? missing : (Int(lambda_j_var_idx), Int(lambda_r1_var_idx))
+                # (r1, t) order, as for control rows: edge_case_se assumes both rows of a
+                # two-row regression list their lambdas in the same order
+                lambda_indices[j] = ismissing(lambda_j_var_idx) || ismissing(lambda_r1_var_idx) ? missing : (Int(lambda_r1_var_idx), Int(lambda_j_var_idx))
                 post = temp[j, "time"]
                 pre = one_period_prior_treatment
                 n[j] = sum(in.(data_copy.time_dmG5fpM, Ref([post, pre])) .&& (data_copy.state_71X9yTx .== treated_states[i]))
@@ -1762,8 +1764,8 @@ function construct_diff_df(lambda_df, treated_states, treatment_times, time_to_i
                 n = Vector{Int}(undef, nrow(ri_diffs))
                 n_t = Vector{Int}(undef, nrow(ri_diffs))
                 for j in 1:nrow(ri_diffs)
-                    t = unique_diffs[j,"t"]
-                    r1 = unique_diffs[j,"r1"]
+                    t = ri_diffs[j,"t"]
+                    r1 = ri_diffs[j,"r1"]
 
                     lambda_t = temp[temp.time .== t, [:lambda, :lambda_index]]
                     empty_check = isempty(lambda_t.lambda)
@@ -1911,6 +1913,9 @@ function edge_case_se(lambda_indices, vcov_lambda)
     # are zero. In order to not have a bunch of if else statements and clutter things up, only one 
     # formula is provided here, but note that depending on the ccc selection some (or all for ccc = int)
     # of the cov terms will be zero.
+    # Each element of lambda_indices is (index of lambda_r1, index of lambda_t) for one state.
+    # The cross-state term -2 Cov(lambda_1[2] - lambda_1[1], lambda_2[2] - lambda_2[1]) only
+    # equals -2 Cov(diff_1, diff_2) if both states use this same order.
 
     #s1_l1 short for state1_lambda1, etc
     s1_l1_var = vcov_lambda[lambda_indices[1][1], lambda_indices[1][1]]
