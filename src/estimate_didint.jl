@@ -62,7 +62,7 @@ in `treated_times`, and so on.
     Options are: `"hom"`, `"time"`, `"state"`, "`add`", and `"int"`. 
 - `agg::AbstractString = "cohort"` 
     Enter the aggregation method as a string.
-    Options are: `"cohort"`, `"simple"`, `"state"`, `"sgt"`, `"none"`.
+    Options are: `"cohort"`, `"simple"`, `"state"`, `"sgt"`, `"time"`.
 - `weighting::AbstractString = "both"`
     Specify which weighting method should be used.
     Options are: `"both"`, `"att"`, `"diff"`, or `"none"`.
@@ -185,7 +185,10 @@ function didint(outcome::Union{AbstractString, Symbol},
 
     # Check that agg args are passed correctly
     agg = lowercase(agg)
-    agg_options = ["cohort", "state", "simple", "none", "sgt", "time"]
+    if agg == "none"
+        error("agg = \"none\" has been removed; every agg reports the aggregate ATT in agg_att. Use e.g. agg = \"simple\".")
+    end
+    agg_options = ["cohort", "state", "simple", "sgt", "time"]
     if !(agg in agg_options)
         error("'agg' must be one of $(agg_options)")
     end 
@@ -218,7 +221,6 @@ function didint(outcome::Union{AbstractString, Symbol},
     elseif length(unique(treatment_times)) > 1 
         common_adoption = false
         staggered_adoption = true
-        agg = agg == "none" ? "cohort" : agg
     else
         error("'treatment_times' must have at least one entry.")
     end
@@ -242,7 +244,7 @@ function didint(outcome::Union{AbstractString, Symbol},
     end
 
     if common_adoption 
-        agg = (in(agg, ["cohort", "simple", "none", "time"]) || length(treated_states) == 1) ? "none" : "state"
+        agg = (in(agg, ["cohort", "simple", "time"]) || length(treated_states) == 1) ? "none" : "state"
     end
 
     # Do intial check before filtering that treatment_times length is equal treated_states length
@@ -336,7 +338,7 @@ function didint(outcome::Union{AbstractString, Symbol},
     # Check edgecase arg, if true, make sure that its even possible to be in an edgecase situation
     if edgecase == true && ccc == "add"
         @warn "'edgecase' standard errors are not available for the 'ccc = add' option."
-        edgecase == false
+        edgecase = false
     end
     if (edgecase && common_adoption) && !((length(unique_states) == 2) || (agg == "state" && ((length(unique_states) - length(treated_states)) == 1)))
         edgecase = false
@@ -372,7 +374,8 @@ function didint(outcome::Union{AbstractString, Symbol},
 
     elseif common_adoption
 
-        # Common adoption only supports the pooled ("none") and "state" aggregations
+        # Common adoption only supports the pooled (internal agg = "none") and "state"
+        # aggregations; agg was already mapped to one of them when the adoption type was set
         agg = (in(agg, ["cohort", "simple", "none"]) || length(treated_states) == 1) ? "none" : "state"
         diff_df = construct_diff_df(lambda_df, treated_states, treatment_times, time_to_index, match_to_these_dates, use_pre_controls,
                                     staggered_adoption, common_adoption, data_copy)
@@ -573,8 +576,9 @@ end
 
 function pooled_att(diff_df::DataFrame, weighting::AbstractString, hc::AbstractString, vcov_lambda)
 
-    # Pooled ("none") aggregate ATT: one Step 3 regression on all long differences.
-    # Only reached under common adoption (staggered "none" is mapped to "cohort").
+    # Pooled aggregate ATT (internally agg = "none"): one Step 3 regression on all long
+    # differences. Only reached under common adoption, where "cohort", "simple" and "time"
+    # map to it.
     results = init_results("none", 1)
     X = convert(Matrix{Float64}, hcat(ones(nrow(diff_df)), diff_df.treat))
     Y = convert(Vector{Float64}, diff_df.diff)

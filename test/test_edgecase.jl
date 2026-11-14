@@ -51,7 +51,7 @@
         end
 
         # common adoption
-        for agg in ["state", "none"]
+        for agg in ["state", "cohort"]
             if agg == "state"
                 treated_states = ["71", "34"]
                 treated_times = [1991, 1991]

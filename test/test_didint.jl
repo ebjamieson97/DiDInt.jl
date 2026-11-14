@@ -1,13 +1,13 @@
 # Tests for didint()
 
 # Try different aggregation methods for common adoption and different ccc
-@testset "Agg check common - none (default)" begin
+@testset "Agg check common - cohort (default)" begin
     result = DiDInt.didint("coll", "state", "year", TEST_DATA,
                            treatment_times = TREATED_TIMES[1],
-                           treated_states = TREATED_STATES, 
-                           seed = 1234, 
+                           treated_states = TREATED_STATES,
+                           seed = 1234,
                            covariates = [:male, :asian, :black],
-                           agg = "none", nperm = 399)
+                           agg = "cohort", nperm = 399)
     @test !isnothing(result)
 end
 
@@ -72,14 +72,12 @@ end
     @test !isnothing(result)
 end
 
-@testset "Agg check staggered - none" begin
-    result = DiDInt.didint("coll", "state", "year", TEST_DATA,
-                           treatment_times = TREATED_TIMES,
-                           treated_states = TREATED_STATES, 
-                           seed = 1234, 
-                           covariates = [:male, :asian, :black],
-                           agg = "none", nperm = 399)
-    @test !isnothing(result)
+# agg = "none" has been removed (update spec D19)
+@testset "agg = none raises an informative error" begin
+    @test_throws r"agg = \"none\" has been removed" DiDInt.didint("coll", "state", "year", TEST_DATA,
+                                                                  treatment_times = TREATED_TIMES,
+                                                                  treated_states = TREATED_STATES,
+                                                                  seed = 1234, agg = "none", nperm = 399)
 end
 
 # Check that gvar works for staggered adoption
@@ -134,13 +132,13 @@ end
 end
 
 # Test that the truejack option works 
-@testset "truejack - common none" begin 
+@testset "truejack - common cohort" begin
     result = DiDInt.didint("coll", "state", "year", TEST_DATA_MISSING,
                            treatment_times = TREATED_TIMES[1],
-                           treated_states = TREATED_STATES, 
-                           seed = 1234, 
+                           treated_states = TREATED_STATES,
+                           seed = 1234,
                            covariates = [:male, :asian, :black],
-                           agg = "none", nperm = 399, truejack = true)
+                           agg = "cohort", nperm = 399, truejack = true)
     @test !isnothing(result)
 end 
 
@@ -217,15 +215,6 @@ end
     @test !isnothing(result)
 end
 
-@testset "truejack check staggered - none" begin
-    result = DiDInt.didint("coll", "state", "year", TEST_DATA,
-                           treatment_times = TREATED_TIMES,
-                           treated_states = TREATED_STATES, 
-                           seed = 1234, 
-                           covariates = [:male, :asian, :black],
-                           agg = "none", nperm = 399, truejack = true)
-    @test !isnothing(result)
-end
 
 
 # RI p-values (update spec D8): p = (1 + #{|T*| >= |T|}) / (S + 1); placebo estimates that

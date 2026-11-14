@@ -154,7 +154,7 @@ end
 
 # ── Case grid ─────────────────────────────────────────────────────────────────────────
 
-const SNAPSHOT_AGGS = ["cohort", "simple", "state", "sgt", "time", "none"]
+const SNAPSHOT_AGGS = ["cohort", "simple", "state", "sgt", "time"]
 const SNAPSHOT_WEIGHTINGS = ["both", "att", "diff", "none"]
 
 """
@@ -192,7 +192,7 @@ function snapshot_cases()
         push!(cases, (id = id, file = "extras", dataset = "ec_stag", covariates = true, kwargs = kwargs))
     end
     for ccc in ["int", "hom"], dataset in ["ec_common_1t", "ec_common_2t"]
-        agg = dataset == "ec_common_1t" ? "none" : "state"
+        agg = dataset == "ec_common_1t" ? "cohort" : "state"
         id = join([dataset, "cov", "ccc=$ccc", "agg=$agg", "w=both", "upc=false", "edgecase"], "|")
         kwargs = (ccc = ccc, agg = agg, edgecase = true)
         push!(cases, (id = id, file = "extras", dataset = dataset, covariates = true, kwargs = kwargs))
