@@ -448,3 +448,71 @@ function wrapper_check(results, wrapper)
     return results
 
 end
+
+### Policies (update spec §6.1, D13)
+
+# Policy label of every treated state when neither `pvar` nor `treated_policies` is given
+const DEFAULT_POLICY = "1"
+
+function normalize_policy_label(value)
+
+    # A policy label as a string, or nothing for "no policy": missing, 0, "0" or ""
+    ismissing(value) && return nothing
+    if value isa Real
+        value == 0 && return nothing
+        return isinteger(value) ? string(Int(value)) : string(value)
+    end
+    label = strip(string(value))
+    return label in ("", "0", "0.0") ? nothing : String(label)
+end
+
+function policy_assignments(pvar, treated_policies, treated_states, gvar, data, state)
+
+    # Policy of each treated state, keyed by the state as a string. Mirrors gvar /
+    # treatment_times: `pvar` names a column holding each state's policy, `treated_policies`
+    # gives one policy per element of `treated_states`; use one or the other. Without either,
+    # every treated state has the same policy.
+    states = treated_states isa AbstractVector ? treated_states : [treated_states]
+    if !isnothing(pvar) && !isnothing(treated_policies)
+        error("Specify either 'pvar' or 'treated_policies', not both!")
+    end
+    if isnothing(pvar) && isnothing(treated_policies)
+        return Dict(string(s) => DEFAULT_POLICY for s in states)
+    end
+
+    if !isnothing(treated_policies)
+        if !isnothing(gvar)
+            error("'treated_policies' is matched to 'treated_states' by position, so it cannot be used with 'gvar'. Use 'pvar' instead.")
+        end
+        policies = treated_policies isa AbstractVector ? treated_policies : [treated_policies]
+        if length(policies) == 1 && length(states) > 1
+            policies = fill(policies[1], length(states))
+        end
+        if length(policies) != length(states)
+            error("'treated_policies' should either be the same length as the 'treated_states' vector or of length 1.")
+        end
+        labels = normalize_policy_label.(policies)
+        if any(isnothing, labels)
+            error("Every treated state needs a policy: 'treated_policies' cannot contain missing, 0, \"0\" or \"\".")
+        end
+        return Dict(string(s) => label for (s, label) in zip(states, labels))
+    end
+
+    # pvar: the policy must be constant within a state and present for every treated state
+    pvar = string(pvar)
+    if !(pvar in names(data))
+        error("The 'pvar' column $pvar could not be found in the data.")
+    end
+    assignments = Dict{String, String}()
+    for s in states
+        labels = unique(normalize_policy_label.(data[isequal.(data[!, state], s), pvar]))
+        labels = filter(!isnothing, labels)
+        if isempty(labels)
+            error("No policy found in the 'pvar' column $pvar for treated state $s.")
+        elseif length(labels) > 1
+            error("The 'pvar' column $pvar is not constant within state $s: found $(join(labels, ", ")).")
+        end
+        assignments[string(s)] = labels[1]
+    end
+    return assignments
+end

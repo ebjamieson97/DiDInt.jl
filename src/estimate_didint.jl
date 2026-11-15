@@ -7,12 +7,16 @@
            gvar::Union{AbstractString, Symbol, Nothing} = nothing,
            treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
            treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing,
+           pvar::Union{AbstractString, Symbol, Nothing} = nothing,
+           treated_policies::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
            date_format::Union{AbstractString, Nothing} = nothing,
            covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol, Nothing} = nothing,
            ccc::AbstractString = "int",
            agg::AbstractString = "cohort",
            weighting::AbstractString = "both",
            treated_weight::AbstractString = "treated",
+           policy_aggregation::Bool = false,
+           policy_weighting::AbstractString = "equal",
            ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
            freq::Union{AbstractString, Nothing} = nothing,
            freq_multiplier::Number = 1,
@@ -56,6 +60,14 @@ in `treated_times`, and so on.
     A vector of strings (or a single string) noting the treated state(s).
 - `treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing`
     A vector (or single entry) denoting the associated treatment times of the 'treated_states'.
+- `pvar::Union{AbstractString, Symbol, Nothing} = nothing`
+    Name of the column which indicates the policy each state adopts (constant within a state;
+    missing, `0`, `"0"` or `""` for never-treated states). Use either `pvar` or `treated_policies`.
+- `treated_policies::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing`
+    A vector (or single entry) denoting the policies of the 'treated_states', in the same order.
+    If neither `pvar` nor `treated_policies` is given, every treated state has the same policy.
+    Policies only matter for the policy aggregations: controls are never-treated states (and, with
+    `notyet`, not-yet-treated states) whatever their policy.
 
 ## Model Specification
 - `ccc::AbstractString = "int"`
@@ -66,9 +78,12 @@ in `treated_times`, and so on.
     in every ATT(s,t) except under `"int"`, so only `"int"` estimates with covariates depend on it.
 - `agg::AbstractString = "cohort"` 
     Enter the aggregation method as a string.
-    Options are: `"cohort"`, `"simple"`, `"state"`, `"sgt"`, `"time"`, `"calendar"`.
+    Options are: `"cohort"`, `"simple"`, `"state"`, `"sgt"`, `"time"`, `"calendar"`, and the policy
+    aggregations `"policy"`, `"policy_gt"`, `"policy_cohort"`, `"policy_calendar"`, `"policy_time"`.
     Every sub-aggregate is a weighted mean of ATT(s,t) estimates (one per treated state and
     post-treatment period), and `agg_att` is a weighted mean of the sub-aggregates.
+    The policy aggregations form the same sub-aggregates within each policy (`"policy"` has one per
+    policy) and report each policy's ATT in `att_p`, on the first row of that policy, instead of `agg_att`.
 - `weighting::AbstractString = "both"`
     Specify which weighting method should be used.
     Options are: `"both"`, `"att"`, `"diff"`, or `"none"`.
@@ -77,6 +92,14 @@ in `treated_times`, and so on.
     `"treated"` weights it by the treated state's post-period observations n_{s,t} (under `"att"` and
     `"both"`); `"population"` weights it by the observations behind its long difference,
     n_{s,t} + n_{s,r1} (under `"diff"` and `"both"`). Options are `"treated"` and `"population"`.
+- `policy_aggregation::Bool = false`
+    With a policy aggregation, also report the pooled estimate across policies, `att_pool`, the
+    `policy_weighting`-weighted mean of the policies' ATTs, with its own inference columns. Its HC standard
+    error has (number of policies - 1) degrees of freedom, so two policies give one degree of freedom.
+- `policy_weighting::AbstractString = "equal"`
+    Weight of each policy in `att_pool`: `"equal"` (the typical policy), `"treated_obs"` (the policy's
+    treated observations), `"treated_cells"` (its number of treated state-periods) or `"treated_states"`
+    (its number of treated states). Only used with `policy_aggregation = true`.
 - `covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol, Nothing} = nothing` 
     A vector of covariates entered as either strings or symbols (or a single covariate string or symbol),
     or, `nothing` (default).
@@ -145,12 +168,16 @@ function didint(outcome::Union{AbstractString, Symbol},
                 gvar::Union{AbstractString, Symbol, Nothing} = nothing,
                 treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
                 treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing,
+                pvar::Union{AbstractString, Symbol, Nothing} = nothing,
+                treated_policies::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
                 date_format::Union{AbstractString, Nothing} = nothing,
                 covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol, Nothing} = nothing,
                 ccc::AbstractString = "int",
                 agg::AbstractString = "cohort",
                 weighting::AbstractString = "both",
                 treated_weight::AbstractString = "treated",
+                policy_aggregation::Bool = false,
+                policy_weighting::AbstractString = "equal",
                 ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
                 freq::Union{AbstractString, Nothing} = nothing,
                 freq_multiplier::Number = 1,
@@ -189,6 +216,9 @@ function didint(outcome::Union{AbstractString, Symbol},
     treated_states, treatment_times = gvar_or_treatment_times(gvar, treatment_times, treated_states, data, state;
                                                               event = false, check = "estimate_didint")
 
+    # Policy of each treated state, from pvar or treated_policies (update spec §6.1)
+    state_policies = policy_assignments(pvar, treated_policies, treated_states, gvar, data, state)
+
     # Do checks for start_date and end_date
     start_date = start_end_date_checks(start_date, "start_date", date_format)
     end_date = start_end_date_checks(end_date, "end_date", date_format)           
@@ -204,9 +234,23 @@ function didint(outcome::Union{AbstractString, Symbol},
     if agg == "none"
         error("agg = \"none\" has been removed; every agg reports the aggregate ATT in agg_att. Use e.g. agg = \"simple\".")
     end
-    agg_options = ["cohort", "state", "simple", "sgt", "time", "calendar"]
+    agg_options = ["cohort", "state", "simple", "sgt", "time", "calendar",
+                   "policy", "policy_gt", "policy_cohort", "policy_calendar", "policy_time"]
     if !(agg in agg_options)
         error("'agg' must be one of $(agg_options)")
+    end
+
+    # Check the policy pooling args (update spec §6.4)
+    policy_weighting = lowercase(policy_weighting)
+    policy_weighting_options = ["equal", "treated_obs", "treated_cells", "treated_states"]
+    if !(policy_weighting in policy_weighting_options)
+        error("'policy_weighting' must be one of $(policy_weighting_options)")
+    end
+    if policy_aggregation && !is_policy_agg(agg)
+        error("'policy_aggregation = true' requires a policy aggregation: 'agg' must be one of $(filter(is_policy_agg, agg_options))")
+    end
+    if !policy_aggregation && policy_weighting != "equal"
+        error("'policy_weighting' only applies when 'policy_aggregation = true'.")
     end
 
     # Check that weighting arg is passed correctly
@@ -361,18 +405,28 @@ function didint(outcome::Union{AbstractString, Symbol},
 
     # ATT(s,t) for every treated state and post period (DID-INT eq. 48), then the sub-aggregates
     # of the chosen agg and the aggregate ATT, all weighted means of ATT(s,t)'s (update spec §3.3-§5)
-    att_st = build_att_st(diff_df, weighting, hc, vcov_lambda; integration = integration)
-    results = sub_aggregate_results(att_st, agg, weighting, treated_weight, hc)
-    results = aggregate_att(results, agg, weighting, hc)
+    # Policies of the treated states (update spec §6). They only enter the policy aggregations:
+    # controls do not depend on policy (§6.2), so every other agg ignores them.
+    policy = (labels = Dict(s => (is_policy_agg(agg) ? state_policies[s] : DEFAULT_POLICY) for s in treated_states),
+              pooled = policy_aggregation, weighting = policy_weighting)
+
+    att_st = build_att_st(diff_df, weighting, hc, vcov_lambda; integration = integration, policies = policy.labels)
+    results = sub_aggregate_results(att_st, agg, weighting, treated_weight, hc; pooled = policy.pooled)
+    if is_policy_agg(agg)
+        # Each policy's ATT, and with policy_aggregation the pooled ATT across policies (§6.3-§6.4)
+        results = policy_att_results(results, att_st, agg, weighting, hc, policy)
+    else
+        results = aggregate_att(results, agg, weighting, hc)
+    end
 
     # Jackknife and randomization inference recompute the same weighted means on each deletion / draw
     results = jackknife_procedure(results, att_st, diff_df, agg, weighting, treated_weight, use_pre_controls,
                                   truejack, data_copy, ccc, covariates_to_include, treated_states, treatment_times,
-                                  time_to_index, match_to_these_dates; integration = integration)
+                                  time_to_index, match_to_these_dates; integration = integration, policy = policy)
     if randomize
         results = randomization_inference(results, att_st, vcat(diff_df, ri_diff_df), agg, weighting, treated_weight,
                                           use_pre_controls, treated_states, treatment_times, nperm, verbose, seed;
-                                          integration = integration)
+                                          integration = integration, policy = policy)
     end
 
     # Show the period length and date range in the results
@@ -395,31 +449,53 @@ const SUB_AGG_SPECS = Dict(
     "sgt"      => (suffix = "att_sgt", keys = [(:state, :state, String), (:gvar, :gvar, Date), (:t, :t, Date)]),
     "time"     => (suffix = "att_t", keys = [(:periods_post_treat, :periods_post_treat, Float64)]),
     "calendar" => (suffix = "att_calendar", keys = [(:t, :t, Date)]),
+    # Policy aggregations (update spec §6.3): the same groups within each policy. "policy" has
+    # one sub-aggregate per policy, the policy's ATT itself.
+    "policy"          => (suffix = "att_p", keys = [(:policy, :policy, String)]),
+    "policy_gt"       => (suffix = "att_gt", keys = [(:policy, :policy, String), (:r1, :r1, Date), (:time, :t, Date), (:gvar, :gvar, Date)]),
+    "policy_cohort"   => (suffix = "att_cohort", keys = [(:policy, :policy, String), (:treatment_time, :gvar, Date)]),
+    "policy_calendar" => (suffix = "att_calendar", keys = [(:policy, :policy, String), (:t, :t, Date)]),
+    "policy_time"     => (suffix = "att_t", keys = [(:policy, :policy, String), (:periods_post_treat, :periods_post_treat, Float64)]),
 )
+
+is_policy_agg(agg::AbstractString) = startswith(agg, "policy")
 
 # Columns of the ATT(s,t) table that define the groups of an aggregation
 group_columns(agg::AbstractString) = [att_col for (_, att_col, _) in SUB_AGG_SPECS[agg].keys]
 
-function init_results(agg::AbstractString, nrows::Integer)
+# Inference columns reported for an estimate column, e.g. "att_p" -> "se_att_p", ...
+inference_columns(estimate::AbstractString) = [prefix * estimate for prefix in ["se_", "pval_", "jknifese_", "jknifepval_", "ri_pval_"]]
+
+function init_results(agg::AbstractString, nrows::Integer; pooled::Bool = false)
 
     # Results DataFrame with the public column names in their existing order: key columns,
-    # sub-aggregate ATT, aggregate ATT and its inference, sub-aggregate inference, weights
+    # sub-aggregate ATT, top-level ATT and its inference, sub-aggregate inference, weights.
+    # The top-level ATT is the aggregate ATT (agg_att) for the non-policy aggregations. For the
+    # policy aggregations it is each policy's ATT (att_p, on the first row of the policy; for
+    # agg = "policy" it is the sub-aggregate itself) and, with `pooled`, the pooled ATT across
+    # policies (att_pool) with each policy's weight in it (policy_weights).
     float_column() = Vector{Union{Missing, Float64}}(missing, nrows)
-    agg_columns = ["agg_att", "se_agg_att", "pval_agg_att", "jknifese_agg_att",
-                   "jknifepval_agg_att", "ri_pval_agg_att", "nperm"]
     spec = SUB_AGG_SPECS[agg]
+    top_level = String[]
+    if !is_policy_agg(agg)
+        top_level = ["agg_att", "se_agg_att", "pval_agg_att", "jknifese_agg_att", "jknifepval_agg_att", "ri_pval_agg_att"]
+    else
+        agg != "policy" && append!(top_level, vcat("att_p", inference_columns("att_p")))
+        pooled && append!(top_level, vcat("att_pool", inference_columns("att_pool")))
+    end
+
     results = DataFrame()
     for (col, _, coltype) in spec.keys
         results[!, col] = coltype === Float64 ? float_column() : Vector{coltype}(undef, nrows)
     end
     results[!, spec.suffix] = float_column()
-    for col in agg_columns
+    for col in vcat(top_level, "nperm", inference_columns(spec.suffix))
         results[!, col] = float_column()
     end
-    for prefix in ["se_", "pval_", "jknifese_", "jknifepval_", "ri_pval_"]
-        results[!, prefix * spec.suffix] = float_column()
-    end
     results.weights = Vector{Union{Nothing, Float64}}(nothing, nrows)
+    if pooled
+        results.policy_weights = float_column()
+    end
     return results
 end
 
@@ -446,7 +522,8 @@ function slope_change_term(fit::CovariateFit, source_state, t, r1, target_state)
 end
 
 function build_att_st(diff_df::DataFrame, weighting::AbstractString, hc::AbstractString, vcov_lambda;
-                      integration::Union{CovariateFit, Nothing} = nothing)
+                      integration::Union{CovariateFit, Nothing} = nothing,
+                      policies::Union{AbstractDict, Nothing} = nothing)
 
     # ATT(s,t) for each treated state s and post period t (DID-INT eq. 48; update spec §3.3):
     # the treat coefficient of the weighted regression of the long differences on [1, treat],
@@ -457,11 +534,14 @@ function build_att_st(diff_df::DataFrame, weighting::AbstractString, hc::Abstrac
     # With one treated row its leverage is 1, so HC2-HC4 standard errors are NaN (D17). With
     # exactly two rows the regression SE is degenerate and the edge-case SE is used instead.
     # An (s,t) without a control or whose regression cannot be estimated is dropped.
+    # `policies` gives each treated state's policy (one common policy if not given); the
+    # controls do not depend on it (§3.4, §6.2).
     treated = sort(diff_df[diff_df.treat .== 1, :], [:state, :treated_time, :t])
     nrows = nrow(treated)
     float_column() = Vector{Union{Missing, Float64}}(missing, nrows)
     att_st = DataFrame(state = treated.state, gvar = treated.treated_time, t = treated.t, r1 = treated.r1,
                        periods_post_treat = treated.time_since_treatment,
+                       policy = String[isnothing(policies) ? DEFAULT_POLICY : policies[s] for s in treated.state],
                        att = float_column(), se = float_column(), pval = float_column(),
                        n_t = treated.n_t, n = treated.n, n_controls = zeros(Int, nrows))
     for i in 1:nrows
@@ -513,9 +593,10 @@ function treated_unit_weights(att_st::AbstractDataFrame, weighting::AbstractStri
 end
 
 function sub_aggregate_results(att_st::DataFrame, agg::AbstractString, weighting::AbstractString,
-                               treated_weight::AbstractString, hc::AbstractString)
+                               treated_weight::AbstractString, hc::AbstractString; pooled::Bool = false)
 
-    # Each sub-aggregate is the u-weighted mean of the ATT(s,t)'s in its group (update spec §5.1).
+    # Each sub-aggregate is the u-weighted mean of the ATT(s,t)'s in its group (update spec §5.1;
+    # for the policy aggregations, the same groups within each policy, §6.3).
     # Its HC SE comes from the weighted regression of those ATT(s,t)'s on a constant (D6, §5.2;
     # this treats them as independent, which can understate the SE when they share controls).
     # A group with a single ATT(s,t) reports that ATT(s,t)'s own SE and p-value (A1). The Level 2
@@ -532,7 +613,7 @@ function sub_aggregate_results(att_st::DataFrame, agg::AbstractString, weighting
         sort!(groups, group_cols)
     end
 
-    results = init_results(agg, nrow(groups))
+    results = init_results(agg, nrow(groups); pooled = pooled)
     for i in 1:nrow(groups)
         in_group = trues(nrow(att_st))
         for col in group_cols
@@ -583,6 +664,89 @@ function aggregate_att(results::DataFrame, agg::AbstractString, weighting::Abstr
     return results
 end
 
+function policy_pool_weights(table::AbstractDataFrame, policies::AbstractVector, policy_weighting::AbstractString)
+
+    # Weight omega_p of each policy in the pooled ATT (update spec §6.4, D15), from a table of
+    # ATT(s,t)'s: "equal" 1, "treated_obs" the policy's treated observations (sum of n_t),
+    # "treated_cells" its number of ATT(s,t)'s, "treated_states" its number of treated states.
+    # Normalized to sum to 1.
+    weights = map(policies) do p
+        rows = table.policy .== p
+        if policy_weighting == "equal"
+            1.0
+        elseif policy_weighting == "treated_obs"
+            Float64(sum(table.n_t[rows]))
+        elseif policy_weighting == "treated_cells"
+            Float64(count(rows))
+        else
+            Float64(length(unique(table.state[rows])))
+        end
+    end
+    return weights ./ sum(weights)
+end
+
+function policy_att_results(results::DataFrame, att_st::DataFrame, agg::AbstractString, weighting::AbstractString,
+                            hc::AbstractString, policy)
+
+    # Top-level estimates of the policy aggregations (update spec §6.3-§6.4). Each policy's ATT_p
+    # is the Level 2 weighted mean of that policy's sub-aggregates, with its HC SE from the
+    # weighted regression of those sub-aggregates on a constant, as aggregate_att does across
+    # all sub-aggregates (a single sub-aggregate reports its own SE). It is written on the first
+    # row of the policy. For agg = "policy" the sub-aggregate is ATT_p itself.
+    suffix = SUB_AGG_SPECS[agg].suffix
+    policies = unique(results.policy)
+
+    # Level 2 weights (§4.2), normalized within each policy. agg = "policy" has no sub-aggregates
+    # below the policy's ATT, so it has none.
+    if weighting in ["att", "both"] && agg != "policy"
+        for p in policies
+            rows = results.policy .== p
+            results.weights[rows] = results.weights[rows] ./ sum(results.weights[rows])
+        end
+        results.weights = convert(Vector{Float64}, results.weights)
+    else
+        results.weights = Vector{Nothing}(nothing, nrow(results))
+    end
+
+    if agg != "policy"
+        for p in policies
+            rows = findall(results.policy .== p)
+            if length(rows) == 1
+                results[rows[1], "att_p"] = results[rows[1], suffix]
+                results[rows[1], "se_att_p"] = results[rows[1], "se_" * suffix]
+                results[rows[1], "pval_att_p"] = results[rows[1], "pval_" * suffix]
+            else
+                result_dict = final_regression_results(ones(length(rows), 1), convert(Vector{Float64}, results[rows, suffix]),
+                                                       W = results.weights[rows], hc = hc)
+                results[rows[1], "att_p"] = result_dict["beta_hat"]
+                results[rows[1], "se_att_p"] = result_dict["beta_hat_se"]
+                results[rows[1], "pval_att_p"] = result_dict["pval_att"]
+            end
+        end
+    end
+
+    # Pooled ATT across policies: ATT_pool = sum_p omega_p ATT_p (D15, D16), with its HC SE from
+    # the weighted regression of the ATT_p's on a constant (number of policies - 1 degrees of
+    # freedom). With a single policy it is that policy's ATT.
+    if policy.pooled
+        first_rows = [findfirst(results.policy .== p) for p in policies]
+        omega = policy_pool_weights(att_st, policies, policy.weighting)
+        results.policy_weights[first_rows] = omega
+        if length(policies) == 1
+            results.att_pool[1] = results.att_p[1]
+            results.se_att_pool[1] = results.se_att_p[1]
+            results.pval_att_pool[1] = results.pval_att_p[1]
+        else
+            result_dict = final_regression_results(ones(length(policies), 1), convert(Vector{Float64}, results.att_p[first_rows]),
+                                                   W = copy(omega), hc = hc)
+            results.att_pool[1] = result_dict["beta_hat"]
+            results.se_att_pool[1] = result_dict["beta_hat_se"]
+            results.pval_att_pool[1] = result_dict["pval_att"]
+        end
+    end
+    return results
+end
+
 ### Point estimates for an arbitrary treatment assignment (used by the jackknife and RI)
 
 function long_difference_lookup(long_diffs::AbstractDataFrame)
@@ -601,7 +765,8 @@ att_st_cells(att_st::DataFrame) = sort(unique(att_st[:, [:gvar, :t, :r1, :period
 
 function att_st_point_estimates(cells::DataFrame, lookup::Dict, labels::Dict, states::AbstractVector,
                                 weighting::AbstractString, use_pre_controls::Bool;
-                                integration::Union{CovariateFit, Nothing} = nothing)
+                                integration::Union{CovariateFit, Nothing} = nothing,
+                                policies::Union{AbstractDict, Nothing} = nothing)
 
     # ATT(s,t)'s for the assignment `labels` (state => treatment period; states not in it are
     # never treated), in closed form: ATT(s,t) = diff_s - sum_c v_c diff_c / sum_c v_c over the
@@ -611,8 +776,10 @@ function att_st_point_estimates(cells::DataFrame, lookup::Dict, labels::Dict, st
     # With `integration` the long differences are the integrated ones (DID-INT eqs. 46-47). The
     # control mean for a treated state s is then a + b' xbar_{s,t}, with a the weighted mean of
     # the controls' intercept differences and b that of their slope changes (update spec §7.4).
+    # `policies` (treated state => policy) only labels the ATT(s,t)'s: controls do not depend
+    # on policy (§6.2).
     out = DataFrame(state = String[], gvar = Date[], t = Date[], r1 = Date[], periods_post_treat = Int[],
-                    att = Float64[], n = Float64[], n_t = Float64[])
+                    policy = String[], att = Float64[], n = Float64[], n_t = Float64[])
     n_covariates = isnothing(integration) ? 0 : length(integration.covariates)
     for cell in eachrow(cells)
         g, t, r1 = cell.gvar, cell.t, cell.r1
@@ -642,7 +809,7 @@ function att_st_point_estimates(cells::DataFrame, lookup::Dict, labels::Dict, st
             if !isnothing(integration)
                 att += slope_change_term(integration, s, t, r1, s) - dot(control_slope_change, integration.xbar[(s, t)])
             end
-            push!(out, (s, g, t, r1, cell.periods_post_treat, att, d.n, d.n_t))
+            push!(out, (s, g, t, r1, cell.periods_post_treat, isnothing(policies) ? DEFAULT_POLICY : policies[s], att, d.n, d.n_t))
         end
     end
     return out
@@ -686,6 +853,20 @@ function result_key(results::DataFrame, i::Integer, agg::AbstractString)
     # Key tuple of results row i, in the form point_sub_aggregates uses (event time as Int)
     return Tuple(coltype === Float64 ? Int(results[i, col]) : results[i, col]
                  for (col, _, coltype) in SUB_AGG_SPECS[agg].keys)
+end
+
+function point_policy_aggregates(sub::Dict, est::DataFrame, policies::AbstractVector, weighting::AbstractString,
+                                 policy_weighting::AbstractString)
+
+    # Each policy's ATT_p and the pooled ATT for the policy aggregations, from the point
+    # sub-aggregates of one deletion or draw (the policy is the first element of every key).
+    # ATT_p is the Level 2 weighted mean of the policy's sub-aggregates; the pooled ATT weights
+    # the defined ATT_p's by omega_p, recomputed from this deletion's / draw's ATT(s,t)'s (update
+    # spec §6.3-§6.4). A policy without any ATT(s,t) gives NaN and is left out of the pool.
+    att_p = [point_aggregate(filter(entry -> entry.first[1] == p, sub), weighting) for p in policies]
+    defined = isfinite.(att_p)
+    pooled = any(defined) ? sum(policy_pool_weights(est, policies[defined], policy_weighting) .* att_p[defined]) : NaN
+    return att_p, pooled
 end
 
 ### The following functions are parent functions within the didint() function:
@@ -809,10 +990,41 @@ function check_prior_to_ri(diff_df, ri_diff_df)
 
 end
 
+# Policy options when none are given: one common policy, no pooling
+default_policy_options(treated_states) = (labels = Dict(s => DEFAULT_POLICY for s in treated_states),
+                                          pooled = false, weighting = "equal")
+
+function draw_ri_assignments(treated::AbstractVector, times::AbstractVector, policies::AbstractVector,
+                             all_states::AbstractVector, nperm::Int)
+
+    # `nperm` distinct random assignments, none equal to the observed one. Each draw gives the
+    # observed joint (treatment time, policy) labels to randomly drawn states, so a state's
+    # policy and treatment time are permuted together (update spec D14, §7.2). Returns, for each
+    # draw, the pair (state => treatment time, state => policy). The caller seeds the random
+    # number generator.
+    k = length(treated)
+    assignment_key(states, times, policies) = join(sort([string(s, "-", t, "-", p) for (s, t, p) in zip(states, times, policies)]), "")
+    seen = Set([assignment_key(treated, times, policies)])
+    draws = Tuple{Dict{String, Date}, Dict{String, String}}[]
+    while length(draws) < nperm
+        shuffled_states = shuffle(all_states)
+        new_treated_states = shuffled_states[1:k]
+        order = randperm(k)
+        key = assignment_key(new_treated_states, times[order], policies[order])
+        if key in seen
+            continue
+        end
+        push!(seen, key)
+        push!(draws, (Dict(zip(new_treated_states, times[order])), Dict(zip(new_treated_states, policies[order]))))
+    end
+    return draws
+end
+
 function randomization_inference(results::DataFrame, att_st::DataFrame, long_diffs::DataFrame, agg::AbstractString,
                                  weighting::AbstractString, treated_weight::AbstractString, use_pre_controls::Bool,
                                  treated_states, treatment_times, nperm::Int, verbose::Bool, seed::Number;
-                                 integration::Union{CovariateFit, Nothing} = nothing)
+                                 integration::Union{CovariateFit, Nothing} = nothing,
+                                 policy = default_policy_options(treated_states))
 
     # Randomization inference (MacKinnon & Webb 2020): re-assign the observed treatment times to
     # randomly drawn states, recompute the same estimates for each draw, and compare (update
@@ -820,58 +1032,51 @@ function randomization_inference(results::DataFrame, att_st::DataFrame, long_dif
     # stage does not depend on the assignment, so the slopes and covariate means used for
     # integration are the same in every draw (§7.1).
 
-    # PART ONE: DRAW UNIQUE RANDOM ASSIGNMENTS OF THE TREATMENT TIMES
+    # PART ONE: DRAW UNIQUE RANDOM ASSIGNMENTS OF THE (TREATMENT TIME, POLICY) LABELS
     original_treated = unique(long_diffs[long_diffs.treat .== 1, [:state, :treated_time]])
-    k = nrow(original_treated)
     ri_treatment_times = original_treated.treated_time
+    ri_policies = String[policy.labels[s] for s in original_treated.state]
     all_states = unique(long_diffs.state)
 
     # compute_n_unique_assignments() computes all of the possible assignments (including the actual assignment)
     # so taking compute_n_unique_assignments() - 1 gives us the number of all of the possible unique randomizations besides the actual assignment
-    n_unique_perms = compute_n_unique_assignments(ri_treatment_times, length(all_states)) - 1
+    n_unique_perms = compute_n_unique_assignments(collect(zip(ri_treatment_times, ri_policies)), length(all_states)) - 1
     if nperm > n_unique_perms
         @warn "'nperm' was set to $nperm but only $n_unique_perms unique permutations exist. \n
                 Setting 'nperm' to $(n_unique_perms)."
-        nperm = n_unique_perms
+        nperm = Int(n_unique_perms)
     end
     if nperm < 399
         @warn "'nperm' is less than 399!"
     end
 
     Random.seed!(seed)
-    draws = Dict{String, Date}[]
-    seen = Set{String}()
-    pairs = zip(original_treated.state, original_treated.treated_time)
-    key = join(sort([string(s, "-", t) for (s, t) in pairs]), "")
-    push!(seen, key)
-    while length(draws) < nperm
-        shuffled_states = shuffle(all_states)
-        new_treated_states = shuffled_states[1:k]
-        new_treated_times = ri_treatment_times[randperm(k)]
-        pairs = zip(new_treated_states, new_treated_times)
-        key = join(sort([string(s, "-", t) for (s, t) in pairs]), "")
-        if key in seen
-            continue
-        end
-        push!(seen, key)
-        push!(draws, Dict(new_treated_states[j] => new_treated_times[j] for j in 1:k))
-    end
+    draws = draw_ri_assignments(original_treated.state, ri_treatment_times, ri_policies, all_states, nperm)
 
-    # PART TWO: COMPUTE THE PLACEBO SUB-AGGREGATE AND AGGREGATE ATTS FOR EACH DRAW
+    # PART TWO: COMPUTE THE PLACEBO SUB-AGGREGATE AND TOP-LEVEL ATTS FOR EACH DRAW
+    # att_ri holds the placebo aggregate ATT, or for the policy aggregations the pooled ATT;
+    # att_ri_policy holds each policy's placebo ATT_p
     lookup = long_difference_lookup(long_diffs)
     cells = att_st_cells(att_st)
     result_keys = [result_key(results, i, agg) for i in 1:nrow(results)]
     observed_labels = Dict(zip(treated_states, treatment_times))
+    policies = is_policy_agg(agg) ? unique(results.policy) : String[]
     att_ri = Vector{Float64}(undef, nperm)
+    att_ri_policy = Matrix{Float64}(undef, nperm, length(policies))
     att_ri_sub = Matrix{Float64}(undef, nperm, nrow(results))
-    for (j, labels) in enumerate(draws)
-        est = att_st_point_estimates(cells, lookup, labels, all_states, weighting, use_pre_controls; integration = integration)
+    for (j, (labels, drawn_policies)) in enumerate(draws)
+        est = att_st_point_estimates(cells, lookup, labels, all_states, weighting, use_pre_controls;
+                                     integration = integration, policies = drawn_policies)
         if agg in ["state", "sgt"]
             att_ri_sub[j, :], att_ri[j] = state_level_ri_draw(est, result_keys, observed_labels, agg, weighting, treated_weight)
         else
             sub = point_sub_aggregates(est, agg, weighting, treated_weight)
             att_ri_sub[j, :] = [haskey(sub, key) ? sub[key].att : NaN for key in result_keys]
-            att_ri[j] = point_aggregate(sub, weighting)
+            if is_policy_agg(agg)
+                att_ri_policy[j, :], att_ri[j] = point_policy_aggregates(sub, est, policies, weighting, policy.weighting)
+            else
+                att_ri[j] = point_aggregate(sub, weighting)
+            end
         end
         if verbose && j % 100 == 0
             println("Completed $(j) of $(nperm) permutations")
@@ -883,7 +1088,19 @@ function randomization_inference(results::DataFrame, att_st::DataFrame, long_dif
     for i in 1:nrow(results)
         results[i, "ri_pval_" * suffix] = ri_pvalue(att_ri_sub[:, i], results[i, suffix])
     end
-    results.ri_pval_agg_att[1] = ri_pvalue(att_ri, results.agg_att[1])
+    if !is_policy_agg(agg)
+        results.ri_pval_agg_att[1] = ri_pvalue(att_ri, results.agg_att[1])
+    else
+        if agg != "policy"
+            for (j, p) in enumerate(policies)
+                row = findfirst(results.policy .== p)
+                results[row, "ri_pval_att_p"] = ri_pvalue(att_ri_policy[:, j], results[row, "att_p"])
+            end
+        end
+        if policy.pooled
+            results.ri_pval_att_pool[1] = ri_pvalue(att_ri, results.att_pool[1])
+        end
+    end
     results.nperm[1] = nperm
     return results
 end
@@ -947,13 +1164,14 @@ function ri_pvalue(att_ri::AbstractVector, observed::Real)
 end
 
 function compute_n_unique_assignments(treatment_times::Vector, total_n_states::Number)
-    # This computes the combinations formula * the multinomial coefficient
+    # This computes the combinations formula * the multinomial coefficient. The labels can be
+    # treatment times or joint (treatment time, policy) labels.
     n_assignments = length(treatment_times)
     unique_assignments = unique(treatment_times)
     num = factorial(big(total_n_states))           
     den = factorial(big(total_n_states - n_assignments))
     for m in unique_assignments
-        n_m = sum(treatment_times .== m)
+        n_m = count(==(m), treatment_times)
         den *= factorial(big(n_m))
     end
     return num ÷ den                  
@@ -964,7 +1182,8 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
                              weighting::AbstractString, treated_weight::AbstractString, use_pre_controls::Bool,
                              truejack::Bool, data_copy, ccc, covariates_to_include, treated_states, treatment_times,
                              time_to_index, match_to_these_dates;
-                             integration::Union{CovariateFit, Nothing} = nothing)
+                             integration::Union{CovariateFit, Nothing} = nothing,
+                             policy = default_policy_options(treated_states))
 
     # Delete-one-state jackknife (CRV3, centered at the full-sample estimate; update spec §9.1).
     # Each state is deleted as a treated state and as a control, and the same weighted means are
@@ -981,12 +1200,16 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
         return results
     end
 
+    # Delete-one estimates. top_jacks holds the aggregate ATT, or for the policy aggregations
+    # the pooled ATT; policy_jacks holds each policy's ATT_p.
     cells = att_st_cells(att_st)
     observed_labels = Dict(zip(treated_states, treatment_times))
     all_states = unique(diff_df.state)
     lookup = long_difference_lookup(diff_df)
     result_keys = [result_key(results, i, agg) for i in 1:nrow(results)]
-    agg_jacks = Vector{Union{Missing, Float64}}(missing, length(all_states))
+    policies = is_policy_agg(agg) ? unique(results.policy) : String[]
+    top_jacks = Vector{Union{Missing, Float64}}(missing, length(all_states))
+    policy_jacks = Matrix{Union{Missing, Float64}}(missing, length(all_states), length(policies))
     sub_jacks = Matrix{Union{Missing, Float64}}(missing, length(all_states), nrow(results))
     for (h, without) in enumerate(all_states)
         if truejack
@@ -1001,16 +1224,25 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
         end
         labels_h = filter(label -> label.first != without, observed_labels)
         est = att_st_point_estimates(cells, lookup_h, labels_h, filter(!=(without), all_states), weighting, use_pre_controls;
-                                     integration = integration_h)
+                                     integration = integration_h, policies = policy.labels)
         sub = point_sub_aggregates(est, agg, weighting, treated_weight)
-        aggregate = point_aggregate(sub, weighting)
-        agg_jacks[h] = isfinite(aggregate) ? aggregate : missing
         sub_jacks[h, :] = [haskey(sub, key) ? sub[key].att : missing for key in result_keys]
+        if is_policy_agg(agg)
+            att_p, top = point_policy_aggregates(sub, est, policies, weighting, policy.weighting)
+            policy_jacks[h, :] = [isfinite(value) ? value : missing for value in att_p]
+        else
+            top = point_aggregate(sub, weighting)
+        end
+        top_jacks[h] = isfinite(top) ? top : missing
     end
 
-    # Aggregate ATT jackknife SE and p-value, over the deletions that leave it defined
-    agg_jacks = collect(skipmissing(agg_jacks))
-    results.jknifese_agg_att[1], results.jknifepval_agg_att[1] = jackknife_se_pval(agg_jacks, results.agg_att[1])
+    # Treated states behind a set of ATT(s,t)'s, and control states in their cells
+    control_rows = diff_df[diff_df.treat .== 0, :]
+    function state_counts(in_group)
+        group_cells = Set(zip(att_st.t[in_group], att_st.r1[in_group]))
+        n_group_control = length(unique(control_rows.state[[cell in group_cells for cell in zip(control_rows.t, control_rows.r1)]]))
+        return length(unique(att_st.state[in_group])), n_group_control
+    end
 
     # Sub-aggregate jackknife SEs and p-values. A sub-aggregate gets none unless its ATT(s,t)'s
     # involve at least 2 treated states and their cells at least 2 control states, and every
@@ -1018,12 +1250,8 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
     suffix = SUB_AGG_SPECS[agg].suffix
     group_cols = group_columns(agg)
     att_st_keys = [Tuple(att_st[r, col] for col in group_cols) for r in 1:nrow(att_st)]
-    control_rows = diff_df[diff_df.treat .== 0, :]
     for i in 1:nrow(results)
-        in_group = att_st_keys .== Ref(result_keys[i])
-        group_cells = Set(zip(att_st.t[in_group], att_st.r1[in_group]))
-        n_group_treated = length(unique(att_st.state[in_group]))
-        n_group_control = length(unique(control_rows.state[[cell in group_cells for cell in zip(control_rows.t, control_rows.r1)]]))
+        n_group_treated, n_group_control = state_counts(att_st_keys .== Ref(result_keys[i]))
         if n_group_treated < 2 || n_group_control < 2 || any(ismissing, sub_jacks[:, i])
             results[i, "jknifese_" * suffix] = missing
             results[i, "jknifepval_" * suffix] = missing
@@ -1032,6 +1260,34 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
             results[i, "jknifese_" * suffix] = se
             results[i, "jknifepval_" * suffix] = pval
         end
+    end
+
+    # Top-level jackknife SEs and p-values, over the deletions that leave the estimate defined
+    if !is_policy_agg(agg)
+        results.jknifese_agg_att[1], results.jknifepval_agg_att[1] = jackknife_se_pval(collect(skipmissing(top_jacks)), results.agg_att[1])
+        return results
+    end
+
+    # Each policy's ATT_p, if the policy has at least 2 treated states and its cells at least 2
+    # control states (for agg = "policy" it is the sub-aggregate handled above)
+    if agg != "policy"
+        for (j, p) in enumerate(policies)
+            n_policy_treated, n_policy_control = state_counts(att_st.policy .== p)
+            if n_policy_treated >= 2 && n_policy_control >= 2
+                row = findfirst(results.policy .== p)
+                results[row, "jknifese_att_p"], results[row, "jknifepval_att_p"] =
+                    jackknife_se_pval(collect(skipmissing(policy_jacks[:, j])), results[row, "att_p"])
+            end
+        end
+    end
+
+    # Pooled ATT across policies. A deletion that removes a policy's only treated state leaves
+    # the pool defined over the other policies; the SE is still reported (update spec §9.1).
+    if policy.pooled
+        if any(ismissing(policy_jacks[h, j]) && !ismissing(top_jacks[h]) for h in 1:length(all_states), j in 1:length(policies))
+            @warn "Some jackknife deletions remove a whole policy. The jackknife standard error of the pooled ATT then compares pools over different sets of policies."
+        end
+        results.jknifese_att_pool[1], results.jknifepval_att_pool[1] = jackknife_se_pval(collect(skipmissing(top_jacks)), results.att_pool[1])
     end
     return results
 end

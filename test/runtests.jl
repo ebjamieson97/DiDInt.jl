@@ -112,6 +112,9 @@ const TEST_DATA_EC_COMMON = filter(r -> r.state ∈ [_t1, EC_CONTROL], TEST_DATA
     @testset "Integrated estimator" begin
         include("test_integration.jl")
     end
+    @testset "Policies" begin
+        include("test_policies.jl")
+    end
     @testset "snapshots" begin
         include("test_snapshots.jl")
     end

@@ -156,6 +156,9 @@ end
 
 const SNAPSHOT_AGGS = ["cohort", "simple", "state", "sgt", "time", "calendar"]
 const SNAPSHOT_WEIGHTINGS = ["both", "att", "diff", "none"]
+const SNAPSHOT_POLICY_AGGS = ["policy", "policy_gt", "policy_cohort", "policy_calendar", "policy_time"]
+# Policies of the synthetic staggered panel's treated states s01..s05, in that order
+const SNAPSHOT_POLICIES = ["A", "A", "B", "B", "A"]
 
 """
     snapshot_cases()
@@ -164,7 +167,8 @@ Vector of cases, each a NamedTuple (id, file, dataset, kwargs). The main grid (s
 crosses every dataset with: no covariates (ccc irrelevant, run as "int") or covariates
 with ccc ∈ ("int", "hom"); every `agg`; every `weighting`; `use_pre_controls` false/true,
 all with the default `treated_weight = "treated"`. The "extras" file adds
-`treated_weight = "population"`, `truejack = true` and `edgecase = true` runs.
+`treated_weight = "population"`, `truejack = true` and `edgecase = true` runs, and the
+"policies" file the policy aggregations with two policies, with and without pooling.
 """
 function snapshot_cases()
     cases = NamedTuple[]
@@ -184,6 +188,20 @@ function snapshot_cases()
         id = join([dataset, "nocov", "ccc=int", "agg=$agg", "w=$weighting", "upc=$upc", "tw=population"], "|")
         kwargs = (ccc = "int", agg = agg, weighting = weighting, use_pre_controls = upc, treated_weight = "population")
         push!(cases, (id = id, file = "extras", dataset = dataset, covariates = false, kwargs = kwargs))
+    end
+
+    # Policy aggregations (update spec §6) on the synthetic staggered panel: policy A for s01, s02
+    # (2004) and s05 (2007), policy B for s03, s04 (2006); without pooling and with the pooled
+    # ATT under two of the policy weightings
+    for (covs, ccc) in [(false, "int"), (true, "int")], agg in SNAPSHOT_POLICY_AGGS, upc in [false, true],
+        pooling in [nothing, "equal", "treated_obs"]
+        id = join(["synth_stag", covs ? "cov" : "nocov", "ccc=$ccc", "agg=$agg", "w=both", "upc=$upc",
+                   isnothing(pooling) ? "nopool" : "pool=$pooling"], "|")
+        kwargs = (ccc = ccc, agg = agg, weighting = "both", use_pre_controls = upc, treated_policies = SNAPSHOT_POLICIES)
+        if !isnothing(pooling)
+            kwargs = merge(kwargs, (policy_aggregation = true, policy_weighting = pooling))
+        end
+        push!(cases, (id = id, file = "policies", dataset = "synth_stag", covariates = covs, kwargs = kwargs))
     end
 
     # truejack: the refit jackknife path, only used for ccc ∉ ("int", "state")
