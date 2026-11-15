@@ -1179,6 +1179,10 @@ function edge_case_se(lambda_indices, vcov_lambda)
     # Each element of lambda_indices is (index of lambda_r1, index of lambda_t) for one state.
     # The cross-state term -2 Cov(lambda_1[2] - lambda_1[1], lambda_2[2] - lambda_2[1]) only
     # equals -2 Cov(diff_1, diff_2) if both states use this same order.
+    # Var(ATT) = c' V_lambda c (update spec Appendix B.2-B.3) assumes that observations in
+    # different cells are independent, as in repeated cross-sections. With panel data the same
+    # individuals appear in a state's r1 and t cells, their estimates are correlated, and that
+    # covariance is omitted here (spec Appendix B.5).
 
     #s1_l1 short for state1_lambda1, etc
     s1_l1_var = vcov_lambda[lambda_indices[1][1], lambda_indices[1][1]]
