@@ -503,6 +503,11 @@ function prune_covariate_columns(W)
     # other ccc options as the ATTs calculated from the those DID-INT variations ultimately yield a uniquely
     # identified ATT
     # Returns the indices of the columns of W to keep, from most to least informative
+    # Collinear covariates are dropped (rank-revealing QR), and a dropped covariate gets slope 0
+    # in that cell. This is a deliberate choice (confirmed by the package author): didintpy instead
+    # keeps every covariate and uses the minimum-norm least-squares solution. The two agree when a
+    # covariate is constant within the cell, but can give different slopes, and so different
+    # integrated ATT(s,t)'s, for other collinearities.
 
     Wcol = size(W, 2)
     Wrow = size(W, 1)

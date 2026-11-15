@@ -232,3 +232,16 @@ end
     placebos = [-0.21, 0.05, 0.33, -0.12, 0.47, -0.38, 0.09, 0.26, -0.02, 0.15, -0.29, 0.41, -0.07]
     @test DiDInt.ri_pvalue(placebos, 0.44) ≈ 2 / 14
 end
+
+# A two-category string covariate becomes one 0/1 dummy, the same as the numeric version
+@testset "Two-category string covariate equals its numeric dummy" begin
+    panel = CSV.read(joinpath(@__DIR__, "data", "didintpy_panel.csv"), DataFrame)
+    panel.sex = ifelse.(panel.x2 .== 1.0, "female", "male")
+    run(covariates) = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+        DiDInt.didint("y", "state", "year", panel; treated_states = ["s01", "s02", "s03", "s04", "s05"],
+                      treatment_times = [2004, 2004, 2006, 2006, 2007], covariates = covariates,
+                      ccc = "int", agg = "sgt", nperm = 9, seed = 1234, verbose = false)
+    end
+    # "male" is the reference category (first seen), so the dummy is 1 for "female", i.e. x2
+    @test run(["x1", "sex"]).att_sgt ≈ run(["x1", "x2"]).att_sgt atol = 1e-10
+end

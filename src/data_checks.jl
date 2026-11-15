@@ -400,8 +400,9 @@ function process_covariates(covariates, data_copy, ref)
                             end
                         end
                     elseif length(unique_categories) == 2
+                        # One dummy for the non-reference category, in the column it is registered under
                         newcol = Symbol("$(cov)_not_$(refcat)")
-                        data_copy[!, cov] = (data_copy[!, cov] .!= refcat) .|> Int
+                        data_copy[!, newcol] = (data_copy[!, cov] .!= refcat) .|> Int
                         push!(covariates_to_include, string(newcol))
                     end
                 else    
