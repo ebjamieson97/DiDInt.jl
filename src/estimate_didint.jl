@@ -96,6 +96,8 @@ in `treated_times`, and so on.
     With a policy aggregation, also report the pooled estimate across policies, `att_pool`, the
     `policy_weighting`-weighted mean of the policies' ATTs, with its own inference columns. Its HC standard
     error has (number of policies - 1) degrees of freedom, so two policies give one degree of freedom.
+    `att_pool` is the overall ATT across policies for the policy aggregations (they have no `agg_att`).
+    With a non-policy aggregation there is nothing to pool and the argument is ignored.
 - `policy_weighting::AbstractString = "equal"`
     Weight of each policy in `att_pool`: `"equal"` (the typical policy), `"treated_obs"` (the policy's
     treated observations), `"treated_cells"` (its number of treated state-periods) or `"treated_states"`
@@ -246,11 +248,13 @@ function didint(outcome::Union{AbstractString, Symbol},
     if !(policy_weighting in policy_weighting_options)
         error("'policy_weighting' must be one of $(policy_weighting_options)")
     end
-    if policy_aggregation && !is_policy_agg(agg)
-        error("'policy_aggregation = true' requires a policy aggregation: 'agg' must be one of $(filter(is_policy_agg, agg_options))")
-    end
     if !policy_aggregation && policy_weighting != "equal"
         error("'policy_weighting' only applies when 'policy_aggregation = true'.")
+    end
+    # Pooling across policies only exists for the policy aggregations; with any other agg,
+    # policy_aggregation (and policy_weighting) have nothing to pool and are ignored
+    if !is_policy_agg(agg)
+        policy_aggregation = false
     end
 
     # Check that weighting arg is passed correctly

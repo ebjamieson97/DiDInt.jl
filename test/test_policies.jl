@@ -114,7 +114,13 @@ end
     results = policy_didint(agg = "policy_cohort", treated_policies = POLICY_LABELS)
     @test !any(occursin("pool", col) || col == "policy_weights" for col in names(results))
     @test_throws r"'policy_weighting' only applies" policy_didint(agg = "policy_cohort", treated_policies = POLICY_LABELS, policy_weighting = "treated_obs")
-    @test_throws r"requires a policy aggregation" policy_didint(agg = "cohort", policy_aggregation = true)
+    # With a non-policy aggregation, policy_aggregation has nothing to pool and is ignored
+    @test isequal(policy_didint(agg = "cohort", policy_aggregation = true), policy_didint(agg = "cohort"))
+    @test isequal(policy_didint(agg = "cohort", treated_policies = POLICY_LABELS, policy_aggregation = true,
+                                policy_weighting = "treated_obs"), policy_didint(agg = "cohort"))
+    # With a policy aggregation but no policy inputs there is one policy, so the pool is that policy's ATT
+    single = policy_didint(agg = "policy_cohort", policy_aggregation = true)
+    @test single.att_pool[1] ≈ single.att_p[1]
     @test_throws r"'policy_weighting' must be one of" policy_didint(agg = "policy", policy_aggregation = true, policy_weighting = "inverse_variance")
 
     # pvar / treated_policies validation, as for gvar / treatment_times
