@@ -90,32 +90,10 @@ in `treated_times`, and so on.
     Any data after this date is dropped, and serves as the end date for the period
     grid construction if activated.
 
-# Covariates: values at a common covariate profile
-With covariates, the value plotted for state s in period t (column `lambda`) is the fitted outcome of that
-state-period at a common covariate profile x\\*:
-
-    lambda_{s,t} + gamma_{s,t}' x*
-
-where lambda_{s,t} is the state-period intercept from the first stage, gamma_{s,t} the covariate slopes implied by
-the CCC (one gamma for `"hom"`, gamma_s for `"state"`, gamma_t for `"time"`, gamma_s + gamma_t for `"add"`,
-gamma_{s,t} for `"int"`), and x\\* the mean covariates of the treated states' observations (of all observations
-when the treated states are not known, i.e. a parallel trends plot specified with `treatment_times` only).
-
-Every state and period is evaluated at the same covariates, as in the integrated DID-INT estimator (Karim & Webb,
-eqs. 46-47), so the plotted changes are changes in outcomes at fixed covariate values, and the plot does not
-depend on how the covariates are centred. For `"hom"` and `"state"` this only shifts each state's series by a
-constant, and for `"time"` and `"add"` it shifts every state by the same amount in each period, so comparisons
-between states are as before; under `"int"` the slopes differ by state and period and the comparisons change.
-Without covariates, or with `ccc = "none"`, the values are the state-period means.
-
-This is a change from earlier versions, which plotted lambda_{s,t} itself: the fitted outcome at x = 0, which
-under `"int"` depends on where the covariates are centred.
-
 # Returns
-A DataFrame of the state-period values described above (means, or fitted outcomes at the common covariate profile)
-for each of the specified common causal covariates (CCC) violations by period for each state,
-or, a DataFrame of the treated states' averages of these values by periods before/after treatment
-(again for each of the specified CCC violations).
+A DataFrame of means and means residualized by the specified covariates for each of the specified common causal covariates (CCC) violations by period for each state,
+or, a DataFrame of means of the treated states by periods before/after treatment (again, residualized by the specified covariates and for each of the specified
+CCC violations).
 
 # Citations
 - Karim & Webb (2025). "Good Controls Gone Bad: Difference-in-Differences with Covariates". https://arxiv.org/abs/2412.14447
@@ -244,28 +222,12 @@ function didint_plot(
     # Force outcome to float64 to speed up regression (runs faster if <:Number rather than <:Union{Number, Missing})
     data_copy.outcome_71X9yTx = convert(Vector{Float64}, data_copy.outcome_71X9yTx)
 
-    # Common covariate profile x*: the mean covariates of the treated states' observations, or of
-    # all observations when the treated states are not known (parallel trends with treatment_times
-    # only). In event-study mode the data hold only the treated states.
-    profile_rows = isnothing(treated_states) ? trues(nrow(data_copy)) : in.(data_copy.state_71X9yTx, Ref(treated_states))
-    covariate_profile = Float64[mean(data_copy[profile_rows, Symbol(cov)]) for cov in covariates_to_include]
-
     # And now on to the actual computations
     master_lambda = DataFrame()
     for c in ccc
 
         # Run the fixed effects model and get back the dataframe of means (or means residualized by covariates) for each period at each state
-        lambda_df, _, fit = iterative_demean(data_copy, c, covariates_to_include, hc, false)
-
-        # Fitted outcome of every state-period at the common covariate profile:
-        # lambda_{s,t} + gamma_{s,t}' x*, with gamma the slopes implied by the ccc. Evaluating every
-        # cell at the same covariates, as the integrated estimator does (Karim & Webb eqs. 46-47),
-        # makes the plotted changes independent of how the covariates are centred. lambda_{s,t}
-        # alone is the fitted outcome at x = 0. Without covariates nothing changes.
-        if !isempty(covariates_to_include)
-            lambda_df.lambda = [row.lambda + dot(fit.slopes[(row.state, row.time)], covariate_profile)
-                                for row in eachrow(lambda_df)]
-        end
+        lambda_df, _ = iterative_demean(data_copy, c, covariates_to_include, hc, false)
 
         # Append master data
         master_lambda = [master_lambda;lambda_df]
