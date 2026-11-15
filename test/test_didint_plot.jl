@@ -1,5 +1,7 @@
 # Tests for didint_plot()
 
+using Statistics
+
 # Ensure that didint_plot() works with good data
 @testset "Basic run - parallel trends" begin
     test_plot_parallel = DiDInt.didint_plot("coll", "state", "year", TEST_DATA,
