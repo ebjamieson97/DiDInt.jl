@@ -60,7 +60,10 @@ in `treated_times`, and so on.
 ## Model Specification
 - `ccc::AbstractString = "int"`
     Specify which version of DID-INT should be used.
-    Options are: `"hom"`, `"time"`, `"state"`, "`add`", and `"int"`. 
+    Options are: `"hom"`, `"time"`, `"state"`, "`add`", and `"int"`.
+    The long differences are the integrated ones of Karim & Webb (eqs. 46-47): the change in a state's
+    covariate slopes is evaluated at the treated state's covariate means. That covariate term cancels
+    in every ATT(s,t) except under `"int"`, so only `"int"` estimates with covariates depend on it.
 - `agg::AbstractString = "cohort"` 
     Enter the aggregation method as a string.
     Options are: `"cohort"`, `"simple"`, `"state"`, `"sgt"`, `"time"`, `"calendar"`.
@@ -122,6 +125,10 @@ in `treated_times`, and so on.
     for a particular long difference regression, the standard error can still be constructed from the variance and covariance terms of the relevant
     means. Calculating these `edgecase` standard errors can be computationally expensive, therefore by default this argument is set to `false`, but
     may be toggled on by setting `edgecase = true`.
+    Under `ccc = "int"` with covariates the ATT also depends on the treated state's covariate means, and the `edgecase` standard error
+    includes their sampling variance (the unconditional variance). Every `edgecase` standard error assumes that observations in different
+    state-period cells are independent, as in repeated cross-sections. With panel data, where the same individuals are observed in several
+    periods, it omits the covariances between a state's periods and should be read with caution. Not available for `ccc = "add"`.
 
 # Returns
 A DataFrame of results including the estimate of the ATT as well as standard errors and p-values.
@@ -326,9 +333,15 @@ function didint(outcome::Union{AbstractString, Symbol},
     end
 
     # Run the fixed effects model and get back the dataframe of means (or means residualized by covariates) for each period at each state
-    lambda_df, vcov_lambda = iterative_demean(data_copy, ccc, covariates_to_include, hc, edgecase,
-                                              time_to_index = time_to_index, treatment_times = treatment_times, match_to_these_dates = match_to_these_dates,
-                                              treated_states = treated_states, use_pre_controls = use_pre_controls)
+    lambda_df, vcov_lambda, covariate_fit = iterative_demean(data_copy, ccc, covariates_to_include, hc, edgecase,
+                                                             time_to_index = time_to_index, treatment_times = treatment_times, match_to_these_dates = match_to_these_dates,
+                                                             treated_states = treated_states, use_pre_controls = use_pre_controls)
+
+    # Integrated long differences (DID-INT eqs. 46-47; update spec §3.2, D5). The covariate
+    # term they add cancels in ATT(s,t) for every ccc except "int": it is zero for "hom" and
+    # "state", and for "time" and "add" the treated state and its controls carry the same
+    # time slopes at the same covariate means. So it is only applied under "int" with covariates.
+    integration = (ccc == "int" && !isempty(covariates_to_include)) ? covariate_fit : nothing
 
     # Long differences: diff_df holds the rows of the ATT(s,t) regressions, ri_diff_df the extra
     # differences randomization inference needs
@@ -348,17 +361,18 @@ function didint(outcome::Union{AbstractString, Symbol},
 
     # ATT(s,t) for every treated state and post period (DID-INT eq. 48), then the sub-aggregates
     # of the chosen agg and the aggregate ATT, all weighted means of ATT(s,t)'s (update spec §3.3-§5)
-    att_st = build_att_st(diff_df, weighting, hc, vcov_lambda)
+    att_st = build_att_st(diff_df, weighting, hc, vcov_lambda; integration = integration)
     results = sub_aggregate_results(att_st, agg, weighting, treated_weight, hc)
     results = aggregate_att(results, agg, weighting, hc)
 
     # Jackknife and randomization inference recompute the same weighted means on each deletion / draw
     results = jackknife_procedure(results, att_st, diff_df, agg, weighting, treated_weight, use_pre_controls,
                                   truejack, data_copy, ccc, covariates_to_include, treated_states, treatment_times,
-                                  time_to_index, match_to_these_dates)
+                                  time_to_index, match_to_these_dates; integration = integration)
     if randomize
         results = randomization_inference(results, att_st, vcat(diff_df, ri_diff_df), agg, weighting, treated_weight,
-                                          use_pre_controls, treated_states, treatment_times, nperm, verbose, seed)
+                                          use_pre_controls, treated_states, treatment_times, nperm, verbose, seed;
+                                          integration = integration)
     end
 
     # Show the period length and date range in the results
@@ -422,13 +436,26 @@ function step3_weights(temp::DataFrame, weighting::AbstractString)
     end
 end
 
-function build_att_st(diff_df::DataFrame, weighting::AbstractString, hc::AbstractString, vcov_lambda)
+function slope_change_term(fit::CovariateFit, source_state, t, r1, target_state)
+
+    # Covariate term of an integrated long difference (DID-INT eqs. 46-47; update spec §3.2):
+    # (gamma_{source,t} - gamma_{source,r1})' xbar_{target,t}, the change in the source state's
+    # slopes evaluated at the target (treated) state's period-t covariate means. Because f(X) is
+    # linear, integrating over the target's covariate distribution reduces to its mean.
+    return dot(fit.slopes[(source_state, t)] .- fit.slopes[(source_state, r1)], fit.xbar[(target_state, t)])
+end
+
+function build_att_st(diff_df::DataFrame, weighting::AbstractString, hc::AbstractString, vcov_lambda;
+                      integration::Union{CovariateFit, Nothing} = nothing)
 
     # ATT(s,t) for each treated state s and post period t (DID-INT eq. 48; update spec §3.3):
     # the treat coefficient of the weighted regression of the long differences on [1, treat],
     # using s's long difference and those of the controls in the same (t, r1) cell (§3.4).
+    # With `integration`, every long difference in the regression gains its covariate term
+    # evaluated at s's covariate means (eqs. 46-47), so a control's long difference depends
+    # on the treated state it is compared with.
     # With one treated row its leverage is 1, so HC2-HC4 standard errors are NaN (D17). With
-    # exactly two rows the regression SE is degenerate and edge_case_se is used instead.
+    # exactly two rows the regression SE is degenerate and the edge-case SE is used instead.
     # An (s,t) without a control or whose regression cannot be estimated is dropped.
     treated = sort(diff_df[diff_df.treat .== 1, :], [:state, :treated_time, :t])
     nrows = nrow(treated)
@@ -444,10 +471,19 @@ function build_att_st(diff_df::DataFrame, weighting::AbstractString, hc::Abstrac
         temp = vcat(treated[i:i, :], controls)
         X = convert(Matrix{Float64}, hcat(ones(nrow(temp)), temp.treat))
         Y = convert(Vector{Float64}, temp.diff)
+        if !isnothing(integration)
+            Y .+= [slope_change_term(integration, source, treated.t[i], treated.r1[i], treated.state[i]) for source in temp.state]
+        end
         W = step3_weights(temp, weighting)
         result_dict = final_regression_results(X, Y, W = W, hc = hc)
         att_st.att[i] = result_dict["beta_hat"]
-        att_st.se[i] = length(Y) == 2 ? edge_case_se(temp.lambda_idx, vcov_lambda) : result_dict["beta_hat_se"]
+        if length(Y) != 2
+            att_st.se[i] = result_dict["beta_hat_se"]
+        elseif isnothing(integration)
+            att_st.se[i] = edge_case_se(temp.lambda_idx, vcov_lambda)
+        else
+            att_st.se[i] = edge_case_se_integrated(integration, treated.state[i], controls.state[1], treated.t[i], treated.r1[i], hc)
+        end
         att_st.pval[i] = result_dict["pval_att"]
     end
     att_st = att_st[(att_st.n_controls .> 0) .& .!ismissing.(att_st.att), :]
@@ -564,18 +600,24 @@ end
 att_st_cells(att_st::DataFrame) = sort(unique(att_st[:, [:gvar, :t, :r1, :periods_post_treat]]), [:gvar, :t])
 
 function att_st_point_estimates(cells::DataFrame, lookup::Dict, labels::Dict, states::AbstractVector,
-                                weighting::AbstractString, use_pre_controls::Bool)
+                                weighting::AbstractString, use_pre_controls::Bool;
+                                integration::Union{CovariateFit, Nothing} = nothing)
 
     # ATT(s,t)'s for the assignment `labels` (state => treatment period; states not in it are
     # never treated), in closed form: ATT(s,t) = diff_s - sum_c v_c diff_c / sum_c v_c over the
     # controls of the cell (update spec §2, §3.3-§3.4), which equals the ATT(s,t) regression
     # coefficient. Controls are never-treated states and, with use_pre_controls, states not yet
     # treated at t; v = n under weighting = "diff"/"both", else 1.
+    # With `integration` the long differences are the integrated ones (DID-INT eqs. 46-47). The
+    # control mean for a treated state s is then a + b' xbar_{s,t}, with a the weighted mean of
+    # the controls' intercept differences and b that of their slope changes (update spec §7.4).
     out = DataFrame(state = String[], gvar = Date[], t = Date[], r1 = Date[], periods_post_treat = Int[],
                     att = Float64[], n = Float64[], n_t = Float64[])
+    n_covariates = isnothing(integration) ? 0 : length(integration.covariates)
     for cell in eachrow(cells)
         g, t, r1 = cell.gvar, cell.t, cell.r1
         weighted_sum = 0.0
+        weighted_slope_change = zeros(n_covariates)
         weight_total = 0.0
         for c in states
             label = get(labels, c, nothing)
@@ -584,15 +626,23 @@ function att_st_point_estimates(cells::DataFrame, lookup::Dict, labels::Dict, st
             isnothing(d) && continue
             v = weighting in ["diff", "both"] ? d.n : 1.0
             weighted_sum += v * d.diff
+            if !isnothing(integration)
+                weighted_slope_change .+= v .* (integration.slopes[(c, t)] .- integration.slopes[(c, r1)])
+            end
             weight_total += v
         end
         weight_total == 0 && continue
         control_mean = weighted_sum / weight_total
+        control_slope_change = weighted_slope_change ./ weight_total
         for s in states
             get(labels, s, nothing) == g || continue
             d = get(lookup, (s, t, r1), nothing)
             isnothing(d) && continue
-            push!(out, (s, g, t, r1, cell.periods_post_treat, d.diff - control_mean, d.n, d.n_t))
+            att = d.diff - control_mean
+            if !isnothing(integration)
+                att += slope_change_term(integration, s, t, r1, s) - dot(control_slope_change, integration.xbar[(s, t)])
+            end
+            push!(out, (s, g, t, r1, cell.periods_post_treat, att, d.n, d.n_t))
         end
     end
     return out
@@ -761,11 +811,14 @@ end
 
 function randomization_inference(results::DataFrame, att_st::DataFrame, long_diffs::DataFrame, agg::AbstractString,
                                  weighting::AbstractString, treated_weight::AbstractString, use_pre_controls::Bool,
-                                 treated_states, treatment_times, nperm::Int, verbose::Bool, seed::Number)
+                                 treated_states, treatment_times, nperm::Int, verbose::Bool, seed::Number;
+                                 integration::Union{CovariateFit, Nothing} = nothing)
 
     # Randomization inference (MacKinnon & Webb 2020): re-assign the observed treatment times to
     # randomly drawn states, recompute the same estimates for each draw, and compare (update
-    # spec §5.2, §8.1). long_diffs holds every state's long difference in every cell.
+    # spec §5.2, §8.1). long_diffs holds every state's long difference in every cell. The first
+    # stage does not depend on the assignment, so the slopes and covariate means used for
+    # integration are the same in every draw (§7.1).
 
     # PART ONE: DRAW UNIQUE RANDOM ASSIGNMENTS OF THE TREATMENT TIMES
     original_treated = unique(long_diffs[long_diffs.treat .== 1, [:state, :treated_time]])
@@ -812,7 +865,7 @@ function randomization_inference(results::DataFrame, att_st::DataFrame, long_dif
     att_ri = Vector{Float64}(undef, nperm)
     att_ri_sub = Matrix{Float64}(undef, nperm, nrow(results))
     for (j, labels) in enumerate(draws)
-        est = att_st_point_estimates(cells, lookup, labels, all_states, weighting, use_pre_controls)
+        est = att_st_point_estimates(cells, lookup, labels, all_states, weighting, use_pre_controls; integration = integration)
         if agg in ["state", "sgt"]
             att_ri_sub[j, :], att_ri[j] = state_level_ri_draw(est, result_keys, observed_labels, agg, weighting, treated_weight)
         else
@@ -910,12 +963,14 @@ end
 function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::DataFrame, agg::AbstractString,
                              weighting::AbstractString, treated_weight::AbstractString, use_pre_controls::Bool,
                              truejack::Bool, data_copy, ccc, covariates_to_include, treated_states, treatment_times,
-                             time_to_index, match_to_these_dates)
+                             time_to_index, match_to_these_dates;
+                             integration::Union{CovariateFit, Nothing} = nothing)
 
     # Delete-one-state jackknife (CRV3, centered at the full-sample estimate; update spec §9.1).
     # Each state is deleted as a treated state and as a control, and the same weighted means are
     # recomputed. With truejack = true (ccc not "int" or "state") the first stage is re-estimated
-    # without the state, since its lambdas then depend on the other states.
+    # without the state, since its lambdas then depend on the other states. Under "int", the
+    # only ccc that integrates, each cell's slopes and covariate means are unaffected by deletions.
 
     # A jackknife needs at least 2 treated and 2 control states; otherwise every jackknife
     # SE and p-value stays missing
@@ -935,15 +990,18 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
     sub_jacks = Matrix{Union{Missing, Float64}}(missing, length(all_states), nrow(results))
     for (h, without) in enumerate(all_states)
         if truejack
-            lambda_h, _ = iterative_demean(data_copy[data_copy.state_71X9yTx .!= without, :], ccc, covariates_to_include, "hc0", false)
+            lambda_h, _, fit_h = iterative_demean(data_copy[data_copy.state_71X9yTx .!= without, :], ccc, covariates_to_include, "hc0", false)
             diff_h = construct_diff_df(lambda_h, treated_states, treatment_times, time_to_index, match_to_these_dates,
                                        use_pre_controls, data_copy; jackknife = true, without = without)
             lookup_h = long_difference_lookup(diff_h)
+            integration_h = isnothing(integration) ? nothing : fit_h
         else
             lookup_h = lookup
+            integration_h = integration
         end
         labels_h = filter(label -> label.first != without, observed_labels)
-        est = att_st_point_estimates(cells, lookup_h, labels_h, filter(!=(without), all_states), weighting, use_pre_controls)
+        est = att_st_point_estimates(cells, lookup_h, labels_h, filter(!=(without), all_states), weighting, use_pre_controls;
+                                     integration = integration_h)
         sub = point_sub_aggregates(est, agg, weighting, treated_weight)
         aggregate = point_aggregate(sub, weighting)
         agg_jacks[h] = isfinite(aggregate) ? aggregate : missing
@@ -1201,4 +1259,41 @@ function edge_case_se(lambda_indices, vcov_lambda)
              vcov_lambda[lambda_indices[1][1], lambda_indices[2][1]]))
     return se_att
 
+end
+function edge_case_se_integrated(fit::CovariateFit, treated, control, t, r1, hc::AbstractString)
+
+    # Edge-case SE of an integrated ATT(s,t) with a single control under ccc = "int" with
+    # covariates (update spec A6, Appendix B.4). An OLS fit with an intercept passes through
+    # the means, so lambda_{s,t} + gamma_{s,t}' xbar_{s,t} = ybar_{s,t} and
+    #   ATT(s,t) = (ybar_{s,t} - delta' xbar_{s,t}) - (lambda_{s,r1} + lambda_{c,t} - lambda_{c,r1}),
+    #   delta = gamma_{s,r1} + gamma_{c,t} - gamma_{c,r1}.
+    # delta' xbar_{s,t} multiplies slopes estimated from three cells by a covariate mean estimated
+    # from the treated cell. xbar_{s,t} is treated as random (it estimates the mean of the
+    # distribution eqs. 46-47 integrate over): this is the unconditional variance
+    #   Var(zbar_{s,t}) + sum over the 3 other cells k of a' V_k a + tr(V_delta Sigma),
+    # with z_i = y_i - delta' x_i over the observations of cell (s,t), a = (1, xbar_{s,t}), V_k the
+    # HC covariance of cell k's (lambda, gamma), V_delta the sum of the slope blocks of the three
+    # V_k, and Sigma the HC covariance of xbar_{s,t}. With the trace term it equals the variance
+    # when the four cells are independent, with estimated inputs.
+    # That independence holds for repeated cross-sections. With panel data the same individuals
+    # appear in a state's r1 and t cells, so those cells' estimates, and xbar_{s,t} and the
+    # state's base-period estimates, are correlated; those covariances are omitted (Appendix B.5).
+    other_cells = [(treated, r1), (control, t), (control, r1)]
+    if !haskey(fit.cell_obs, (treated, t)) || !all(haskey(fit.cell_vcov, cell) for cell in other_cells)
+        return missing
+    end
+
+    delta = fit.slopes[(treated, r1)] .+ fit.slopes[(control, t)] .- fit.slopes[(control, r1)]
+    y, X = fit.cell_obs[(treated, t)]
+    z = y .- X * delta
+    var_zbar = hc_mean_covariance(reshape(z, :, 1), hc)[1, 1]
+
+    a = vcat(1.0, fit.xbar[(treated, t)])
+    var_other_cells = sum(a' * fit.cell_vcov[cell] * a for cell in other_cells)
+
+    V_delta = sum(fit.cell_vcov[cell][2:end, 2:end] for cell in other_cells)
+    Sigma = hc_mean_covariance(X, hc)
+
+    variance = var_zbar + var_other_cells + tr(V_delta * Sigma)
+    return isfinite(variance) && variance > 0 ? sqrt(variance) : missing
 end

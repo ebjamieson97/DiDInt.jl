@@ -48,6 +48,38 @@ function compute_hc_covariance(X::Matrix, resid::Vector, hc::AbstractString)
     return XXinv * (X' * (omega_diag .* X)) * XXinv
 end
 
+function hc_mean_covariance(Z::Matrix, hc::AbstractString)
+
+    # HC covariance matrix of the column means of Z: the multivariate version of the HC variance
+    # of the intercept in a regression on a constant (every row has leverage 1/n), so for one
+    # column it equals compute_hc_covariance(ones(n, 1), z .- mean(z), hc)
+    n = size(Z, 1)
+    centered = Z .- mean(Z, dims = 1)
+    h = 1 / n
+    scale = hc == "hc0" ? 1.0 : hc == "hc1" ? n / (n - 1) : hc == "hc3" ? 1 / (1 - h)^2 : 1 / (1 - h)
+    return scale .* (centered' * centered) ./ n^2
+end
+
+# First-stage estimates beyond the cell intercepts lambda (update spec §3.1), keyed by cell
+# (state, period). `slopes` holds the covariate slopes gamma_{s,t} implied by the ccc, in the
+# order of `covariates` (0 for a covariate dropped in that cell), and `xbar` the cell's covariate
+# means. For the cells of an edge case under ccc = "int", `cell_vcov` holds the HC covariance of
+# (lambda, gamma) from the cell's regression and `cell_obs` the cell's outcome vector and
+# covariate matrix; edge_case_se_integrated needs both (spec Appendix B.4).
+struct CovariateFit
+    covariates::Vector{String}
+    slopes::Dict{Tuple{String, Date}, Vector{Float64}}
+    xbar::Dict{Tuple{String, Date}, Vector{Float64}}
+    cell_vcov::Dict{Tuple{String, Date}, Matrix{Float64}}
+    cell_obs::Dict{Tuple{String, Date}, Tuple{Vector{Float64}, Matrix{Float64}}}
+end
+
+function CovariateFit(covariates::Vector{String})
+    return CovariateFit(covariates, Dict{Tuple{String, Date}, Vector{Float64}}(), Dict{Tuple{String, Date}, Vector{Float64}}(),
+                        Dict{Tuple{String, Date}, Matrix{Float64}}(),
+                        Dict{Tuple{String, Date}, Tuple{Vector{Float64}, Matrix{Float64}}}())
+end
+
 function iterative_demean(data_working, ccc, covariates_to_include, hc, edgecase;
                           time_to_index = nothing, treatment_times = nothing, match_to_these_dates = nothing,
                           treated_states = nothing, use_pre_controls = nothing)
@@ -100,6 +132,13 @@ function iterative_demean(data_working, ccc, covariates_to_include, hc, edgecase
     data_working = copy(data_working)
     y = Float64.(data_working.outcome_71X9yTx)
 
+    # Covariate slopes and cell means of the covariates (update spec §3.1). The means come from
+    # the same rows as the first stage; the slopes are recorded where each ccc estimates them.
+    fit = CovariateFit(String[string(cov) for cov in covariates_to_include])
+    for cell in groupby(data_working, [:state_71X9yTx, :time_dmG5fpM])
+        fit.xbar[(cell.state_71X9yTx[1], cell.time_dmG5fpM[1])] = Float64[mean(cell[!, Symbol(cov)]) for cov in covariates_to_include]
+    end
+
     # Divide data: edgecase cells get lambda+vcov from compute_lambda_edgecase;
     # the remainder get lambda only from the normal procedure below.
     has_edgecase = edgecase && (do_full_edgecase || affected_cells !== nothing)
@@ -132,12 +171,12 @@ function iterative_demean(data_working, ccc, covariates_to_include, hc, edgecase
         vcov_lambda_global = fill(0.0, n_sk, n_sk)
 
         skeleton, vcov_lambda_global = compute_lambda_edgecase(data_ec, ccc, covariates_to_include,
-                                                               skeleton, vcov_lambda_global, hc)
+                                                               skeleton, vcov_lambda_global, hc, fit)
         if isempty(data_normal)
             skeleton.time = Date.(skeleton.time)
             select!(skeleton, [:state, :time, :lambda, :lambda_index])
             skeleton.ccc .= ccc
-            return skeleton, vcov_lambda_global
+            return skeleton, vcov_lambda_global, fit
         end
         data_working = data_normal   # normal procedure runs only on non-affected data
     end
@@ -183,12 +222,19 @@ function iterative_demean(data_working, ccc, covariates_to_include, hc, edgecase
                 length(unique(skipmissing(df[!, Symbol(c)]))) > 1
             end
             y = Float64.(collect(df.outcome_71X9yTx))
+            gamma = zeros(length(covariates_to_include))
             if isempty(active_covs)
                 X = ones(nrow(df), 1)
+                beta = X \ y
             else
-                X = hcat(ones(nrow(df)), prune_covariates(Matrix(Float64.(df[:, Symbol.(active_covs)]))))
+                W = Matrix(Float64.(df[:, Symbol.(active_covs)]))
+                kept = prune_covariate_columns(W)
+                X = hcat(ones(nrow(df)), W[:, kept])
+                beta = X \ y
+                gamma[Int.(indexin(active_covs[kept], covariates_to_include))] = beta[2:end]
             end
-            beta = X \ y
+            # The cell's own slopes gamma_{s,t}; a covariate dropped in this cell keeps slope 0
+            fit.slopes[(df.state_71X9yTx[1], df.time_dmG5fpM[1])] = gamma
             DataFrame(lambda = [beta[1]])
         end
 
@@ -237,7 +283,8 @@ function iterative_demean(data_working, ccc, covariates_to_include, hc, edgecase
 
     Z_sparse = sparse(I_rows, J_cols, V_vals, n, (length(states) + length(times)) * ncovs)
     y_dem = Float64.(data_working.y_demeaned)
-    β_all = Z_sparse \ y_dem
+    # Without covariates there is nothing to solve for (and the sparse solver rejects an empty design)
+    β_all = ncovs == 0 ? Float64[] : Z_sparse \ y_dem
 
     β_s_all = reshape(β_all[1:length(states)*ncovs], ncovs, length(states))
     β_t_all = reshape(β_all[length(states)*ncovs+1:end], ncovs, length(times))
@@ -288,6 +335,29 @@ function iterative_demean(data_working, ccc, covariates_to_include, hc, edgecase
         end
     end
 
+    # Slopes gamma_{s,t} implied by the ccc for every cell (update spec §3.1): gamma for "hom",
+    # gamma_s for "state", gamma_t for "time", gamma_s + gamma_t for "add". ccc = "int" recorded
+    # its cell-specific slopes above.
+    if ccc != "int"
+        no_slopes = isempty(covariates_to_include) || ccc == "none"
+        if !no_slopes && ccc in ["time", "state"]
+            group_col = ccc == "time" ? :time_71X9yTx : :state_71X9yTx
+            beta_by_group = Dict(zip(betas[!, group_col], betas.beta))
+        end
+        for cell in eachrow(unique(select(data_working, [:state_71X9yTx, :time_71X9yTx, :time_dmG5fpM])))
+            fit.slopes[(cell.state_71X9yTx, cell.time_dmG5fpM)] =
+                if no_slopes
+                    zeros(length(covariates_to_include))
+                elseif ccc == "hom"
+                    b
+                elseif ccc == "add"
+                    β_s_all[:, state_idx[cell.state_71X9yTx]] .+ β_t_all[:, time_idx[cell.time_71X9yTx]]
+                else
+                    beta_by_group[cell[group_col]]
+                end
+        end
+    end
+
     sort!(lambda_df, [:state_71X9yTx, :time_71X9yTx])
     n = nrow(lambda_df)
     lambda_df.lambda_index = 1:nrow(lambda_df)
@@ -302,16 +372,16 @@ function iterative_demean(data_working, ccc, covariates_to_include, hc, edgecase
         end
         skeleton.time = Date.(skeleton.time)
         skeleton.ccc .= ccc
-        return skeleton, vcov_lambda_global
+        return skeleton, vcov_lambda_global, fit
     end
 
     lambda_df.time = Date.(lambda_df.time)
     lambda_df.ccc .= ccc
     vcov_lambda = fill(NaN, n, n)
-    return lambda_df, vcov_lambda
+    return lambda_df, vcov_lambda, fit
 end
 
-function compute_lambda_edgecase(data_working, ccc, covariates_to_include, lambda_df, vcov_lambda, hc)
+function compute_lambda_edgecase(data_working, ccc, covariates_to_include, lambda_df, vcov_lambda, hc, fit::CovariateFit)
     n_lambda = nrow(lambda_df)
 
     # lambda_df.time is String matches data_working.time_71X9yTx
@@ -344,10 +414,15 @@ function compute_lambda_edgecase(data_working, ccc, covariates_to_include, lambd
             any(stds.has_var)
         end
         
+        # Covariates in the regression: those with variation, pruned further under "int"
+        kept_covs = active
         if isempty(active)
             Z = D_block
         elseif int
-            Z = hcat(D_block, prune_covariates(Matrix(Float64.(sub_df[:, Symbol.(active)]))))
+            W = Matrix(Float64.(sub_df[:, Symbol.(active)]))
+            kept = prune_covariate_columns(W)
+            kept_covs = active[kept]
+            Z = hcat(D_block, W[:, kept])
         else
             Z = hcat(D_block, Matrix(Float64.(sub_df[:, Symbol.(active)])))
         end
@@ -356,11 +431,36 @@ function compute_lambda_edgecase(data_working, ccc, covariates_to_include, lambd
         y     = Float64.(sub_df.outcome_71X9yTx)
         β = Z \ y
         # If Z is not full rank or not enough rows then in this edgecase of an edgecase we cannot compute the se(ATT)
-        if (size(Z, 1) > size(Z, 2)) && (rank(Z) == size(Z, 2))
+        estimable = (size(Z, 1) > size(Z, 2)) && (rank(Z) == size(Z, 2))
+        if estimable
             resid = y .- Z * β
             V     = compute_hc_covariance(Z, resid, hc)
         else
             V = fill(NaN, n_cells, n_cells)
+        end
+
+        # Record the slopes of every cell in the block (update spec §3.1): common to the block
+        # for "hom", "state" and "time", the cell's own for "int"
+        kept_positions = Int.(indexin(kept_covs, covariates_to_include))
+        gamma = zeros(length(covariates_to_include))
+        gamma[kept_positions] = β[n_cells+1:end]
+        for cell in cells_seen
+            fit.slopes[(cell[1], Date(cell[2]))] = gamma
+        end
+
+        # Under "int" with covariates the block is one cell. Keep the HC covariance of its
+        # (lambda, gamma), with zero rows and columns for dropped covariates, and its
+        # observations: edge_case_se_integrated needs them (update spec Appendix B.4).
+        if int && !isempty(covariates_to_include)
+            n_coef = 1 + length(covariates_to_include)
+            positions = vcat(1, 1 .+ kept_positions)
+            cell_vcov = estimable ? zeros(n_coef, n_coef) : fill(NaN, n_coef, n_coef)
+            if estimable
+                cell_vcov[positions, positions] = V
+            end
+            cell_key = (cells_seen[1][1], Date(cells_seen[1][2]))
+            fit.cell_vcov[cell_key] = cell_vcov
+            fit.cell_obs[cell_key] = (y, Matrix(Float64.(sub_df[:, Symbol.(covariates_to_include)])))
         end
         return V[1:n_cells, 1:n_cells], global_idx, β[1:n_cells]
     end
@@ -397,11 +497,12 @@ function compute_lambda_edgecase(data_working, ccc, covariates_to_include, lambd
     return lambda_df, vcov_lambda
 end
 
-function prune_covariates(W)
+function prune_covariate_columns(W)
     # This function is to be used when calculating lambda with the two-way intersection (int) DID-INT model
     # its necessary since we cant allow for non-uniquely identified lambda values, whereas we can with the
     # other ccc options as the ATTs calculated from the those DID-INT variations ultimately yield a uniquely
     # identified ATT
+    # Returns the indices of the columns of W to keep, from most to least informative
 
     Wcol = size(W, 2)
     Wrow = size(W, 1)
@@ -412,24 +513,19 @@ function prune_covariates(W)
     # Search for first column below tolerance
     rank = something(findfirst(i -> abs(Wqr.factors[i,i]) <= tol, 1:m), m+1) - 1
 
-    # Reorder from most to least informative columns
-    W = W[:, Wqr.p]
-
-    if Wcol != rank
-        # Keep only the first rank columns in pivoted order
-        W = W[:, 1:rank]
-    end
+    # Keep only the first rank columns in pivoted order (most to least informative)
+    kept = Wqr.p[1:rank]
 
     # Account for fact that we are adding an intercept column afterwards
-    Wcol = size(W, 2)
-    row_surplus = Wrow - Wcol # Needs to be >= 1
+    row_surplus = Wrow - length(kept) # Needs to be >= 1
 
     # Prune the least important covariates according to RRQR if theres still a dimensionality issue
     if row_surplus < 1
         nprune = iszero(row_surplus) ? 1 : abs(row_surplus) + 1
         # Drop the last nprune columns in pivoted order (least informative)
-        W = W[:, 1:Wcol - nprune]
+        kept = kept[1:length(kept) - nprune]
     end
 
-    return W
-end 
+    return kept
+end
+
