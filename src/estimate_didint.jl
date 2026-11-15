@@ -916,11 +916,13 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
     # recomputed. With truejack = true (ccc not "int" or "state") the first stage is re-estimated
     # without the state, since its lambdas then depend on the other states.
 
-    # Do a simple check for edge case when there is less than 2 control or less than 2 treated states
+    # A jackknife needs at least 2 treated and 2 control states; otherwise every jackknife
+    # SE and p-value stays missing
     n_treated = length(unique(diff_df[diff_df.treat .== 1, :state]))
     n_control = length(unique(diff_df[diff_df.treat .== 0, :state]))
     if n_control < 2 || n_treated < 2
         @warn "Need at least 2 treated states and 2 control states to do jackknife procedure."
+        return results
     end
 
     cells = att_st_cells(att_st)
@@ -951,12 +953,19 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
     agg_jacks = collect(skipmissing(agg_jacks))
     results.jknifese_agg_att[1], results.jknifepval_agg_att[1] = jackknife_se_pval(agg_jacks, results.agg_att[1])
 
-    # Sub-aggregate jackknife SEs and p-values. A sub-aggregate that some deletion leaves
-    # undefined (it has a single treated state) gets none; neither do the single-state
-    # sub-aggregates of "state" and "sgt".
+    # Sub-aggregate jackknife SEs and p-values. A sub-aggregate gets none unless its ATT(s,t)'s
+    # involve at least 2 treated states and their cells at least 2 control states, and every
+    # deletion leaves it defined. The single-state sub-aggregates of "state" and "sgt" never do.
     suffix = SUB_AGG_SPECS[agg].suffix
+    group_cols = group_columns(agg)
+    att_st_keys = [Tuple(att_st[r, col] for col in group_cols) for r in 1:nrow(att_st)]
+    control_rows = diff_df[diff_df.treat .== 0, :]
     for i in 1:nrow(results)
-        if agg in ["state", "sgt"] || any(ismissing, sub_jacks[:, i])
+        in_group = att_st_keys .== Ref(result_keys[i])
+        group_cells = Set(zip(att_st.t[in_group], att_st.r1[in_group]))
+        n_group_treated = length(unique(att_st.state[in_group]))
+        n_group_control = length(unique(control_rows.state[[cell in group_cells for cell in zip(control_rows.t, control_rows.r1)]]))
+        if n_group_treated < 2 || n_group_control < 2 || any(ismissing, sub_jacks[:, i])
             results[i, "jknifese_" * suffix] = missing
             results[i, "jknifepval_" * suffix] = missing
         else

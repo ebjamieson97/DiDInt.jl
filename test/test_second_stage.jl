@@ -172,3 +172,20 @@ end
     two = filter(r -> r.state in ["s1", "s5"], data)
     @test all(isfinite, quiet_didint(two, Dict("s1" => 2004); agg = "sgt", edgecase = true).se_att_sgt)
 end
+
+@testset "Jackknife needs at least 2 treated and 2 control states, overall and per sub-aggregate" begin
+    # Cohort 2003 has two treated states, cohort 2005 one: only cohort 2003 gets a jackknife SE
+    cohorts = Dict("s1" => 2003, "s2" => 2003, "s3" => 2005)
+    data = small_panel(cohorts = cohorts, n_states = 6, effect = 1.0, noise = 0.3)
+    results = quiet_didint(data, cohorts; agg = "cohort")
+    @test !ismissing(results.jknifese_att_cohort[results.treatment_time .== Date(2003)][1])
+    @test ismissing(results.jknifese_att_cohort[results.treatment_time .== Date(2005)][1])
+    @test !ismissing(results.jknifese_agg_att[1])
+
+    # With a single control state no jackknife SE or p-value is computed at all
+    one_control = filter(r -> r.state in ["s1", "s2", "s3", "s4"], data)
+    results = quiet_didint(one_control, cohorts; agg = "cohort")
+    @test all(ismissing, results.jknifese_att_cohort)
+    @test ismissing(results.jknifese_agg_att[1])
+    @test ismissing(results.jknifepval_agg_att[1])
+end
