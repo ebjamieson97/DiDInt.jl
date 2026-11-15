@@ -839,24 +839,25 @@ function state_level_ri_draw(est::DataFrame, result_keys, observed_labels::Dict,
                              weighting::AbstractString, treated_weight::AbstractString)
 
     # State-level RI statistics for one draw (agg = "state" or "sgt"; update spec D9, §7.5). For
-    # each observed state ("state") or (s, g, t) row ("sgt"), pick at random one of the states
-    # the draw treats at the same time, as the procedure has always done, and use its estimate:
-    # the u-weighted mean of its ATT(s,t)'s ("state") or its ATT(s,t) in that period ("sgt").
-    # The aggregate is the Level 2 weighted mean of these statistics.
+    # each observed treated state s, take its treatment time g_s and pick at random one of the
+    # states the draw assigns g_s; that state stands in for s in every period. Its estimate is
+    # the u-weighted mean of its ATT(s,t)'s ("state") or its ATT(s,t) in each of s's periods
+    # ("sgt"). The aggregate is the Level 2 weighted mean of these statistics.
     stats = fill(NaN, length(result_keys))
     level2 = zeros(length(result_keys))
     u = treated_unit_weights(est, weighting, treated_weight)
+    picks = Dict{String, Union{String, Nothing}}()
     for (i, key) in enumerate(result_keys)
-        if agg == "state"
-            g = observed_labels[key[1]]
+        s = key[1]
+        g = observed_labels[s]
+        if !haskey(picks, s)
             candidates = unique(est.state[est.gvar .== g])
-        else
-            g, t = key[2], key[3]
-            candidates = unique(est.state[(est.gvar .== g) .& (est.t .== t)])
+            picks[s] = isempty(candidates) ? nothing : shuffle(candidates)[1]
         end
-        isempty(candidates) && continue
-        pick = shuffle(candidates)[1]
+        pick = picks[s]
+        isnothing(pick) && continue
         rows = agg == "state" ? (est.state .== pick) .& (est.gvar .== g) : (est.state .== pick) .& (est.gvar .== g) .& (est.t .== key[3])
+        any(rows) || continue
         stats[i] = sum(u[rows] .* est.att[rows]) / sum(u[rows])
         level2[i] = sum(est.n_t[rows])
     end

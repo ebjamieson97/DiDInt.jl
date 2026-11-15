@@ -189,3 +189,18 @@ end
     @test ismissing(results.jknifese_agg_att[1])
     @test ismissing(results.jknifepval_agg_att[1])
 end
+
+@testset "State-level RI (sgt) uses one stand-in state per treated state in every period" begin
+    # Two states, X and Y, received s1's treatment time 2003 in this draw; each has ATT(s,t)'s in
+    # 2003-2005 that differ by state. Every draw's sgt statistics for s1 must come from one of them.
+    periods = [Date(2003), Date(2004), Date(2005)]
+    est = DataFrame(state = repeat(["X", "Y"], inner = 3), gvar = fill(Date(2003), 6), t = repeat(periods, 2),
+                    r1 = fill(Date(2002), 6), periods_post_treat = repeat(0:2, 2),
+                    att = [1.0, 2.0, 3.0, 10.0, 20.0, 30.0], n = fill(10.0, 6), n_t = fill(5.0, 6))
+    result_keys = [("s1", Date(2003), t) for t in periods]
+    observed_labels = Dict("s1" => Date(2003))
+    for _ in 1:50
+        stats, _ = DiDInt.state_level_ri_draw(est, result_keys, observed_labels, "sgt", "both", "treated")
+        @test stats == [1.0, 2.0, 3.0] || stats == [10.0, 20.0, 30.0]
+    end
+end
