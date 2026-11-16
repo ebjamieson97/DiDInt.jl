@@ -1,4 +1,4 @@
-# Snapshot tests (update spec §12.1): rerun every case in snapshot_cases.jl and compare
+# Snapshot tests: rerun every case in snapshot_cases.jl and compare
 # all result columns with the stored outputs in test/snapshots/. A later phase may change
 # a snapshot only with a stated reason; regenerate with update_snapshots.jl.
 

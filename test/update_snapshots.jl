@@ -1,4 +1,4 @@
-# Regenerate the snapshot files in test/snapshots/ (update spec §12.1).
+# Regenerate the snapshot files in test/snapshots/.
 # Run through the test environment so CSV is available:
 #   julia --project -e 'using Pkg; Pkg.test(test_args=["--update-snapshots"])'
 #   julia --project -e 'using Pkg; Pkg.test(test_args=["--update-snapshots", "--only=synth_stag|cov"])'

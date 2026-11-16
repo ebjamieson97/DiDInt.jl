@@ -38,18 +38,44 @@ result = DiDInt.didint(
     agg        = "cohort",
     nperm      = 399
 );
+nothing # hide
 ```
 
-Inspect the aggregate-level ATT and inference columns:
+Inspect the aggregate-level ATT and inference columns (reported on the first row):
 
 ```@example didint
-result[:, 3:9]
+select(result, r"agg_att", :nperm)[1:1, :]
 ```
 
 And the cohort-level ATT and inference columns:
 
 ```@example didint
-result[:, vcat([1, 2], 10:ncol(result))]
+select(result, :treatment_time, r"att_cohort", :weights)
+```
+
+The remaining columns (`period`, `start_date`, `end_date`) describe the period length and
+the date range of the data that was used. Jackknife standard errors are `missing` for
+cohorts with a single treated state (see the [Jackknife](@ref) section).
+
+### Other aggregations
+
+The `agg` argument controls how the ATTs for each treated state and period are grouped
+into sub-aggregate ATTs (see the [Aggregation](@ref) section). For example, `agg = "time"`
+groups them by the number of periods since treatment:
+
+```@example didint
+result_time = DiDInt.didint(
+    "coll", "state", "year", merit;
+    treatment_times = treated_times,
+    treated_states  = treated_states,
+    seed       = 1234,
+    ccc        = "state",
+    covariates = [:male, :asian, :black],
+    agg        = "time",
+    nperm      = 399
+);
+
+select(result_time, :periods_post_treat, :att_t, :se_att_t, :jknifese_att_t, :ri_pval_att_t)
 ```
 
 ### Running `didint_plot()`
@@ -103,28 +129,67 @@ pre-treatment and positive values are post-treatment.
 
 ---
 
-## Common Adoption
+## Separate ATTs by Policy
 
-This example illustrates a **common adoption** setting: a single treated state
-(state `"71"`, treated in 1991) compared against a single untreated control state
-(state `"73"`). The data are filtered to just these two states before calling `didint()`.
+When treated states adopt different policies, the policy aggregation options report an
+ATT for each policy. The merit data does not record different types of merit-aid
+programmes, so purely for illustration the ten treated states are split here into two
+made-up policy types, `"A"` and `"B"`, using the `treated_policies` argument (the `pvar`
+argument can be used instead when the policy is stored in a column of the data).
 
 ```@example didint
-merit_common = filter(row -> row.state ∈ [71, 73], merit);
+treated_policies = ["A", "A", "B", "A", "B", "A", "B", "B", "A", "B"];
+
+result_policy = DiDInt.didint(
+    "coll", "state", "year", merit;
+    treatment_times  = treated_times,
+    treated_states   = treated_states,
+    treated_policies = treated_policies,
+    seed       = 1234,
+    ccc        = "state",
+    covariates = [:male, :asian, :black],
+    agg        = "policy",
+    policy_aggregation = true,
+    nperm      = 399
+);
+
+select(result_policy, :policy, r"att_p$", :policy_weights)
+```
+
+Setting `policy_aggregation = true` also reports the pooled ATT across policies (on the
+first row), here weighting the two policies equally:
+
+```@example didint
+select(result_policy, r"att_pool")[1:1, :]
+```
+
+See the [Policies](@ref) section for the other policy aggregation options and for the
+weighting of policies in the pooled ATT.
+
+---
+
+## Common Adoption
+
+When every treated state is treated at the same time, `didint()` is used in exactly the
+same way, and every aggregation option is available. This example keeps the two states
+that adopted merit-aid programmes in 1998 along with the never-treated states. A single
+treatment time applies to every treated state.
+
+```@example didint
+merit_common = filter(row -> row.state ∈ [57, 72] || !(row.state ∈ treated_states), merit);
 
 result_common = DiDInt.didint(
     "coll", "state", "year", merit_common;
-    treated_states  = [71],
-    treatment_times = [1991],
+    treated_states  = [57, 72],
+    treatment_times = 1998,
     seed       = 1234,
     ccc        = "hom",
     covariates = [:male, :asian, :black],
-    agg        = "cohort",
-    edgecase = true
-)
-# Note here that I am setting `edgecase = true` in order to recover the standard error
-# For more information, see the section "Computation of Edge Case Standard Errors" on the
-# "Details" page of the docoumentation site
+    agg        = "time",
+    nperm      = 399
+);
+
+select(result_common, :periods_post_treat, :att_t, :se_att_t, :jknifese_att_t, :ri_pval_att_t)
 ```
 
 ### Trying a different CCC assumption
@@ -137,14 +202,50 @@ additively by both, or interactively by both, respectively. For example:
 ```@example didint
 result_common_int = DiDInt.didint(
     "coll", "state", "year", merit_common;
-    treated_states  = [71],
-    treatment_times = [1991],
+    treated_states  = [57, 72],
+    treatment_times = 1998,
     seed       = 1234,
     ccc        = "int",
     covariates = [:male, :asian, :black],
-    agg        = "cohort",
-    edgecase = true
-)
+    agg        = "time",
+    nperm      = 399
+);
+
+select(result_common_int, :periods_post_treat, :att_t, :se_att_t, :jknifese_att_t, :ri_pval_att_t)
 ```
+
+---
+
+## A Single Control State
+
+This example compares a single treated state (state `71`, treated in 1991) against a
+single untreated control state (state `73`). With `agg = "sgt"`, an ATT is reported for
+state `71` in each period from 1991 onwards. With only one control state, the usual
+standard error of each of these ATTs cannot be computed; setting `edgecase = true`
+recovers it from the first-stage estimates instead.
+
+```@example didint
+merit_pair = filter(row -> row.state ∈ [71, 73], merit);
+
+result_pair = DiDInt.didint(
+    "coll", "state", "year", merit_pair;
+    treated_states  = [71],
+    treatment_times = [1991],
+    seed       = 1234,
+    ccc        = "hom",
+    covariates = [:male, :asian, :black],
+    agg        = "sgt",
+    edgecase   = true
+);
+
+select(result_pair, :state, :t, :att_sgt, :se_att_sgt)
+```
+
+No p-value accompanies these standard errors, as the regression behind each ATT has no
+residual degrees of freedom. With one treated state and one control state there is also nothing for the jackknife to
+compute and only one alternative treatment assignment for the randomization inference, so
+`didint()` issues warnings to that effect. For more information on these standard errors,
+including a caveat for panel data, see the section
+[Computation of Edge Case Standard Errors](@ref) on the "Details" page of the documentation site.
 
 See the [Functions](@ref) for function syntax and the [Under the Hood](@ref) page for more details.

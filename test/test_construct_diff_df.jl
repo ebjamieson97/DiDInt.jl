@@ -1,4 +1,4 @@
-# Regression tests for construct_diff_df (update spec §10) and edge_case_se.
+# Regression tests for construct_diff_df and edge_case_se.
 # A small hand-built two-cohort design: A treated 2005, B treated 2007, C and D never
 # treated, periods 2003-2008. Every lambda and every cell size is distinct, so a row
 # computed at the wrong cell cannot match the hand-computed value by accident.

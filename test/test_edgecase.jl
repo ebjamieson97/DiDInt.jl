@@ -1,10 +1,10 @@
-# The edgecase procedure (update spec §3.6): an ATT(s,t) whose regression has exactly two rows
+# The edgecase procedure: an ATT(s,t) whose regression has exactly two rows
 # (the treated state and a single control) gets its SE from the lambdas' covariance matrix
 # instead of leaving it missing. Estimates must not depend on edgecase.
 @testset "edgecase returns finite SEs for two-row ATT(s,t) regressions, with identical estimates" begin
     for ccc in ["int", "state", "time", "hom"]
         # Staggered: two treated states in different cohorts and one control, so every ATT(s,t)
-        # regression has two rows. Sub-aggregates with a single ATT(s,t) report its SE (A1);
+        # regression has two rows. Sub-aggregates with a single ATT(s,t) report its SE;
         # those with several get their SE from the spread of their ATT(s,t)'s either way.
         for agg in ["cohort", "state", "simple", "sgt", "time", "calendar"]
             suffix = DiDInt.SUB_AGG_SPECS[agg].suffix

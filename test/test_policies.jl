@@ -1,4 +1,4 @@
-# Tests of policies and the policy aggregations (update spec §6, D12-D16; §12.2 items 8, 13).
+# Tests of policies and the policy aggregations.
 # The panel is test/data/didintpy_panel.csv: cohorts 2004 (s01, s02), 2006 (s03, s04), 2007 (s05)
 # and seven never-treated states.
 
@@ -25,7 +25,7 @@ plain(results, col) = Float64[ismissing(x) ? NaN : x for x in results[!, col]]
 same(a, b) = length(a) == length(b) && all((isnan(x) && isnan(y)) || isapprox(x, y; atol = 1e-10) for (x, y) in zip(a, b))
 
 @testset "Without policy arguments the policy aggregations equal their non-policy counterparts" begin
-    # Spec §6.1 / §12.2 item 13: one policy, so policy_cohort = cohort and so on, and the policy's
+    # One policy, so policy_cohort = cohort and so on, and the policy's
     # ATT equals the aggregate ATT, with the same inference
     counterparts = [("policy_cohort", "cohort"), ("policy_gt", "simple"), ("policy_calendar", "calendar"), ("policy_time", "time")]
     for (policy_agg, agg) in counterparts, weighting in ["both", "none"], upc in [false, true]
@@ -81,7 +81,7 @@ end
 end
 
 @testset "Each policy's ATT and the pooled ATT under every policy_weighting" begin
-    # Spec §6.3-§6.4. With weighting = "both" and treated_weight = "treated", ATT_p is the
+    # With weighting = "both" and treated_weight = "treated", ATT_p is the
     # n_t-weighted mean of the policy's ATT(s,t)'s, whatever the policy aggregation
     sgt = policy_didint(agg = "sgt")
     n_t = [count((POLICY_PANEL.state .== sgt.state[i]) .& (POLICY_PANEL.year .== year(sgt.t[i]))) for i in 1:nrow(sgt)]
@@ -145,8 +145,8 @@ end
                plain(policy_didint(agg = "policy", treated_policies = POLICY_LABELS), :att_p))
 end
 
-@testset "RI draws permute the joint (treatment time, policy) labels (D14)" begin
-    # Spec §12.2 item 8: draws are distinct, exclude the observed assignment, and keep the
+@testset "RI draws permute the joint (treatment time, policy) labels" begin
+    # Draws are distinct, exclude the observed assignment, and keep the
     # count of every joint label, so a state's policy moves with its treatment time
     states = ["s" * lpad(i, 2, '0') for i in 1:12]
     times = Dict(zip(POLICY_TREATED, Date.(POLICY_TIMES)))

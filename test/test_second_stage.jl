@@ -1,4 +1,4 @@
-# Tests of the ATT(s,t)-first second stage (update spec §3.3-§5, §12.2).
+# Tests of the ATT(s,t)-first second stage.
 # Uses a small deterministic panel: states s1..s8 observed 2001-2006 with cell sizes that vary by
 # state and period; y = state effect + period effect + treatment effect + within-cell noise.
 
@@ -41,7 +41,7 @@ const COMMON_COHORTS = Dict("s1" => 2004, "s2" => 2004, "s3" => 2004)
 
 @testset "The batched engine reproduces the regression-based estimates" begin
     # The jackknife and RI recompute estimates with the batched engine; at the observed
-    # assignment it must reproduce every sub-aggregate and aggregate (update spec §7.4).
+    # assignment it must reproduce every sub-aggregate and aggregate.
     # Uses the hand-built design of test_construct_diff_df.jl (A treated 2005, B 2007).
     # More engine tests are in test_engine.jl.
     labels = Dict("A" => Date(2005), "B" => Date(2007))
@@ -67,7 +67,7 @@ const COMMON_COHORTS = Dict("s1" => 2004, "s2" => 2004, "s3" => 2004)
 end
 
 @testset "Zero effect: parallel trends, no noise, unequal cell sizes" begin
-    # Spec §12.2 item 3: every agg returns 0 for every weighting and use_pre_controls
+    # Every agg returns 0 for every weighting and use_pre_controls
     data = small_panel(cohorts = STAG_COHORTS)
     for agg in SECOND_STAGE_AGGS, weighting in ["both", "att", "diff", "none"], upc in [false, true]
         results = quiet_didint(data, STAG_COHORTS; agg = agg, weighting = weighting, use_pre_controls = upc)
@@ -78,7 +78,7 @@ end
 end
 
 @testset "treated_weight: treated = sum n_t ATT(s,t) / sum n_t, population = sum n ATT(s,t) / sum n" begin
-    # Spec §12.2 item 4: one cohort, two treated states with different n_{s,r1}/n_{s,t}
+    # One cohort, two treated states with different n_{s,r1}/n_{s,t}
     cohorts = Dict("s1" => 2004, "s2" => 2004)
     data = small_panel(cohorts = cohorts, n_states = 5, effect = 1.0, noise = 0.3)
     cell_n(s, yr) = count((data.state .== s) .& (data.year .== yr))
@@ -105,7 +105,7 @@ end
 end
 
 @testset "Consistency: under att/both with treated_weight = treated, agg_att is the same for every agg" begin
-    # Spec §5.3 / §12.2 item 5: DID-INT eq. 49 with the eq. 84 weights
+    # DID-INT eq. 49 with the eq. 84 weights
     data = small_panel(cohorts = STAG_COHORTS, effect = 1.0, noise = 0.3)
     for weighting in ["att", "both"], upc in [false, true]
         agg_atts = [quiet_didint(data, STAG_COHORTS; agg = agg, weighting = weighting, use_pre_controls = upc).agg_att[1]
@@ -114,7 +114,7 @@ end
     end
 end
 
-@testset "SE fallbacks: single ATT(s,t) groups (A1) and HC2-HC4 (D17)" begin
+@testset "SE fallbacks: single ATT(s,t) groups and HC2-HC4" begin
     # One treated state per cohort, so every simple cell holds a single ATT(s,t)
     cohorts = Dict("s1" => 2003, "s3" => 2005)
     data = small_panel(cohorts = cohorts, effect = 1.0, noise = 0.3)
@@ -131,7 +131,7 @@ end
     end
 end
 
-@testset "Common adoption is the one-cohort case of the same estimator (D18)" begin
+@testset "Common adoption is the one-cohort case of the same estimator" begin
     data = small_panel(cohorts = COMMON_COHORTS, effect = 1.0, noise = 0.3)
 
     # Every agg runs and reports an aggregate ATT

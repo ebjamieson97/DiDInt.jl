@@ -1,5 +1,15 @@
+###########################################################################################
+# date_helpers.jl: parsing dates and matching them to periods                             #
+#                                                                                         #
+#   Section 1: Converting between strings and dates                                       #
+#   Section 2: The period grid and the matching of dates to periods                       #
+###########################################################################################
 
-### These two functions pass string and date objects back and forth
+
+###########################################################################################
+# Section 1: Converting between strings and dates                                         #
+###########################################################################################
+
 function parse_string_to_date_didint(date::Union{Vector{<:AbstractString}, AbstractString},
                                      date_format::AbstractString)
     
@@ -59,11 +69,23 @@ function parse_date_to_string_didint(date, date_format::AbstractString)
     end 
 end
 
-### These functions are all apart of the date matching / period sorting suite of functions:
+
+###########################################################################################
+# Section 2: The period grid and the matching of dates to periods                         #
+#                                                                                         #
+# The analysis runs on a grid of evenly spaced periods from start_date to end_date. Each  #
+# observation is matched to the latest grid date at or before its own date, except that   #
+# an observation at or after a treatment time that falls between two grid dates is        #
+# matched to the later one. Treatment times are matched to the first grid date at or      #
+# after them.                                                                             #
+###########################################################################################
+
 function perform_date_matching(data_copy, all_times, freq, freq_multiplier, start_date, end_date, 
                                treatment_times, treated_states)
 
-    # Meta function for the date matching procedure to align dates to the constructed grid
+    # Build the period grid (of the given `freq`, or of the longest gap between dates in the data)
+    # and match the dates of the observations and the treatment times to it. Treated states
+    # whose treatment time falls outside the grid are dropped.
     
     # Do date matching procedure
     if !isnothing(freq)
@@ -81,8 +103,9 @@ function perform_date_matching(data_copy, all_times, freq, freq_multiplier, star
     end 
     
     one_past = end_date + period
-    matched = [match_date(t, match_to_these_dates, treatment_times) for t in data_copy.time_71X9yTx]
-    data_copy.time_71X9yTx = matched
+    # Match each distinct date once, then every observation through the lookup
+    matched_date = Dict(t => match_date(t, match_to_these_dates, treatment_times) for t in unique(data_copy.time_71X9yTx))
+    data_copy.time_71X9yTx = [matched_date[t] for t in data_copy.time_71X9yTx]
     treated_states = isnothing(treated_states) ? nothing : treated_states[(treatment_times .< one_past) .&& (treatment_times .> start_date)]
     treatment_times = treatment_times[(treatment_times .< one_past) .&& (treatment_times .> start_date)]
     treatment_times = [match_treatment_time(t, match_to_these_dates) for t in treatment_times]
@@ -187,7 +210,7 @@ end
 
 function assume_date_format(period)
 
-    # For edge cases in didint_plot where date_format wasn't specified, but period length has between
+    # Date format for the output when none was specified: years for yearly periods, full dates otherwise
     if typeof(period) <: Year
         return "yyyy"
     else

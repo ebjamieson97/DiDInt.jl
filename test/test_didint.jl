@@ -72,7 +72,7 @@ end
     @test !isnothing(result)
 end
 
-# agg = "none" has been removed (update spec D19)
+# agg = "none" has been removed
 @testset "agg = none raises an informative error" begin
     @test_throws r"agg = \"none\" has been removed" DiDInt.didint("coll", "state", "year", TEST_DATA,
                                                                   treatment_times = TREATED_TIMES,
@@ -217,7 +217,7 @@ end
 
 
 
-# RI p-values (update spec D8): p = (1 + #{|T*| >= |T|}) / (S + 1); placebo estimates that
+# RI p-values: p = (1 + #{|T*| >= |T|}) / (S + 1); placebo estimates that
 # tie the observed estimate, exactly or up to rounding, count as hits
 @testset "RI p-value counts ties, including rounding-level ties" begin
     observed = 0.3
@@ -228,7 +228,7 @@ end
     # Non-finite placebo estimates are dropped from S
     @test DiDInt.ri_pvalue([att_ri; NaN; Inf], observed) == (1 + 5) / (7 + 1)
     @test ismissing(DiDInt.ri_pvalue([NaN], observed))
-    # Spec §12.2 item 9: ordinary p-value for these placebos and T = 0.44 is (1 + 1) / 14
+    # Ordinary p-value for these placebos and T = 0.44 is (1 + 1) / 14
     placebos = [-0.21, 0.05, 0.33, -0.12, 0.47, -0.38, 0.09, 0.26, -0.02, 0.15, -0.29, 0.41, -0.07]
     @test DiDInt.ri_pvalue(placebos, 0.44) ≈ 2 / 14
 end

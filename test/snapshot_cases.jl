@@ -1,4 +1,4 @@
-# Snapshot test cases (update spec §12.1, Phase 0).
+# Snapshot test cases.
 #
 # Defines the datasets, the grid of didint() calls whose full outputs are recorded in
 # test/snapshots/*.csv, and the helpers that flatten a results DataFrame into
@@ -53,7 +53,7 @@ normal!(r::SplitMix64) = sqrt(-2 * log(1 - unif!(r))) * cos(2π * unif!(r))
 
 Individual-level panel with `n_states` states (labelled "s01", "s02", ...) observed in
 every year of `years`. `cohorts` maps a state label to its treatment year; all other
-states are never treated. Features (spec §12.1):
+states are never treated. Features:
 - cell sizes n_{s,t} that vary by state and period,
 - state and year fixed effects plus a state-by-period shock (state-level noise),
 - covariates `x1` (continuous) and `x2` (binary) whose distributions drift over time at
@@ -163,7 +163,7 @@ const SNAPSHOT_POLICIES = ["A", "A", "B", "B", "A"]
 """
     snapshot_cases()
 
-Vector of cases, each a NamedTuple (id, file, dataset, kwargs). The main grid (spec §12.1)
+Vector of cases, each a NamedTuple (id, file, dataset, kwargs). The main grid
 crosses every dataset with: no covariates (ccc irrelevant, run as "int") or covariates
 with ccc ∈ ("int", "hom"); every `agg`; every `weighting`; `use_pre_controls` false/true,
 all with the default `treated_weight = "treated"`. The "extras" file adds
@@ -190,7 +190,7 @@ function snapshot_cases()
         push!(cases, (id = id, file = "extras", dataset = dataset, covariates = false, kwargs = kwargs))
     end
 
-    # Policy aggregations (update spec §6) on the synthetic staggered panel: policy A for s01, s02
+    # Policy aggregations on the synthetic staggered panel: policy A for s01, s02
     # (2004) and s05 (2007), policy B for s03, s04 (2006); without pooling and with the pooled
     # ATT under two of the policy weightings
     for (covs, ccc) in [(false, "int"), (true, "int")], agg in SNAPSHOT_POLICY_AGGS, upc in [false, true],

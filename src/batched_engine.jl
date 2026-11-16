@@ -1,12 +1,25 @@
-### Batched engine for randomization inference and the fast jackknife (update spec §7, §9.2)
-#
-# Every estimate didint() reports is a weighted mean of ATT(s,t)'s, and for any assignment of
-# treatment times to states
-#   ATT(s,t) = Delta_{s,t} - sum_c v_c Delta_{c->s,t} / sum_c v_c        (DID-INT eq. 48)
-# is built from first-stage quantities that do not depend on the assignment (the lambdas, the
-# slopes and the covariate means; §7.1). The engine stores those once, as (state x cell)
-# matrices, and evaluates all draws (or all jackknife deletions) at once: one row of the
-# assignment matrix `L` per draw, a few matrix products per (g,t) cell.
+###########################################################################################
+# batched_engine.jl: the estimates for many treatment assignments at once                 #
+#                                                                                         #
+#   Section 1: The engine's data                                                          #
+#   Section 2: Permutations of the treatment assignment                                   #
+#   Section 3: Estimates for every assignment                                             #
+#   Section 4: Randomization inference for "state" and "sgt"                              #
+#                                                                                         #
+# The jackknife and the randomization inference recompute every estimate many times: once #
+# per deleted state, once per permutation of the treatment assignment. Every estimate is  #
+# a weighted mean of ATT(s,t)'s, and for any assignment of treatment times to states      #
+#   ATT(s,t) = Delta_{s,t} - sum_c v_c Delta_{c->s,t} / sum_c v_c                         #
+# (Karim & Webb 2025, eq. 48) is built from first-stage quantities that do not depend on  #
+# the assignment: the lambdas, the slopes and the covariate means. The engine stores      #
+# those once, as (state x cell) matrices, and evaluates all assignments at once: one row  #
+# of the assignment matrix `L` per assignment, a few matrix products per (g,t) cell.      #
+###########################################################################################
+
+
+###########################################################################################
+# Section 1: The engine's data                                                            #
+###########################################################################################
 
 # Label of a never-treated state in an assignment matrix. Treated states carry the code of
 # their treatment period, which is positive and ordered like the dates.
@@ -14,20 +27,19 @@ const NEVER_TREATED = 0
 period_code(date::Date) = Dates.value(date)
 
 # First-stage quantities per state (rows, in the fixed order `states`) and cell (columns, the
-# rows of `cells`), named as in update spec §7.3. Entries without a long difference are zero
-# and flagged in `valid`.
+# rows of `cells`). Entries without a long difference are zero and flagged in `valid`.
 struct EngineData
     states::Vector{String}
     cells::DataFrame                  # gvar, t, r1, periods_post_treat of each (g,t) cell
     cohort::Vector{Int}               # period code of each cell's cohort g
     period::Vector{Int}               # period code of each cell's period t
     Dlambda::Matrix{Float64}          # intercept differences lambda_{s,t} - lambda_{s,r1}
-    Dint::Matrix{Float64}             # a state's own integrated long difference (eq. 46)
+    Dint::Matrix{Float64}             # a state's own integrated long difference (Karim & Webb 2025, eq. 46)
     DGamma::Vector{Matrix{Float64}}   # per cell, S x p: slope differences gamma_{s,t} - gamma_{s,r1}
     Xb::Vector{Matrix{Float64}}       # per cell, S x p: covariate means xbar_{s,t}
-    V::Matrix{Float64}                # weight of a state's long difference as a control (§3.3)
-    U::Matrix{Float64}                # Level 1 weight u of a state's ATT(s,t) (§4.1)
-    NT::Matrix{Float64}               # n_{s,t}, the Level 2 weights (§4.2)
+    V::Matrix{Float64}                # weight v of a state's long difference as a control
+    U::Matrix{Float64}                # weight u of a state's ATT(s,t) in its sub-aggregate
+    NT::Matrix{Float64}               # n_{s,t}, which weight the sub-aggregates in the aggregate
     valid::BitMatrix                  # the state has a long difference in the cell
 end
 
@@ -35,10 +47,10 @@ function build_engine(long_diffs::AbstractDataFrame, cells::DataFrame, states::A
                       weighting::AbstractString, treated_weight::AbstractString;
                       integration::Union{CovariateFit, Nothing} = nothing)
 
-    # Precompute the engine's matrices (update spec §7.3) from the long differences of every
-    # state in every cell. `integration` is only given under ccc = "int" with covariates: for
-    # every other ccc the covariate term cancels in ATT(s,t) (D5), so DGamma and Xb stay empty
-    # and the engine skips them, which changes nothing in the results (§7.4).
+    # Precompute the engine's matrices from the long differences of every state in every cell.
+    # `integration` is only given under ccc = "int" with covariates: for every other ccc the
+    # covariate term of the integrated long differences cancels in ATT(s,t), so DGamma and Xb
+    # stay empty and the engine skips them, which changes nothing in the results.
     lookup = long_difference_lookup(long_diffs)
     S, K = length(states), nrow(cells)
     p = isnothing(integration) ? 0 : length(integration.covariates)
@@ -62,8 +74,8 @@ function build_engine(long_diffs::AbstractDataFrame, cells::DataFrame, states::A
         end
     end
 
-    # Control weights v = n under weighting = "diff"/"both", else 1 (§3.3), and the Level 1
-    # weights u of §4.1
+    # Control weights v = n under weighting = "diff"/"both", else 1, and the weights u of the
+    # ATT(s,t)'s within their sub-aggregates (see treated_unit_weights)
     V = weighting in ["diff", "both"] ? copy(N) : ones(S, K)
     U = reshape(treated_unit_weights(DataFrame(n = vec(N), n_t = vec(NT)), weighting, treated_weight), S, K)
     return EngineData(String.(states), cells, period_code.(cells.gvar), period_code.(cells.t),
@@ -85,13 +97,22 @@ function policy_coding(results::DataFrame, agg::AbstractString, policy_labels::A
     # Integer codes of the policies. The policies that have estimates come first, in the order
     # of the results, so that code j is the j-th reported policy; a policy without any estimate
     # still gets its own code, so that the draws keep it apart from the others. A non-policy
-    # aggregation has the single default policy (every treated state carries it; §6.1).
+    # aggregation has the single default policy (every treated state carries it).
     names = is_policy_agg(agg) ? unique(results.policy) : String[DEFAULT_POLICY]
     others = sort(setdiff(unique(values(policy_labels)), names))
     return names, Dict(name => code for (code, name) in enumerate(vcat(names, others)))
 end
 
-### Draws (update spec §7.2, Appendix A)
+
+###########################################################################################
+# Section 2: Permutations of the treatment assignment                                     #
+#                                                                                         #
+# An assignment gives every state a label: its (treatment period, policy), or "never      #
+# treated". The alternative assignments are the distinct rearrangements of the observed   #
+# labels across states. They are numbered 0, 1, 2, ... in lexicographic order, so that    #
+# drawing distinct integers gives distinct assignments: a multiset-permutation ranking    #
+# (see Knuth, The Art of Computer Programming, Vol. 4A, Section 7.2.1.2).                 #
+###########################################################################################
 
 # Number of distinct arrangements of a multiset with these label counts (BigInt-safe)
 n_arrangements(counts) = factorial(big(sum(counts))) ÷ prod(factorial(big(c)) for c in counts)
@@ -99,7 +120,7 @@ n_arrangements(counts) = factorial(big(sum(counts))) ÷ prod(factorial(big(c)) f
 function unrank_arrangement(k::Integer, counts::AbstractVector{<:Integer})
 
     # The k-th arrangement (0-based, lexicographic order) of a multiset with counts[j] copies
-    # of label j: a vector with the label of each position (update spec Appendix A). Of the
+    # of label j: a vector with the label of each position. Of the
     # `total` arrangements of what is left, total * counts[j] / remaining start with label j;
     # skip those blocks until k falls inside one. The arithmetic is done in Int128 when
     # total * counts[j] cannot overflow it, which is much faster than BigInt, and in BigInt
@@ -164,13 +185,14 @@ end
 function ri_assignment_draws(L_observed::AbstractVector{Int}, P_observed::AbstractVector{Int}, nperm::Integer,
                              rng::AbstractRNG)
 
-    # Alternative assignments for randomization inference (update spec §7.2): rearrangements of
-    # the states' joint (treatment period, policy) labels, so a state's policy and treatment
-    # time move together (D14), never equal to the observed assignment. If there are at most
-    # `nperm` alternatives they are all enumerated (exact RI); otherwise `nperm` distinct ones
-    # are drawn uniformly, as integers by Floyd's algorithm that are then unranked into
-    # arrangements (Appendix A). The numbering of arrangements is one-to-one, so uniform
-    # integers give uniform assignments.
+    # Alternative assignments for randomization inference: rearrangements of the states' joint
+    # (treatment period, policy) labels, so a state's policy and treatment time move together,
+    # never equal to the observed assignment. If there are at most `nperm` alternatives they are
+    # all enumerated (exact randomization inference); otherwise `nperm` distinct ones are drawn
+    # uniformly, as integers by Floyd's algorithm (Bentley & Floyd 1987) that are then unranked
+    # into arrangements. The numbering of arrangements is one-to-one, so uniform integers give
+    # uniform assignments. The observed assignment is left out by drawing from one integer
+    # fewer and adding 1 to every draw at or above the observed assignment's own number.
     # Returns the draws as matrices L and P (one row per draw, one column per state) and
     # whether every alternative was enumerated.
     observed = collect(zip(L_observed, P_observed))
@@ -193,18 +215,20 @@ function ri_assignment_draws(L_observed::AbstractVector{Int}, P_observed::Abstra
     return L, P, exact
 end
 
-### Evaluating assignments (update spec §7.4)
+###########################################################################################
+# Section 3: Estimates for every assignment                                               #
+###########################################################################################
 
 function engine_cell(engine::EngineData, k::Int, L::AbstractMatrix{Int}, active::Union{AbstractMatrix{Bool}, Nothing},
                      use_pre_controls::Bool)
 
     # ATT(s,t) in cell k = (g, t), for every assignment (row of L) and every state (column)
-    # that the assignment treats in period g (update spec §7.4). Controls are the never-treated
-    # states and, with use_pre_controls, the states not yet treated at t (§3.4). The control
+    # that the assignment treats in period g. Controls are the never-treated states and, with
+    # use_pre_controls, the states not yet treated at t. The control
     # mean for a treated state s is a + bb' xbar_{s,t}: a is the weighted mean of the controls'
     # intercept differences, bb that of their slope differences, so integrating over s's
-    # covariates (DID-INT eq. 47) costs one more matrix product. `active` switches states off
-    # as treated states and as controls (the jackknife deletions).
+    # covariates (Karim & Webb 2025, eq. 47) costs one more matrix product. `active` switches
+    # states off as treated states and as controls (the jackknife deletions).
     # Returns Tm, which marks the (assignment, state) pairs that have an ATT(s,t), and the
     # ATT(s,t)'s, set to 0 where Tm is false.
     g, t = engine.cohort[k], engine.period[k]
@@ -240,16 +264,15 @@ function weighted_mean_of_defined(values::AbstractMatrix{Float64}, weights::Abst
     return vec(sum(w .* ifelse.(defined, values, 0.0), dims = 2) ./ sum(w, dims = 2))
 end
 
-# Level 2 weights of sub-aggregates (update spec §4.2): their sums of n_t under weighting =
+# Weights of the sub-aggregates in the aggregate ATT: their sums of n_t under weighting =
 # "att"/"both", equal otherwise
 level2_weights(nt::AbstractMatrix{Float64}, weighting::AbstractString) = weighting in ["att", "both"] ? nt : ones(size(nt))
 
 function cell_groups(cells::DataFrame, agg::AbstractString)
 
     # Group of each (g,t) cell under a cell-based aggregation: its cohort, event time, calendar
-    # period or the cell itself (update spec §5.1). For the policy aggregations these are the
-    # groups within a policy (§6.3; "policy" has a single one). Returns each cell's group index
-    # and the group keys.
+    # period or the cell itself. For the policy aggregations these are the groups within a
+    # policy ("policy" has a single one). Returns each cell's group index and the group keys.
     columns = filter(!=(:policy), group_columns(agg))
     cell_keys = [Tuple(cells[k, col] for col in columns) for k in 1:nrow(cells)]
     group_keys = unique(cell_keys)
@@ -262,12 +285,12 @@ function grouped_estimates(engine::EngineData, results::DataFrame, agg::Abstract
                            policy_weighting::AbstractString)
 
     # Estimates of a cell-based aggregation ("simple", "cohort", "time", "calendar" and the
-    # policy aggregations) for every assignment (update spec §7.4). An ATT(s,t) belongs to the
+    # policy aggregations) for every assignment. An ATT(s,t) belongs to the
     # group of its cell within the policy of its state; the non-policy aggregations are the
     # one-policy case. Per group: num = sum of u ATT(s,t), den = sum of u, nt = sum of n_t.
     # Returns, with one row per assignment:
     #   sub    the sub-aggregates num / den, in the order of the rows of `results` (NaN if undefined)
-    #   att_p  each policy's ATT, the Level 2 weighted mean of its defined sub-aggregates
+    #   att_p  each policy's ATT, the weighted mean of its defined sub-aggregates
     #   top    the aggregate ATT, or for a policy aggregation the pooled ATT across policies
     B, S = size(L)
     cell_group, group_keys = cell_groups(engine.cells, agg)
@@ -293,13 +316,13 @@ function grouped_estimates(engine::EngineData, results::DataFrame, agg::Abstract
     end
     sub_groups = ifelse.(den .> 0, num ./ den, NaN)
 
-    # Each policy's ATT_p (§6.3); with one policy, the aggregate ATT (§4.2)
+    # Each policy's ATT_p; with one policy, the aggregate ATT
     att_p = Matrix{Float64}(undef, B, n_policies)
     for p in 1:n_policies
         att_p[:, p] = weighted_mean_of_defined(sub_groups[:, :, p], level2_weights(nt[:, :, p], weighting))
     end
 
-    # Pooled ATT across the policies that have an estimate (§6.4), with the weights omega_p
+    # Pooled ATT across the policies that have an estimate, with the weights omega_p
     # recomputed from the assignment's own ATT(s,t)'s: equal, the policy's treated observations,
     # its number of ATT(s,t)'s, or its number of treated states
     if is_policy_agg(agg)
@@ -360,7 +383,7 @@ function state_estimates(engine::EngineData, results::DataFrame, agg::AbstractSt
     # own estimates (used by the jackknife; randomization inference uses stand-in states
     # instead, see state_level_ri_estimates). "state": a state's u-weighted mean ATT(s,t);
     # "sgt": the ATT(s,t) itself. Returns the sub-aggregates in the order of the results rows
-    # (NaN if undefined) and the aggregate ATT, the Level 2 weighted mean of all defined
+    # (NaN if undefined) and the aggregate ATT, the weighted mean of all defined
     # sub-aggregates.
     B = size(L, 1)
     row_state = result_states(engine, results)
@@ -404,7 +427,14 @@ function engine_estimates(engine::EngineData, results::DataFrame, agg::AbstractS
     return grouped_estimates(engine, results, agg, weighting, use_pre_controls, L, P, active, policy_names, policy_weighting)
 end
 
-### State-level randomization inference (update spec D9, §7.5)
+###########################################################################################
+# Section 4: Randomization inference for "state" and "sgt"                                #
+#                                                                                         #
+# These aggregations have one treated state per sub-aggregate, and a permutation does not #
+# say which state takes the place of which treated state. So in every permutation each    #
+# observed treated state gets a stand-in: a state picked at random among those that the   #
+# permutation gives its treatment time.                                                   #
+###########################################################################################
 
 function draw_stand_ins(L::AbstractMatrix{Int}, has_att::AbstractMatrix{Bool}, cohorts::AbstractVector{Int},
                         rng::AbstractRNG)
@@ -425,11 +455,11 @@ function state_level_ri_estimates(engine::EngineData, results::DataFrame, agg::A
                                   use_pre_controls::Bool, L::AbstractMatrix{Int}, observed_cohort::AbstractDict,
                                   rng::AbstractRNG; picks::Union{AbstractMatrix{Int}, Nothing} = nothing)
 
-    # Placebo statistics of agg = "state" and "sgt" (update spec D9, §7.5). For each observed
+    # Placebo statistics of agg = "state" and "sgt". For each observed
     # treated state i with cohort g_i, every draw picks one state at random among those it
     # assigns g_i; that state stands in for i in every period. The statistic is the stand-in's
     # u-weighted mean ATT(s,t) ("state") or its ATT(s,t) in each of i's periods ("sgt"), and the
-    # aggregate is the Level 2 weighted mean of the draw's statistics. `picks` fixes the
+    # aggregate is the weighted mean of the draw's statistics. `picks` fixes the
     # stand-ins instead of drawing them (for tests).
     B = size(L, 1)
     num, den, nt = state_sums(engine, L, nothing, use_pre_controls)

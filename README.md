@@ -16,7 +16,7 @@ A Stata wrapper for this package is available here: **[didintjl](https://github.
 
 An R wrapper for this package is available here: **[didintrjl](https://github.com/ebjamieson97/didintrjl)**.
 
-See more detailed documentation on the [documentation page](https://ebjamieson97.github.io/DiDInt.jl/).
+See more detailed documentation on the [documentation page](https://ebjamieson97.github.io/DiDInt.jl/). Changes between versions are listed in the [changelog](CHANGELOG.md).
 
 ## Installation 
 ```
@@ -26,7 +26,7 @@ Pkg.add(url="https://github.com/ebjamieson97/DiDInt.jl")
 
 ## `didint()` - Estimate ATT
 
-The function `didint()` estimates the ATT while adjusting for covariates that may vary by state, time, or both.
+The function `didint()` estimates the ATT while adjusting for covariates that may vary by state, time, or both. It works for both staggered and common adoption, and reports heteroskedasticity-robust and jackknife standard errors along with randomization inference p-values.
 
 ```julia
 using DiDInt
@@ -36,8 +36,9 @@ using CSV, DataFrames # To read in data
 treated_states = ["34", "57", "58", "59", "61", "64", "71", "72", "85", "88"]
 treated_times = [2000, 1998, 1993, 1997, 1999, 1996, 1991, 1998, 1997, 2000]
 
-# Load data
+# Load data (test/data/merit.csv in this repository)
 test_data = CSV.read("merit.csv", DataFrame)
+test_data.state = string.(test_data.state)
 
 # Run DID-INT model
 result = DiDInt.didint("coll", "state", "year", test_data,
@@ -47,37 +48,33 @@ result = DiDInt.didint("coll", "state", "year", test_data,
                        covariates = [:male, :asian, :black],
                        agg = "cohort", nperm = 399)
 
-# Show aggregate level results
-result[:, 3:9]
+# Show aggregate level results (reported on the first row)
+select(result, r"agg_att", :nperm)[1:1, :]
         
-# 7×7 DataFrame
-#  Row │ agg_att          se_agg_att       pval_agg_att      jknifese_agg_att  jknifepval_agg_att  ri_pval_agg_att  nperm     
-#      │ Float64?         Float64?         Float64?          Float64?          Float64?            Float64?         Float64?
-# ─────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-#    1 │       0.0545816        0.0135013        0.00678187         0.0172599          0.00512895        0.0401003      399.0
-#    2 │ missing          missing          missing            missing            missing           missing          missing
-#    3 │ missing          missing          missing            missing            missing           missing          missing
-#    4 │ missing          missing          missing            missing            missing           missing          missing
-#    5 │ missing          missing          missing            missing            missing           missing          missing
-#    6 │ missing          missing          missing            missing            missing           missing          missing
-#    7 │ missing          missing          missing            missing            missing           missing          missing
+# 1×7 DataFrame
+#  Row │ agg_att    se_agg_att  pval_agg_att  jknifese_agg_att  jknifepval_agg_att  ri_pval_agg_att  nperm
+#      │ Float64?   Float64?    Float64?      Float64?          Float64?            Float64?         Float64?
+# ─────┼──────────────────────────────────────────────────────────────────────────────────────────────────────
+#    1 │ 0.0462414  0.00769881   0.000959237          0.012354         0.000470121           0.0975     399.0
 
 # Show sub-aggregate level results
-result[:, vcat([1,2], 10:end)]
+select(result, :treatment_time, r"att_cohort", :weights)
 
-# 7×11 DataFrame
-#  Row │ treatment_time  att_cohort  se_att_cohort  pval_att_cohort  jknifese_att_cohort  jknifepval_att_cohort  ri_pval_att_cohort  weights    period  start_date  end_date 
-#      │ Dates.Date      Float64?    Float64?       Float64?         Float64?             Float64?               Float64?            Float64    String  String      String
-# ─────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-#    1 │ 1991-01-01       0.0740159      0.0247873      0.00349694       missing                 missing                   0.255639  0.201796   1 year  1989        2000
-#    2 │ 1993-01-01       0.0845589      0.0210913      0.000129329      missing                 missing                   0.215539  0.191535   1 year  1989        2000
-#    3 │ 1996-01-01       0.0333588      0.0308039      0.283737         missing                 missing                   0.684211  0.0756734  1 year  1989        2000
-#    4 │ 1997-01-01       0.0654413      0.0289131      0.028375               0.0389711               0.109479            0.288221  0.321077   1 year  1989        2000
-#    5 │ 1998-01-01       0.0444878      0.0490408      0.370708               0.0900249               0.62685             0.528822  0.108593   1 year  1989        2000
-#    6 │ 1999-01-01      -0.0211062      0.0207727      0.321739         missing                 missing                   0.842105  0.0354853  1 year  1989        2000
-#    7 │ 2000-01-01      -0.0633142      0.0997027      0.539666               0.0971782               0.52251             0.401003  0.0658401  1 year  1989        2000
+# 7×8 DataFrame
+#  Row │ treatment_time  att_cohort   se_att_cohort  pval_att_cohort  jknifese_att_cohort  jknifepval_att_cohort  ri_pval_att_cohort  weights
+#      │ Dates.Date      Float64?     Float64?       Float64?         Float64?             Float64?               Float64?            Float64
+# ─────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#    1 │ 1991-01-01       0.0553354      0.0222024         0.0342914      missing                missing                      0.4575  0.201796
+#    2 │ 1993-01-01       0.0504489      0.0161905         0.0169391      missing                missing                      0.5175  0.191535
+#    3 │ 1996-01-01       0.0424116      0.0255707         0.172536       missing                missing                      0.5725  0.0756734
+#    4 │ 1997-01-01       0.0606879      0.0236147         0.037012             0.0329885              0.0717569              0.28    0.321077
+#    5 │ 1998-01-01       0.0398137      0.0406649         0.372511             0.0814308              0.627031               0.5825  0.108593
+#    6 │ 1999-01-01       0.00173622     0.00350574        0.707256       missing                missing                      0.985   0.0354853
+#    7 │ 2000-01-01      -0.0253317      0.0333203         0.586179             0.0976972              0.796477               0.755   0.0658401
 
 ```
+
+Other aggregations are available through the `agg` argument (`"cohort"`, `"simple"`, `"state"`, `"sgt"`, `"time"`, `"calendar"`), as are separate ATTs by policy when treated states adopt different policies (`"policy"`, `"policy_gt"`, `"policy_cohort"`, `"policy_calendar"`, `"policy_time"`). See the [documentation page](https://ebjamieson97.github.io/DiDInt.jl/) for details.
 
 ## `didint_plot()` - Prepare Data for Visualization
 
@@ -92,13 +89,13 @@ plot_parallel = DiDInt.didint_plot("coll", "state", "year", test_data,
                                    event = false, covariates = ["asian", "black", "male"])
 plot_parallel[1:4, :]
 # 4×8 DataFrame
-#  Row │ state    time     lambda    ccc      period  start_date  treat_period  period_length 
+#  Row │ state    time     lambda    ccc      period  start_date  treat_period  period_length
 #      │ String?  String?  Float64?  String?  Int64?  String?     Int64?        String
 # ─────┼──────────────────────────────────────────────────────────────────────────────────────
-#    1 │ 12       1989     0.503763  hom           0  1989             missing  1 year
-#    2 │ 12       1990     0.483555  hom           1  1989             missing  1 year
-#    3 │ 12       1991     0.539888  hom           2  1989             missing  1 year
-#    4 │ 12       1992     0.226398  hom           3  1989             missing  1 year
+#    1 │ 11       1989     0.467895  hom           0  1989             missing  1 year
+#    2 │ 11       1990     0.316912  hom           1  1989             missing  1 year
+#    3 │ 11       1991     0.445936  hom           2  1989             missing  1 year
+#    4 │ 11       1992     0.579997  hom           3  1989             missing  1 year
 
 
 # Generate data for an event study plot
@@ -108,13 +105,13 @@ plot_event = DiDInt.didint_plot("coll", "state", "year", test_data,
                                event = true, covariates = ["asian", "black", "male"])
 plot_event[1:4, :]
 # 4×8 DataFrame
-#  Row │ ccc     time_since_treatment  y         se         ci_lower    ci_upper  ngroup  period_length 
-#      │ String  Int64                 Float64   Float64?   Float64?    Float64?  Int64   String
-# ─────┼────────────────────────────────────────────────────────────────────────────────────────────────
-#    1 │ hom                      -11  0.528292  0.243      -2.55931    3.6159         2  1 year
-#    2 │ hom                      -10  0.447675  0.116099   -0.0518564  0.947207       3  1 year
-#    3 │ hom                       -9  0.470806  0.0278348   0.393524   0.548087       5  1 year
-#    4 │ hom                       -8  0.452972  0.030141    0.37922    0.526725       7  1 year
+#  Row │ ccc     time_since_treatment  y         se         ci_lower   ci_upper  ngroup  period_length
+#      │ String  Int64                 Float64   Float64?   Float64?   Float64?  Int64   String
+# ─────┼───────────────────────────────────────────────────────────────────────────────────────────────
+#    1 │ hom                      -11  0.528292  0.0964386  -0.697077  1.75366        2  1 year
+#    2 │ hom                      -10  0.447675  0.0554866   0.208936  0.686415       3  1 year
+#    3 │ hom                       -9  0.470806  0.0223596   0.408725  0.532886       5  1 year
+#    4 │ hom                       -8  0.452972  0.0248907   0.392067  0.513878       7  1 year
 ```
 
 ## Citations

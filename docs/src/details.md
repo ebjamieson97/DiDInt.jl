@@ -7,9 +7,9 @@ Most pertinent details of **DiDInt.jl** can be found in the [DID-INT paper](http
 The **DID-INT** estimator is computed in four steps:
 
 1. The means of the outcome of interest (conditional on covariates) are computed for each period for each state (denoted as $\lambda$ in the DID-INT paper).
-2. Within state differences between these $\lambda$ values are computed and are labelled as coming from treated or untreated states.
-3. A (weighted) regression of within state differences on an intercept term and a dummy variable indicating treated/untreated status is then used to compute subaggregate ATTs for a given subset of the data (more details on the choice of subset in the [Aggregation](@ref) section).
-4. The (weighted) mean of subaggregate ATTs is taken in order to compute the aggregate ATT.
+2. Within state differences between these $\lambda$ values (long differences) are computed for treated states and for their controls.
+3. An ATT is computed for each treated state $s$ in each period $t$ from its treatment time on, denoted $\mathrm{ATT}(s,t)$: the long difference of the treated state minus the (weighted) mean of the long differences of its controls.
+4. The (weighted) means of the $\mathrm{ATT}(s,t)$ values within groups give the subaggregate ATTs (more details on the choice of groups in the [Aggregation](@ref) section), and the (weighted) mean of the subaggregate ATTs gives the aggregate ATT.
 
 More explicitly:
 
@@ -19,36 +19,49 @@ More explicitly:
 Y_{i,s,t} = \sum_s \sum_t \lambda_{s,t} I(s,t) + f\!\left(X^k_{i,s,t}\right) + \epsilon_{i,s,t}
 ```
 
-where $I(s,t)$ is a dummy variable equal to 1 if observation $i$ belongs to state $s$ in period $t$, and $f\!\left(X^k_{i,s,t}\right)$ is a function of covariates whose form depends on the common causal covariates (CCC) violation that is being accounted for (see [Common Causal Covariates and Model Specification](@ref)). The estimated $\hat{\lambda}_{s,t}$ values are the covariate-adjusted means of the outcome for state $s$ in period $t$. For common adoption scenarios, the data is flattened into two periods: pre-treatment and post-treatment.
+where $I(s,t)$ is a dummy variable equal to 1 if observation $i$ belongs to state $s$ in period $t$, and $f\!\left(X^k_{i,s,t}\right)$ is a function of covariates whose form depends on the common causal covariates (CCC) violation that is being accounted for (see [Common Causal Covariates and Model Specification](@ref)). The estimated $\hat{\lambda}_{s,t}$ values are the covariate-adjusted means of the outcome for state $s$ in period $t$.
 
 !!! note "Implementation"
     In practice, this regression is not estimated directly on the full dataset as this would be computationally prohibitive for datasets with many states, periods, and covariates. Rather, the Frisch-Waugh-Lovell theorem is applied in the case of homogeneous DID-INT, state-varying DID-INT, time-varying DID-INT, and two one-way DID-INT to recover covariate coefficients which can then be used in conjunction with the outcome and covariate means per $(s,t)$ group to retrieve the $\hat{\lambda}_{s,t}$ values. For two-way intersection DID-INT, the regression is run separately for each $(s,t)$ group. The resulting $\hat{\lambda}_{s,t}$ values are numerically equivalent to those from the combined regression shown above. More details on estimating $\hat{\lambda}_{s,t}$ can be found in the [Estimating Lambda](@ref) section.
 
-**Step 2.** For each treated state $s$ belonging to treatment cohort $g$, long differences are computed between each post-treatment period $t$ and the period immediately prior to treatment $t^{-g}$:
+**Step 2.** For each treated state $s$ belonging to treatment cohort $g$ (the states first treated in period $g$), long differences are computed between each period $t \geq g$ and the period immediately prior to treatment, $r = g - 1$:
 
 ```math
-\widehat{\mathrm{diff}}(s,g,t) = \hat{\lambda}_{s,t} - \hat{\lambda}_{s,t^{-g}}
+\widehat{\Delta}_{s,t} = \left(\hat{\lambda}_{s,t} - \hat{\lambda}_{s,r}\right) + \left(\hat{\gamma}_{s,t} - \hat{\gamma}_{s,r}\right)'\,\overline{X}_{s,t}
 ```
 
-Analogous differences are computed for each control state for each treatment cohort $g$.
-
-**Step 3.** A regression of long differences on an intercept and a treatment indicator is estimated on different subsets of the set of long differences depending on the aggregation method. In general - for more details see [Aggregation](@ref) - the regression is of form:
+The analogous difference is computed for each control state $c$ of the treated state $s$:
 
 ```math
-\widehat{\mathrm{diff}}_{s,g,t} = \alpha + \beta\, d_{s,g,t} + \varepsilon_{s,g,t}
+\widehat{\Delta}_{c \to s,t} = \left(\hat{\lambda}_{c,t} - \hat{\lambda}_{c,r}\right) + \left(\hat{\gamma}_{c,t} - \hat{\gamma}_{c,r}\right)'\,\overline{X}_{s,t}
 ```
 
-where $d_{s,g,t} = 1$ if state $s$ was treated at treatment time $g$ and 0 otherwise. The coefficient $\beta$ estimates the subaggregate ATTs.
+Here $\hat{\gamma}_{s,t}$ are the covariate coefficients that apply to state $s$ in period $t$ under the chosen CCC violation, and $\overline{X}_{s,t}$ are the means of the covariates of the *treated* state $s$ in period $t$. These are the integrated long differences of the DID-INT paper (equations 46 and 47): the change in the covariate-adjusted outcome is evaluated over the covariate distribution of the treated state, which, because $f$ is linear in the covariates, only requires that state's covariate means. More on when the covariate term matters in the [Integrated Long Differences](@ref) section.
 
-In this step, weights are used (by default) according to the number of observations associated with each long difference.
-
-**Step 4.** The aggregate ATT is computed as a weighted mean of the subaggregate ATT estimates.
+**Step 3.** For each treated state $s$ and each period $t$ from its treatment time on, the ATT is the long difference of $s$ minus the weighted mean of the long differences of its controls (equation 48 of the DID-INT paper):
 
 ```math
-\widehat{\mathrm{ATT}} = \sum^{J}_{j = 1} w_{j}\, \hat{\beta}_{j}
+\widehat{\mathrm{ATT}}(s,t) = \widehat{\Delta}_{s,t} - \frac{\sum_{c \in C(s,t)} v_{c}\, \widehat{\Delta}_{c \to s,t}}{\sum_{c \in C(s,t)} v_{c}}
 ```
 
-where $J$ denotes the total number of subaggregate ATTs and the weights, $w_j$, are scaled such that $\sum^{J}_{j = 1} w_{j}\, = 1$. By default the weights used here reflect the number of treated observations associated with each subaggregate ATT.
+where $C(s,t)$ is the set of controls: the never-treated states and, optionally, the states not yet treated in period $t$ (see [Not Yet Treated Cells](@ref)). In this step, weights $v_c$ are used (by default) according to the number of observations associated with each control long difference (see [Weighting](@ref)).
+
+!!! note "Implementation"
+    $\widehat{\mathrm{ATT}}(s,t)$ is computed as the coefficient $\beta$ in the weighted regression of the long differences of state $s$ and of its controls on an intercept and a treatment indicator, $\widehat{\Delta} = \alpha + \beta\, d + \varepsilon$, where $d = 1$ for the treated state and 0 for the controls. This coefficient equals the expression above and the regression also yields its standard error.
+
+**Step 4.** Each subaggregate ATT is a weighted mean of the $\widehat{\mathrm{ATT}}(s,t)$ values that belong to its group $j$, and the aggregate ATT is a weighted mean of the subaggregate ATT estimates:
+
+```math
+\widehat{\mathrm{ATT}}_{j} = \frac{\sum_{(s,t) \in j} u_{s,t}\, \widehat{\mathrm{ATT}}(s,t)}{\sum_{(s,t) \in j} u_{s,t}}, \qquad
+\widehat{\mathrm{ATT}} = \sum^{J}_{j = 1} w_{j}\, \widehat{\mathrm{ATT}}_{j}
+```
+
+where $J$ denotes the total number of subaggregate ATTs and the weights, $w_j$, are scaled such that $\sum^{J}_{j = 1} w_{j}\, = 1$. By default the weights used here reflect the number of treated observations associated with each $\widehat{\mathrm{ATT}}(s,t)$ and with each subaggregate ATT.
+
+No regression pools long differences from different treatment cohorts or periods: every estimate is an explicit weighted mean of $\widehat{\mathrm{ATT}}(s,t)$ values, each of which only compares states within the same period.
+
+!!! note "Common Adoption"
+    When every treated state is treated at the same time (common adoption) the procedure is exactly the same, with a single treatment cohort. $\hat{\lambda}_{s,t}$ is estimated for every period, the long differences are taken relative to the period immediately before the common treatment time, and every aggregation option is available.
 
 ## Common Causal Covariates and Model Specification
 
@@ -62,25 +75,45 @@ A more robust discussion of the common causal covariates assumption can be found
 | Two-Way Intersection DID-INT | $f(X_{i,s,t}) = \sum_{s=1}^{S} \sum_{t=1}^{T} \sum_{k=1}^{K} \gamma^k_{s,t} I(s)I(t) X^k_{i,s,t}$                                      | `"int"`   |
 | Two One-Way DID-INT          | $f(X_{i,s,t}) = \sum_{s=1}^{S} \sum_{k=1}^{K} \gamma^k_s I(s) X^k_{i,s,t} + \sum_{t=1}^{T} \sum_{k=1}^{K} \gamma^k_t I(t) X^k_{i,s,t}$ | `"add"`   |
 
+## Integrated Long Differences
+
+The covariate term in the long differences of Step 2 of the [Four Step Estimation Procedure](@ref), $\left(\hat{\gamma}_{\cdot,t} - \hat{\gamma}_{\cdot,r}\right)'\,\overline{X}_{s,t}$, depends on the DID-INT variation:
+
+- **Homogeneous** and **state-varying** DID-INT: the covariate coefficients do not change over time, so the term is zero in every long difference.
+- **Time-varying** and **two one-way** DID-INT: the term is not zero, but it is the same for the treated state and for each of its controls (they share the time-specific coefficients, and both are evaluated at $\overline{X}_{s,t}$), so it cancels in $\widehat{\mathrm{ATT}}(s,t)$.
+- **Two-way intersection** DID-INT: the coefficients are specific to each state and period, and the term does not cancel.
+
+Consequently the covariate term changes the estimates only when `ccc = "int"` is used with covariates. For every other `ccc` option, and whenever no covariates are specified, $\widehat{\mathrm{ATT}}(s,t)$ only depends on the $\hat{\lambda}_{s,t}$ values:
+
+```math
+\widehat{\mathrm{ATT}}(s,t) = \left(\hat{\lambda}_{s,t} - \hat{\lambda}_{s,r}\right) - \frac{\sum_{c \in C(s,t)} v_{c} \left(\hat{\lambda}_{c,t} - \hat{\lambda}_{c,r}\right)}{\sum_{c \in C(s,t)} v_{c}}
+```
+
 ## Aggregation
 
-In Step 3 of the [Four Step Estimation Procedure](@ref), a choice needs to be made in terms of which long differences should be included in the regression. For example, we could include only the long differences associated with treatment time $g$ which would yield the subaggregate ATT for $g$, $\hat{\beta}_{g}$. Repeating this for each treatment time would give us the set of subaggregate ATTs based on `"cohort"` aggregation. Conversely, we could restrict the long differences to a particular treated state, $s^*$, and the corresponding long differences from the control states in order to retrieve the subaggregate ATTs per treated state. The following table gives an overview of the aggregation groupings, corresponding restrictions, the string value passed to the `agg` argument in the **DiDInt.jl** package, and whether the aggregation method is applicable to staggered adoption or common adoption scenarios.
+In Step 4 of the [Four Step Estimation Procedure](@ref), a choice needs to be made in terms of which $\widehat{\mathrm{ATT}}(s,t)$ values should be averaged together. For example, we could average the $\widehat{\mathrm{ATT}}(s,t)$ values of the states treated at treatment time $g$, which would yield the subaggregate ATT for $g$. Repeating this for each treatment time would give us the set of subaggregate ATTs based on `"cohort"` aggregation. Conversely, we could average the $\widehat{\mathrm{ATT}}(s,t)$ values of a particular treated state, $s^*$, in order to retrieve the subaggregate ATTs per treated state. The following table gives an overview of the aggregation groupings and the string value passed to the `agg` argument in the **DiDInt.jl** package. Every option is available for both staggered adoption and common adoption scenarios.
 
-| Grouping                                                                                        | Restriction                                                                                                                                          | `agg`                | Staggered Adoption | Common Adoption |
-| :---------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------- | :--------------------- | :----------------- | :-------------- |
-| By treatment time, $g$                                                                         | Only long differences from treatment time $g$                                                                                                       | `"cohort"` (default) | Yes                | No              |
-| By treated state, $s^*$                                                                        | Only long differences from treated state $s^*$ and the corresponding long differences from control states                                           | `"state"`            | Yes                | Yes             |
-| By treatment time, $g$, and the post-treatment time, $t$, used in the long difference calculation | Only long differences from that particular $(g,t)$ group                                                                                            | `"simple"`           | Yes                | No              |
-| By treated state, $s^*$, and $(g,t)$ group                                                     | Only long differences from treated state $s^*$ in that particular $(g,t)$ group as well as the corresponding long differences from control states | `"sgt"`              | Yes                | No              |
-| No grouping                                                                                     | None, computes the aggregate ATT directly from the long differences - only an option for common adoption                                             | `"none"`             | No                 | Yes             |
-| By periods since treatment, $p$                                                                | Only long differences in that particular periods-post-treatment group, $p$                                                                          | `"time"`             | Yes                | No              |
+| Grouping                                                         | $\widehat{\mathrm{ATT}}(s,t)$ values averaged in each subaggregate ATT        | `agg`                |
+| :--------------------------------------------------------------- | :---------------------------------------------------------------------------- | :------------------- |
+| By treatment time, $g$                                           | Those of the states treated at $g$, in every period                           | `"cohort"` (default) |
+| By treated state, $s^*$                                          | Those of state $s^*$, in every period                                         | `"state"`            |
+| By treatment time, $g$, and period, $t$                          | Those of the states treated at $g$, in period $t$                             | `"simple"`           |
+| By treated state, $s^*$, and period, $t$                         | None: each $\widehat{\mathrm{ATT}}(s,t)$ is reported                          | `"sgt"`              |
+| By periods since treatment, $p$                                  | Those with $t - g = p$, across treatment times                                | `"time"`             |
+| By period, $t$                                                   | Those in period $t$, across treatment times                                   | `"calendar"`         |
+| By policy (and within policy)                                    | See the [Policies](@ref) section                                              | `"policy"`, `"policy_gt"`, `"policy_cohort"`, `"policy_calendar"`, `"policy_time"` |
+
+Whichever option is chosen, the aggregate ATT (`agg_att`) is always reported: it is the weighted mean of the subaggregate ATTs of that option. Because it is a mean of subaggregates, the aggregate ATT can differ across `agg` options. It is the same for every `agg` option when `weighting` is `"att"` or `"both"` and `treated_weight = "treated"` (the defaults), in which case it is the mean of the $\widehat{\mathrm{ATT}}(s,t)$ values weighted by their numbers of treated observations.
 
 !!! note "Aggregation by Periods Since Treatment"
-    Note that when using the `"time"` aggregation option, the functional form of the long difference regression is modified by adding dummy variables for each treatment cohort (minus a reference cohort) in order to account for cohort-specific intercepts. The modified regression for `"time"` aggregation is then given by: $\widehat{\mathrm{diff}}_{s,g,t,p} = \alpha + \beta\, d_{s,g,t,p} + \sum_{g = 2}^{G} \phi_{g}I(g) + \varepsilon_{s,g,t,p}$.
+    Each $\widehat{\mathrm{ATT}}(s,t)$ is already a comparison between a treated state and its controls within the same treatment cohort and period, so averaging them by periods since treatment does not require any adjustment for cohort-specific intercepts.
+
+!!! note "Cohort Aggregation and Group-Time Average Treatment Effects"
+    The subaggregate ATTs of `"simple"` aggregation correspond to the group-time average treatment effects of [Callaway and Sant'Anna (2021)](https://doi.org/10.1016/j.jeconom.2020.12.001). Their group effects weight every post-treatment period of a cohort equally, whereas `"cohort"` aggregation weights the periods according to the `weighting` and `treated_weight` arguments. The two coincide when those weights do not vary over time, for example under `weighting = "none"`.
 
 ## Weighting
 
-Weighting can occur at Step 3 (when computing subaggregate ATTs) and at Step 4 (when computing the aggregate ATT) in **DiDInt.jl**, and by default occurs at both steps. The weighting that occurs when computing the subaggregate ATTs weights each long difference by the number of observations used in the calculation of the long difference. The weighting that occurs when computing the aggregate ATT uses weights according to the number of *treated* observations - that is, observations from treated states in post-treatment periods - used in the calculation of each subaggregate ATT. The following table shows the available weighting options in **DiDInt.jl**
+Weighting can occur when computing the $\widehat{\mathrm{ATT}}(s,t)$ values and the subaggregate ATTs (Steps 3 and 4), and when computing the aggregate ATT (Step 4) in **DiDInt.jl**, and by default occurs at both points. The following table shows the available weighting options in **DiDInt.jl**
 
 | `weighting`        | Applies weights when...                            |
 | :------------------- | :------------------------------------------------- |
@@ -89,19 +122,67 @@ Weighting can occur at Step 3 (when computing subaggregate ATTs) and at Step 4 (
 | `"diff"`           | Computing the subaggregate ATTs.                   |
 | `"none"`           | No weighting is applied.                           |
 
+Let $n_{s,t}$ denote the number of observations of state $s$ in period $t$. The weights are used in three places:
+
+1. **Controls within an $\widehat{\mathrm{ATT}}(s,t)$.** Under `"diff"` and `"both"`, the long difference of control $c$ is weighted by the number of observations used in its calculation, $v_c = n_{c,t} + n_{c,r}$. Otherwise the controls are weighted equally.
+2. **$\widehat{\mathrm{ATT}}(s,t)$ values within a subaggregate ATT.** The weight $u_{s,t}$ depends on `weighting` and on the `treated_weight` argument, as shown in the table below.
+3. **Subaggregate ATTs within the aggregate ATT.** Under `"att"` and `"both"`, each subaggregate ATT is weighted by its number of *treated* observations - that is, the sum of $n_{s,t}$ over the $\widehat{\mathrm{ATT}}(s,t)$ values it averages. Otherwise the subaggregate ATTs are weighted equally.
+
+| `weighting` | $u_{s,t}$ with `treated_weight = "treated"` (default) | $u_{s,t}$ with `treated_weight = "population"` |
+| :---------- | :----------------------------------------------------- | :---------------------------------------------- |
+| `"both"`    | $n_{s,t}$                                              | $n_{s,t} + n_{s,r}$                             |
+| `"att"`     | $n_{s,t}$                                              | 1                                               |
+| `"diff"`    | 1                                                      | $n_{s,t} + n_{s,r}$                             |
+| `"none"`    | 1                                                      | 1                                               |
+
+With `treated_weight = "treated"`, an $\widehat{\mathrm{ATT}}(s,t)$ is weighted by the treated state's observations in period $t$, so that a subaggregate ATT estimates the effect on the average treated observation of its group. With `treated_weight = "population"`, it is weighted like a control long difference: by the observations of both the period $t$ and the period before treatment that were used in its calculation. The two options give the same subaggregate ATT when it averages a single $\widehat{\mathrm{ATT}}(s,t)$, and can otherwise differ, including for a single treated state observed over several periods (the ratio $n_{s,r}/n_{s,t}$ changes from period to period).
+
+## Policies
+
+When treated states adopt different policies, **DiDInt.jl** can report separate ATTs for each policy. The policy of each treated state is given either by the `pvar` argument (the name of a column holding each state's policy, with missing values, `0`, `"0"` or `""` for never-treated states) or by the `treated_policies` argument (a vector with one policy per element of `treated_states`). If neither is specified, every treated state is taken to have the same policy.
+
+Policies do not change which states serve as controls: the controls of a treated state are the never-treated states and, if `notyet = true`, the states not yet treated in that period, whatever their (future) policy. Policies therefore only matter for the policy aggregation options, which form the groups of the [Aggregation](@ref) section within each policy:
+
+| Grouping                                                  | `agg`               |
+| :-------------------------------------------------------- | :------------------ |
+| By policy                                                 | `"policy"`          |
+| By policy, treatment time, and period                     | `"policy_gt"`       |
+| By policy and treatment time                              | `"policy_cohort"`   |
+| By policy and period                                      | `"policy_calendar"` |
+| By policy and periods since treatment                     | `"policy_time"`     |
+
+For these options the ATT of each policy, $\widehat{\mathrm{ATT}}_p$, is reported in the `att_p` column (on the first row of each policy) along with its standard error and p-values. It is the weighted mean of the subaggregate ATTs of that policy, in the same way that the aggregate ATT is the weighted mean of all subaggregate ATTs for the other aggregation options. There is no `agg_att` column for the policy aggregation options.
+
+Setting `policy_aggregation = true` additionally reports a pooled ATT across policies in the `att_pool` column:
+
+```math
+\widehat{\mathrm{ATT}}_{pool} = \sum_{p} \omega_p\, \widehat{\mathrm{ATT}}_p, \qquad \sum_p \omega_p = 1
+```
+
+with the weight of each policy, reported in the `policy_weights` column, chosen through the `policy_weighting` argument:
+
+| `policy_weighting`  | $\omega_p$ is proportional to...                              | The pooled ATT is the effect for...   |
+| :------------------ | :------------------------------------------------------------ | :------------------------------------ |
+| `"equal"` (default) | 1                                                             | The typical policy.                   |
+| `"treated_obs"`     | The number of treated observations under policy $p$.          | The typical treated observation.      |
+| `"treated_cells"`   | The number of $\widehat{\mathrm{ATT}}(s,t)$ values of policy $p$. | The typical treated state-period. |
+| `"treated_states"`  | The number of treated states with policy $p$.                 | The typical treated state.            |
+
+The heteroskedasticity-consistent standard error of the pooled ATT comes from the weighted regression of the $\widehat{\mathrm{ATT}}_p$ values on a constant, with degrees of freedom equal to the number of policies minus one (so two policies leave a single degree of freedom). Jackknife and randomization inference results are also reported for each $\widehat{\mathrm{ATT}}_p$ and for the pooled ATT; during the randomization inference procedure a state's policy and treatment time are reassigned together.
+
 ## Not Yet Treated Cells
 
-Optionally (not by default), long differences from treated states, prior to the state's treatment time, can be used as control long differences in the Step 3 computation of subaggregate ATTs. For example, in a scenario with two treated states and 10 periods, State A being treated at period 2 and State B at period 8, then control long differences can be calculated for State B for periods 2-7 (before B's treatment) to match a subset of the long differences calculated for State A.
+Optionally (not by default), long differences from treated states, prior to the state's treatment time, can be used as control long differences in the Step 3 computation of the $\widehat{\mathrm{ATT}}(s,t)$ values. For example, in a scenario with two treated states and 10 periods, State A being treated at period 2 and State B at period 8, then control long differences can be calculated for State B for periods 2-7 (before B's treatment) to match a subset of the long differences calculated for State A.
 
-Using not-yet-treated long differences as controls is available by setting the `notyet` argument to `true`.
+Using not-yet-treated long differences as controls is available by setting the `notyet` argument to `true`. A state that is treated in or before period $t$ is never used as a control in period $t$.
 
 ## Ensuring Proper Comparisons
 
-In order to best handle data with missing values or inconsistent time period coverage across states, **DiDInt.jl** only includes long differences in the Step 3 regression when there is at least one treated-control pair available for a given $(g,t)$ group. Long differences that do not meet this condition are dropped from any Step 3 regression. This is especially important for the `"cohort"` and `"state"` aggregation methods, which pool long differences across multiple $(g,t)$ groups for a given $g$.
+In order to best handle data with missing values or inconsistent time period coverage across states, **DiDInt.jl** only computes $\widehat{\mathrm{ATT}}(s,t)$ when the treated state $s$ is observed in both period $t$ and the period immediately before its treatment time, and when at least one control state is observed in both of those periods. Control states that are missing one of the two periods are left out of that $\widehat{\mathrm{ATT}}(s,t)$, and treated state-period pairs without any valid control are dropped. Because every subaggregate and aggregate ATT is a mean of $\widehat{\mathrm{ATT}}(s,t)$ values, each of which compares a treated state with controls in the same pair of periods, no estimate ever compares long differences taken over different periods.
 
 ## Period Grid Construction & Date Matching Procedure
 
-**DiDInt.jl** can handle data at various temporal frequencies including daily, weekly, monthly, and yearly observations. For staggered adoption scenarios, the package constructs a period grid and matches observations to discrete periods on that grid.
+**DiDInt.jl** can handle data at various temporal frequencies including daily, weekly, monthly, and yearly observations. The package constructs a period grid and matches observations to discrete periods on that grid.
 
 ### Automatic Period Detection
 
@@ -133,59 +214,70 @@ Once the period grid is established, each observation in the data is matched to 
 
 ## Standard Errors and P-Values
 
-**DiDInt.jl** reports three types of p-values and two sets of standard errors.
+**DiDInt.jl** reports three types of p-values and two sets of standard errors, for every subaggregate ATT and for the aggregate ATT (and, for the policy aggregation options, for the ATT of each policy and for the pooled ATT).
 
-- Standard errors using heteroskedasticity-consistent covariance estimators (HCCME): HC0, HC1 (default), HC2, HC3, or HC4 and p-values via a two-tailed test using a $t$-distribution with $n - k$ degrees of freedom, where $n$ is the number of observations (long differences in Step 3 or subaggregate ATTs in Step 4) and $k$ is the number of estimated regression parameters. The desired HCCME can be selected via the `hc` argument.
+- Standard errors using heteroskedasticity-consistent covariance estimators (HCCME): HC0, HC1 (default), HC2, HC3, or HC4 and p-values via a two-tailed test using a $t$-distribution with $n - k$ degrees of freedom, where $n$ is the number of observations in the relevant regression and $k$ is the number of estimated regression parameters. The desired HCCME can be selected via the `hc` argument.
 - Jackknife standard errors and p-values, described in more detail in the [Jackknife](@ref) section.
 - Randomization inference (RI) p-values, via a randomization procedure described in the [Randomization Inference](@ref) section.
 
 There are some circumstances in which the jackknife standard errors and p-values or the randomization inference p-values cannot be calculated. These situations are noted in the [Jackknife](@ref) and [Randomization Inference](@ref) sections, respectively.
 
-In general, the standard errors using HCCMEs for the ATTs calculated in Step 3 are retrieved directly from the Step 3 regression. However, in situations in which there is only one treated state, only one control state, and only one $(g,t)$ group in the Step 3 regression, the model becomes saturated and the regression-based standard error is degenerate. In such cases, it is still possible to recover the heteroskedastic robust standard error (for all aggregation methods besides `"time"`) using the variances and covariances of the $\hat{\lambda}_{s,t}$ terms. Note that given one treated state, one control state, and one $(g,t)$ group, the variance of the ATT computed in Step 3 can be decomposed into variance and covariance terms of the $\hat{\lambda}_{s,t}$ values:
+The standard errors using HCCMEs come from the following regressions:
+
+- **$\widehat{\mathrm{ATT}}(s,t)$**: the Step 3 regression of the long differences of the treated state and of its controls on an intercept and a treatment indicator ($n$ is one plus the number of controls and $k = 2$).
+- **Subaggregate ATTs**: the weighted regression of the $\widehat{\mathrm{ATT}}(s,t)$ values of the group on a constant, using the weights $u_{s,t}$ ($n$ is the number of $\widehat{\mathrm{ATT}}(s,t)$ values in the group and $k = 1$). A subaggregate ATT that consists of a single $\widehat{\mathrm{ATT}}(s,t)$ reports the standard error and p-value of that $\widehat{\mathrm{ATT}}(s,t)$.
+- **Aggregate ATT**: the weighted regression of the subaggregate ATTs on a constant, using the weights $w_j$ ($n$ is the number of subaggregate ATTs and $k = 1$). If there is a single subaggregate ATT, the aggregate ATT reports its standard error and p-value.
+
+!!! note "Caveats for the HCCME Standard Errors"
+    The regressions on a constant treat the estimates being averaged as independent. $\widehat{\mathrm{ATT}}(s,t)$ values from the same period share control states, so these standard errors can understate the uncertainty of subaggregate and aggregate ATTs. The jackknife and the randomization inference procedure do not rely on that independence.
+
+    The single treated state in the Step 3 regression has a leverage of exactly one. HC2, HC3, and HC4 divide by one minus the leverage, so the HC2, HC3, and HC4 standard errors of an $\widehat{\mathrm{ATT}}(s,t)$ (reported under `"sgt"` aggregation, and for any subaggregate ATT that consists of a single $\widehat{\mathrm{ATT}}(s,t)$) are `NaN`. HC0 and HC1 are unaffected.
+
+When an $\widehat{\mathrm{ATT}}(s,t)$ has only one control state, the Step 3 regression has two observations and two parameters: the model is saturated and the regression-based standard error is degenerate. In such cases, it is still possible to recover the heteroskedastic robust standard error using the variances and covariances of the $\hat{\lambda}_{s,t}$ terms. Given one treated state $s$ and one control state $c$, the variance of $\widehat{\mathrm{ATT}}(s,t)$ (without the covariate term of the [Integrated Long Differences](@ref)) can be decomposed into variance and covariance terms of the $\hat{\lambda}_{s,t}$ values:
 
 ```math
 \begin{aligned}
-\widehat{\mathrm{ATT}}
+\widehat{\mathrm{ATT}}(s,t)
 &=
-(\hat{\lambda}_{s_1,t_1} - \hat{\lambda}_{s_1,t_0})
+(\hat{\lambda}_{s,t} - \hat{\lambda}_{s,r})
 -
-(\hat{\lambda}_{s_2,t_1} - \hat{\lambda}_{s_2,t_0})
+(\hat{\lambda}_{c,t} - \hat{\lambda}_{c,r})
 \\[6pt]
-\mathrm{Var}(\widehat{\mathrm{ATT}})
+\mathrm{Var}(\widehat{\mathrm{ATT}}(s,t))
 &=
-\mathrm{Var}(\hat{\lambda}_{s_1,t_1} - \hat{\lambda}_{s_1,t_0})
+\mathrm{Var}(\hat{\lambda}_{s,t} - \hat{\lambda}_{s,r})
 +
-\mathrm{Var}(\hat{\lambda}_{s_2,t_1} - \hat{\lambda}_{s_2,t_0})
+\mathrm{Var}(\hat{\lambda}_{c,t} - \hat{\lambda}_{c,r})
 \\
 &\quad
 -2\,\mathrm{Cov}\!\left(
-\hat{\lambda}_{s_1,t_1} - \hat{\lambda}_{s_1,t_0},
-\hat{\lambda}_{s_2,t_1} - \hat{\lambda}_{s_2,t_0}
+\hat{\lambda}_{s,t} - \hat{\lambda}_{s,r},
+\hat{\lambda}_{c,t} - \hat{\lambda}_{c,r}
 \right)
 \\[6pt]
-\mathrm{Var}(\widehat{\mathrm{ATT}})
+\mathrm{Var}(\widehat{\mathrm{ATT}}(s,t))
 &=
-\mathrm{Var}(\hat{\lambda}_{s_1,t_0})
+\mathrm{Var}(\hat{\lambda}_{s,r})
 +
-\mathrm{Var}(\hat{\lambda}_{s_1,t_1})
+\mathrm{Var}(\hat{\lambda}_{s,t})
 +
-\mathrm{Var}(\hat{\lambda}_{s_2,t_0})
+\mathrm{Var}(\hat{\lambda}_{c,r})
 +
-\mathrm{Var}(\hat{\lambda}_{s_2,t_1})
+\mathrm{Var}(\hat{\lambda}_{c,t})
 \\
 &\quad
--2\,\mathrm{Cov}(\hat{\lambda}_{s_1,t_0}, \hat{\lambda}_{s_1,t_1})
--2\,\mathrm{Cov}(\hat{\lambda}_{s_2,t_0}, \hat{\lambda}_{s_2,t_1})
+-2\,\mathrm{Cov}(\hat{\lambda}_{s,r}, \hat{\lambda}_{s,t})
+-2\,\mathrm{Cov}(\hat{\lambda}_{c,r}, \hat{\lambda}_{c,t})
 \\
 &\quad
 -2\Big(
-\mathrm{Cov}(\hat{\lambda}_{s_1,t_1}, \hat{\lambda}_{s_2,t_1})
+\mathrm{Cov}(\hat{\lambda}_{s,t}, \hat{\lambda}_{c,t})
 -
-\mathrm{Cov}(\hat{\lambda}_{s_1,t_1}, \hat{\lambda}_{s_2,t_0})
+\mathrm{Cov}(\hat{\lambda}_{s,t}, \hat{\lambda}_{c,r})
 -
-\mathrm{Cov}(\hat{\lambda}_{s_1,t_0}, \hat{\lambda}_{s_2,t_1})
+\mathrm{Cov}(\hat{\lambda}_{s,r}, \hat{\lambda}_{c,t})
 +
-\mathrm{Cov}(\hat{\lambda}_{s_1,t_0}, \hat{\lambda}_{s_2,t_0})
+\mathrm{Cov}(\hat{\lambda}_{s,r}, \hat{\lambda}_{c,r})
 \Big)
 \end{aligned}
 ```
@@ -194,7 +286,7 @@ Further details on recovering the standard errors in such an edge case can be fo
 
 ## Jackknife
 
-There are two variations to the **DiDInt.jl** jackknife procedure. The default option is to calculate jackknife estimates of the ATTs while dropping one state at a time directly from Step 3 in the [Four Step Estimation Procedure](@ref). This is referred to as the "fast jackknife". The alternative method, the "true jackknife", calculates jackknife estimates of the ATTs while dropping one state at a time starting from Step 1. The true jackknife can be used in lieu of the fast jackknife by setting the `truejack` argument to `true`.
+There are two variations to the **DiDInt.jl** jackknife procedure. The default option is to calculate jackknife estimates of the ATTs while dropping one state at a time directly from Step 3 in the [Four Step Estimation Procedure](@ref): the state is removed both as a treated state and as a control, and the $\widehat{\mathrm{ATT}}(s,t)$ values, the subaggregate ATTs, and the aggregate ATT are recomputed from the $\hat{\lambda}_{s,t}$ values of the remaining states. This is referred to as the "fast jackknife". The alternative method, the "true jackknife", calculates jackknife estimates of the ATTs while dropping one state at a time starting from Step 1. The true jackknife can be used in lieu of the fast jackknife by setting the `truejack` argument to `true`.
 
 Note that for the `ccc` options of `"state"` and `"int"` that the true jackknife is always equal to the fast jackknife as the covariate effects are local to the state or state-time, respectively, so that removing a state from the dataset does not affect the estimated covariate effects at other states and thus does not affect the estimated $\hat{\lambda}_{s,t}$ values at other states.
 
@@ -204,9 +296,11 @@ The jackknife standard error is computed as:
 \widehat{\mathrm{se}}_{\mathrm{jack}} = \sqrt{\frac{N-1}{N} \sum_{i=1}^{N}\left(\hat{\beta}_{(-i)} - \hat{\beta}\right)^2}
 ```
 
-where $N$ is the number of states used in the computation of the original subaggregate or aggregate ATT estimate, $\hat{\beta}_{(-i)}$ is the ATT estimate with state $i$ removed, and $\hat{\beta}$ is the original ATT estimate. Jackknife p-values are computed via a two-tailed test using a $t$-distribution with $N - 1$ degrees of freedom. A minimum of two treated states and two control states are required to compute jackknife standard errors and p-values; if this condition is not met, these quantities are returned as `missing`.
+where $N$ is the number of states whose removal leaves the estimate defined, $\hat{\beta}_{(-i)}$ is the ATT estimate with state $i$ removed, and $\hat{\beta}$ is the original ATT estimate. This is the cluster jackknife variance estimator centered at the original estimate ($\mathrm{CV}_3$ in [MacKinnon, Nielsen, and Webb (2023)](https://doi.org/10.1016/j.jeconom.2022.04.001)). Jackknife p-values are computed via a two-tailed test using a $t$-distribution with $N - 1$ degrees of freedom.
 
-Further, note that for the aggregation methods of `"state"` and `"sgt"`, where only one treated state is considered at a time, that the jackknife standard errors and jackknife p-values are never estimated at the subaggregate level. In order for the Step 3 regression to be estimable (without the use of pseudo-inverted matrices) there must be at least one treated state and one control state present in the regression. The structure of `"state"` and `"sgt"` aggregation prevents the jackknife standard error from being fully estimable at the subaggregate level as dropping the one treated state would leave at least one of the remove-one-state subsamples inestimable (the $d_{s,g,t}$ values would all be 0s and the matrix would be rank deficient for the subsample where the treated state is removed). This limitation does **not** prevent the jackknife standard error and jackknife p-value from being calculated for the *aggregate* ATT under `"state"` or `"sgt"` aggregation, so long as there are at least two treated and two control states.
+A minimum of two treated states and two control states are required to compute jackknife standard errors and p-values; if this condition is not met, these quantities are returned as `missing`. The same minimum applies to each estimate separately: a subaggregate ATT (or the ATT of a policy) only has a jackknife standard error if the $\widehat{\mathrm{ATT}}(s,t)$ values it averages involve at least two treated states and at least two control states, and if it can be computed with any one state removed.
+
+Further, note that for the aggregation methods of `"state"` and `"sgt"`, where each subaggregate ATT involves only one treated state, that the jackknife standard errors and jackknife p-values are never estimated at the subaggregate level: removing that one treated state leaves nothing to estimate. This limitation does **not** prevent the jackknife standard error and jackknife p-value from being calculated for the *aggregate* ATT under `"state"` or `"sgt"` aggregation, so long as there are at least two treated and two control states.
 
 ## Randomization Inference
 
@@ -214,31 +308,49 @@ The randomization procedure used in **DiDInt.jl** follows the procedure describe
 
 The **DiDInt.jl** implementation of the randomization inference procedure is as follows:
 
-1. The total number of unique treatment assignment randomizations is calculated by $\frac{N!}{(N-n)! \prod_{m \in M} n_m!} - 1$, where $N$ is the total number of states, $n$ is the number of treated states, $M$ is the set of unique treatment times, and $n_m$ is the number of states treated at time $m$. The number of permutations considered during the procedure, $nperm^{*}$, is the lesser of this total and the user-supplied `nperm` value.
-2. Next, the order of the set of $N$ total states is randomized, as are the $n$ treatment times. The first $n$ states from the randomized $N$ states are selected and paired with the randomized treatment times, checked to ensure that the new randomized assignment is unique, and then a new vector of treatment indicator values, $d_{s,g,t,r}$ (where $r$ is the $r$-th permutation), is created based on the randomization.
-3. Subaggregate and aggregate ATTs are then calculated using the $d_{s,g,t,r}$ values and the distribution of coefficients resulting from the randomized assignments is compared against the coefficients computed when using the actual assignment of treatment times:
+1. The total number of unique alternative treatment assignments is calculated by $\frac{N!}{(N-n)! \prod_{m \in M} n_m!} - 1$, where $N$ is the total number of states, $n$ is the number of treated states, $M$ is the set of unique treatment times, and $n_m$ is the number of states treated at time $m$. (For the policy aggregation options, $M$ is the set of unique combinations of treatment time and policy.) The number of permutations considered during the procedure, $nperm^{*}$, is the lesser of this total and the user-supplied `nperm` value.
+2. If the total does not exceed `nperm`, every alternative assignment is used. Otherwise, $nperm^{*}$ distinct alternative assignments are drawn at random, each being equally likely. The assignments are drawn without repetition and never include the actual assignment; the `seed` argument makes the draws reproducible.
+3. Subaggregate and aggregate ATTs are then calculated for each alternative assignment, as if the states that received the treatment times in that assignment had been the treated states. The $\hat{\lambda}_{s,t}$ values do not depend on which states are treated, so Step 1 is not repeated. The distribution of estimates resulting from the alternative assignments is compared against the estimates computed when using the actual assignment of treatment times:
 
-$p_{RI} = \frac{\left(\sum_{r=1}^{nperm^{*}} \mathbf{1}\left(|ATT_{RI,r}| > |ATT_{Actual}|\right)\right)}{nperm^{*}}$.
+```math
+p_{RI} = \frac{1 + \sum_{r=1}^{nperm^{*}} \mathbf{1}\left(|ATT_{RI,r}| \geq |ATT_{Actual}|\right)}{nperm^{*} + 1}
+```
 
-When the randomization inference procedure is performed while the aggregation is set to `"state"` or `"sgt"`, and the initial treatment assignment involved more than one state receiving the same treatment time, there is an additional level of randomization. The set of states in any permutation now associated with the treatment time from the actually treated state are shuffled and the first state is drawn to be used as the treated state in that permutation. This is in order to preserve the structure of the `"state"` and `"sgt"` aggregation methods whereby only one treated state is considered at a time.
+This is the more conservative of the two p-values discussed in [MacKinnon and Webb (2020)](https://doi.org/10.1016%2Fj.jeconom.2020.04.024). An RI p-value is reported for every subaggregate ATT, each compared against the estimates for the same group under the alternative assignments, and for the aggregate ATT.
 
-!!! note "Computing Subaggregate ATTs During Randomization"
-    For all aggregation methods besides `"time"`, in order to avoid having to invert any matrices (which would be more computationally expensive), a difference in weighted means (or a simple difference in means if observation-count weights are not being used) is used in lieu of the Step 3 regression. Letting $\tilde{w}_i = \frac{n_i}{\sum_{h=1}^{H} n_h}$ denote observation-count weights scaled over the full subsample, the subaggregate ATT estimator is:
+!!! note "Drawing Alternative Assignments"
+    Every possible assignment is an arrangement of the treatment times (and "never treated") across the states. The arrangements are numbered in lexicographic order, distinct numbers are drawn using Floyd's sampling algorithm (Bentley and Floyd, 1987), and each number is converted back into its arrangement. This guarantees distinct assignments without having to draw and discard repeated ones. The actual assignment is skipped by drawing from one number fewer and shifting the draws at or above its number up by one.
 
-    For `weighting ∈ {"diff", "both"}`:
-    $$\widehat{ATT}_{sub} = \frac{\sum_{i:\, d_i = 1} \tilde{w}_i \,\widehat{\mathrm{diff}}_i}{\sum_{i:\, d_i = 1} \tilde{w}_i} - \frac{\sum_{i:\, d_i = 0} \tilde{w}_i \,\widehat{\mathrm{diff}}_i}{\sum_{i:\, d_i = 0} \tilde{w}_i}$$
+### Kernel-Smoothed P-Values
 
-    For `weighting ∈ {"att", "none"}`:
-    $$\widehat{ATT}_{sub} = \frac{1}{n_1} \sum_{i:\, d_i = 1} \widehat{\mathrm{diff}}_i \;-\; \frac{1}{n_0} \sum_{i:\, d_i = 0} \widehat{\mathrm{diff}}_i$$
+With few alternative assignments, the p-value above can only take a few distinct values. When the number of permutations used, $nperm^{*}$, is no larger than the `ri_kernel_cutoff` argument (99 by default), **DiDInt.jl** instead reports the kernel-smoothed p-value of [Racine and MacKinnon (2007)](https://doi.org/10.1016/j.csda.2006.11.013), which replaces the indicator function with a smooth function:
 
-    where $n_1$ and $n_0$ are the number of treated and control observations in the subsample, respectively.
+```math
+p_{RI} = 1 - \frac{1}{nperm^{*}} \sum_{r=1}^{nperm^{*}} \Phi\!\left(\frac{|ATT_{Actual}| - |ATT_{RI,r}|}{h}\right), \qquad h = 1.575\; \hat{\sigma}_{RI}\; (nperm^{*})^{-4/9}
+```
 
+where $\Phi$ is the standard normal cumulative distribution function and $\hat{\sigma}_{RI}$ is the sample standard deviation of the $ATT_{RI,r}$ values. This applies whether $nperm^{*}$ is small because few alternative assignments exist or because a small `nperm` was requested. Kernel smoothing can be turned off by setting `ri_kernel_cutoff` to `nothing`, `false`, or `0`. If there is only one alternative assignment, or if the $ATT_{RI,r}$ values do not vary, the unsmoothed p-value is reported.
+
+### Ties
+
+Although every alternative assignment differs from the actual assignment, an estimate under an alternative assignment can be exactly equal to the actual estimate. Assignments are unique as a whole, but a given subaggregate ATT only depends on part of the assignment: for example, the subaggregate ATT for treatment time $g$ and period $t$ only depends on which states are treated at $g$ and which states are controls in period $t$. An alternative assignment that reshuffles other states leaves that subaggregate ATT unchanged. Such ties are most common when `notyet = true` for early treatment cohorts with few states, as the set of not-yet-treated controls in an early period changes little across assignments. The aggregate ATT depends on the entire assignment and almost never ties.
+
+Ties are counted in favour of the null hypothesis (they satisfy $|ATT_{RI,r}| \geq |ATT_{Actual}|$). Because two estimates that are equal in exact arithmetic can differ by rounding error, estimates within a small relative tolerance (about $1.5 \times 10^{-8}$) of the actual estimate are treated as ties.
+
+### Aggregation by State
+
+When the randomization inference procedure is performed while the aggregation is set to `"state"` or `"sgt"`, each subaggregate ATT involves a single treated state, and an alternative assignment does not determine which state should take its place when more than one state receives the same treatment time. There is therefore an additional level of randomization: for each actually treated state, one state is drawn at random from the set of states that the alternative assignment associates with the treatment time of the actually treated state, and is used in its place in every period. This is in order to preserve the structure of the `"state"` and `"sgt"` aggregation methods whereby only one treated state is considered at a time.
+
+!!! note "Computing ATTs During Randomization"
+    For each alternative assignment, $\widehat{\mathrm{ATT}}(s,t)$ is computed directly as the long difference of the treated state minus the weighted mean of the long differences of its controls (the expression in Step 3 of the [Four Step Estimation Procedure](@ref)), which equals the regression coefficient without having to run a regression. The computations are carried out for all alternative assignments at once using matrix operations, which is why the procedure remains fast for large values of `nperm`. The same approach is used for the fast jackknife.
 
 It should also be noted that the randomization inference procedure will not run unless it is possible to calculate the long differences for each $(g,t)$ used in the computation of the actual ATT values for each state. This may occur in datasets with missing values or inconsistent time period coverage across states. This safeguard is to ensure that the randomization procedure only runs if it is possible to make a proper comparison between the actual $ATT$ values and the $ATT_{RI}$ values.
 
 ## Estimating Lambda
 
 As mentioned previously, estimating the regression model shown in Step 1 would be computationally infeasible, especially for a dataset with many states, time periods, and covariates. For example, the number of columns in the design matrix for a two-way intersection DID-INT model would be $n_{s} \cdot n_{t} + n_{s} \cdot n_{t} \cdot n_{k}$ where $n_{s}$ is the number of states, $n_{t}$ is the number of time periods, and $n_{k}$ is the number of covariates. Consequently, **DiDInt.jl** takes three different approaches for estimating the $\hat{\lambda}_{s,t}$ values depending on the specific DID-INT variation. For each approach, the resulting $\hat{\lambda}_{s,t}$ values are numerically equivalent to those from the combined regression formulation shown in Step 1.
+
+In each case the estimated covariate coefficients and the covariate means of each $(s,t)$ cell are retained, as they are needed for the [Integrated Long Differences](@ref).
 
 ### Two-Way Intersection DID-INT
 
@@ -250,7 +362,10 @@ Y_{i,s,t} = \lambda_{s,t} + \sum_{k=1}^{K} \gamma^k_{s,t} X^k_{i,s,t} + \epsilon
 
 are estimated for each $(s,t)$ cell, where $\hat{\lambda}_{s,t}$ is simply the estimated intercept for the local regression. 
 
-If, for any $(s,t)$ group, a covariate causes the design matrix to be rank-deficient, then that covariate is dropped from the regression for that $(s,t)$ group.
+If, for any $(s,t)$ group, a covariate causes the design matrix to be rank-deficient, then that covariate is dropped from the regression for that $(s,t)$ group, and its coefficient is taken to be zero in that group when computing the [Integrated Long Differences](@ref). Covariates that do not vary within the group are dropped first, and any remaining collinear covariates are identified with a rank-revealing QR decomposition.
+
+!!! note "Collinear Covariates"
+    Dropping collinear covariates is a choice. The Python implementation of DID-INT (**didintpy**) instead keeps every covariate and uses the minimum-norm least squares solution. The two approaches agree when a covariate is constant within an $(s,t)$ group, but can otherwise yield different covariate coefficients, and therefore different ATT estimates, for groups with collinear covariates.
 
 ### State-Varying, Time-Varying, and Homogeneous DID-INT
 
@@ -287,23 +402,61 @@ $\hat{\lambda}_{s,t} = \overline{Y}_{s,t} - \hat{\beta}_s'\overline{X}_{s,t} - \
 
 ## Computation of Edge Case Standard Errors
 
-In general, the heteroskedasticity-robust standard errors for the subaggregate ATTs computed in Step 3 are retrieved directly from the Step 3 regression. However, as noted in the [Standard Errors and P-Values](@ref) section, when there is only one treated state, one control state, and one $(g,t)$ group in the Step 3 regression the model is saturated and the Step 3 regression-based standard error is degenerate. In such cases, the variance of the ATT can instead be recovered from the variances and covariances of the $\hat{\lambda}_{s,t}$ values, as shown in the decomposition in the aforementioned section. Recovering the variance of the ATT from the variances and covariances of the $\hat{\lambda}_{s,t}$ values necessitates computing the full variance-covariance matrix of the $\hat{\lambda}_{s,t}$ values, $\widehat{\mathrm{Var}}(\hat{\lambda})$.
+In general, the heteroskedasticity-robust standard error of an $\widehat{\mathrm{ATT}}(s,t)$ is retrieved directly from the Step 3 regression. However, as noted in the [Standard Errors and P-Values](@ref) section, when the treated state has only one control state in that period the regression has two observations and two parameters, the model is saturated, and the regression-based standard error is degenerate. In such cases, the variance of the ATT can instead be recovered from the variances and covariances of the $\hat{\lambda}_{s,t}$ values, as shown in the decomposition in the aforementioned section. This is referred to as the edge case.
 
-In all DID-INT variations, the computation of the edge case standard errors is a more computationally expensive procedure than the standard lambda estimation procedure, so by default **DiDInt.jl** does not compute them. Computation of edge case standard errors can be toggled on by setting `edgecase = true`. When edge case computation is toggled on, the set of required $\hat{\lambda}_{s,t}$ values needed to compute ATTs is determined prior to any computations, and those involved in the saturated Step 3 regression(s) are identified. Only the necessary blocks of data are sent to the edge case computation procedure, where both the $\hat{\lambda}_{s,t}$ values and their variances/covariances are recovered. The separation of the data into blocks sent to the edge case procedure, and the rest of the data which is fed into the standard [Estimating Lambda](@ref) procedure is determined by the $(s,t)$ groups to which the implicated $\hat{\lambda}_{s,t}$ belong to as well as the specific DID-INT variation. For example, time-varying DID-INT requires that all observations in group $t$ are grouped together, so any observation belonging to a $t$ period implicated in a saturated Step 3 regression is sent to the edge case procedure. Parallel logic applies to the other DID-INT variations, however it should be noted that the edge case procedure is not an option for two one-way DID-INT as this model is always rank deficient and $\widehat{\mathrm{Var}}(\hat{\lambda})$ is not recoverable. 
+The edge case is a property of an individual $\widehat{\mathrm{ATT}}(s,t)$, whatever the aggregation method and whether adoption is common or staggered. The edge case standard errors therefore appear in the results:
+
+- under `"sgt"` aggregation, for every $\widehat{\mathrm{ATT}}(s,t)$ with a single control state;
+- for any subaggregate ATT that consists of a single $\widehat{\mathrm{ATT}}(s,t)$ with a single control state (and for the aggregate ATT if that is the only subaggregate ATT).
+
+Subaggregate ATTs that average two or more $\widehat{\mathrm{ATT}}(s,t)$ values obtain their standard error from the spread of those values, as described in the [Standard Errors and P-Values](@ref) section, and do not involve the edge case. The jackknife and the randomization inference procedure only use point estimates and are never affected. An edge case standard error is reported without a p-value, as the saturated regression leaves no residual degrees of freedom for a $t$-distribution.
+
+Recovering the variance of the ATT from the variances and covariances of the $\hat{\lambda}_{s,t}$ values necessitates computing the variance-covariance matrix of the $\hat{\lambda}_{s,t}$ values, $\widehat{\mathrm{Var}}(\hat{\lambda})$. This is a more computationally expensive procedure than the standard lambda estimation procedure, so by default **DiDInt.jl** does not compute it. Computation of edge case standard errors can be toggled on by setting `edgecase = true`. When edge case computation is toggled on, the set of required $\hat{\lambda}_{s,t}$ values needed to compute ATTs is determined prior to any computations, and those involved in the saturated Step 3 regression(s) are identified. Only the necessary blocks of data are sent to the edge case computation procedure, where both the $\hat{\lambda}_{s,t}$ values and their variances/covariances are recovered. The separation of the data into blocks sent to the edge case procedure, and the rest of the data which is fed into the standard [Estimating Lambda](@ref) procedure is determined by the $(s,t)$ groups to which the implicated $\hat{\lambda}_{s,t}$ belong to as well as the specific DID-INT variation. For example, time-varying DID-INT requires that all observations in group $t$ are grouped together, so any observation belonging to a $t$ period implicated in a saturated Step 3 regression is sent to the edge case procedure. Parallel logic applies to the other DID-INT variations, however it should be noted that the edge case procedure is not an option for two one-way DID-INT as this model is always rank deficient and $\widehat{\mathrm{Var}}(\hat{\lambda})$ is not recoverable. 
 
 ### Computing $\widehat{\mathrm{Var}}(\hat{\lambda})$
 
 The variance-covariance matrix $\widehat{\mathrm{Var}}(\hat{\lambda})$ is an $n_\lambda \times n_\lambda$ matrix, where $n_\lambda = n_s \cdot n_t$ is the total number of $\hat{\lambda}_{s,t}$ values. For homogeneous DID-INT it is computed by following a single regression, and for all other DID-INT variations it is computed in blocks following regressions on subsets of the data. The raw outcome $Y_{i,s,t}$ is regressed on $I(s,t)$ cell dummies and the original (non-demeaned) covariates $X$, after which the covariance matrix of $\hat{\lambda}_{s,t}$ values from that regression is recovered using the chosen HCCME. 
 
-The specific regression used to compute $\widehat{\mathrm{Var}}(\hat{\lambda})$ mirrors the CCC structure of the chosen DID-INT variant:
+The specific regression used to compute $\widehat{\mathrm{Var}}(\hat{\lambda})$ mirrors the CCC structure of the chosen DID-INT variant, which also determines which of the terms of the variance decomposition in the [Standard Errors and P-Values](@ref) section can be nonzero:
 
-- **Two-way intersection** (`"int"`): a separate regression is run for each $(s,t)$ cell, with the cell dummy and covariates as regressors. The HCCME for each cell's dummy coefficient is placed into the corresponding diagonal entry of $\widehat{\mathrm{Var}}(\hat{\lambda})$. Off-diagonal entries between different cells are zero since the regressions are run separately.
-- **State-varying** (`"state"`): a separate regression is run for each state $s$, pooling all time periods within that state. The HCCME for the cell dummies within each state block is placed into the corresponding entries of $\widehat{\mathrm{Var}}(\hat{\lambda})$ (including off-diagonal covariance terms).
-- **Time-varying** (`"time"`): analogous to state-varying, with separate regressions run for each time period $t$.
-- **Homogeneous** (`"hom"`): a single global regression is run across all observations. The HCCME for all cell dummies from the regression is exactly $\widehat{\mathrm{Var}}(\hat{\lambda})$.
+- **Two-way intersection** (`"int"`): a separate regression is run for each $(s,t)$ cell, with the cell dummy and covariates as regressors. The HCCME for each cell's dummy coefficient is placed into the corresponding diagonal entry of $\widehat{\mathrm{Var}}(\hat{\lambda})$. Off-diagonal entries between different cells are zero since the regressions are run separately, so only the four variance terms of the decomposition remain.
+- **State-varying** (`"state"`): a separate regression is run for each state $s$, pooling all time periods within that state. The HCCME for the cell dummies within each state block is placed into the corresponding entries of $\widehat{\mathrm{Var}}(\hat{\lambda})$ (including off-diagonal covariance terms). The covariances between the two periods of the same state are nonzero; those between the treated state and the control state are zero.
+- **Time-varying** (`"time"`): analogous to state-varying, with separate regressions run for each time period $t$. The covariances between the treated state and the control state in the same period are nonzero; all others are zero.
+- **Homogeneous** (`"hom"`): a single global regression is run across all observations. The HCCME for all cell dummies from the regression is exactly $\widehat{\mathrm{Var}}(\hat{\lambda})$, and every term of the decomposition can be nonzero.
+
+If one of these regressions has no residual degrees of freedom or is not of full rank, the corresponding variances cannot be computed and the edge case standard error is returned as `missing`.
+
+### Edge Case Standard Errors for Two-Way Intersection DID-INT with Covariates
+
+For homogeneous, state-varying, and time-varying DID-INT, the covariate term of the [Integrated Long Differences](@ref) cancels, $\widehat{\mathrm{ATT}}(s,t)$ is a combination of four $\hat{\lambda}_{s,t}$ values with fixed coefficients, and the decomposition above gives its variance. For two-way intersection DID-INT with covariates the covariate term does not cancel. Since each cell's regression passes through the cell means, $\hat{\lambda}_{s,t} + \hat{\gamma}_{s,t}'\overline{X}_{s,t} = \overline{Y}_{s,t}$, and with a single control state $c$:
+
+```math
+\widehat{\mathrm{ATT}}(s,t) = \left(\overline{Y}_{s,t} - \hat{\delta}'\,\overline{X}_{s,t}\right) - \left(\hat{\lambda}_{s,r} + \hat{\lambda}_{c,t} - \hat{\lambda}_{c,r}\right), \qquad \hat{\delta} = \hat{\gamma}_{s,r} + \hat{\gamma}_{c,t} - \hat{\gamma}_{c,r}
+```
+
+The term $\hat{\delta}'\,\overline{X}_{s,t}$ is a product of two estimates: covariate coefficients estimated from three cells, and covariate means estimated from the treated state's cell in period $t$. **DiDInt.jl** treats $\overline{X}_{s,t}$ as an estimate (of the mean of the covariate distribution that the long differences are integrated over) rather than as fixed, and computes:
+
+```math
+\mathrm{Var}(\widehat{\mathrm{ATT}}(s,t)) = \mathrm{Var}(\overline{Z}_{s,t}) + \sum_{k \in \{(s,r),\,(c,t),\,(c,r)\}} a' V_k\, a + \mathrm{tr}\!\left(V_{\delta}\, \Sigma\right)
+```
+
+where:
+
+- $\overline{Z}_{s,t}$ is the mean of $Z_i = Y_i - \hat{\delta}' X_i$ over the observations of cell $(s,t)$, and $\mathrm{Var}(\overline{Z}_{s,t})$ is its HCCME variance. It accounts for the sampling variation in $\overline{Y}_{s,t}$ and in $\overline{X}_{s,t}$, and for their covariance.
+- $a = (1, \overline{X}_{s,t})$, and $V_k$ is the HCCME covariance matrix of the intercept and covariate coefficients from the regression of cell $k$.
+- $V_{\delta}$ is the sum of the covariance matrices of the covariate coefficients of the three cells, and $\Sigma$ is the HCCME covariance matrix of $\overline{X}_{s,t}$. The trace term is the variance of the product of the estimation errors in $\hat{\delta}$ and $\overline{X}_{s,t}$; it is small unless cells have very few observations.
+
+### Independence Across Cells
+
+!!! warning "Panel Data"
+    Every edge case standard error assumes that observations in different $(s,t)$ cells are independent of each other. This holds for repeated cross-sections, where each period samples different individuals. It does not hold for panel data, where the same individuals are observed in several periods: the estimates for a state's periods are then correlated, and the formulas above omit that covariance (under two-way intersection DID-INT with covariates, this includes the covariance between $\overline{X}_{s,t}$ and the same state's estimates for the period before treatment). With panel data the edge case standard errors should be interpreted with caution.
 
 !!! note "Consistency with Lambda Estimation"
     For the FWL-based cases (`"hom"`, `"state"`, `"time"`), covariates that are constant within every $(s,t)$ cell in the relevant block are dropped from the block regressions used in the edge case procedure. These same covariates are demeaned to exactly zero during the regular lambda estimation procedure and thus contribute nothing to the estimated $\hat{\beta}$ there either. For the `"int"` case, both procedures are identical: any covariate that does not vary within a given $(s,t)$ cell is dropped from that cell's regression in both the normal lambda estimation procedure and the edge case procedure.
 
 !!! note "Rank Deficiency and Lambda Identification"
     In all DID-INT variations besides two-way intersection DID-INT, the design matrices used to recover $\hat{\lambda}_{s,t}$ values are allowed to be rank deficient, meaning $\hat{\lambda}_{s,t}$ is not always uniquely identified. However, the ATT estimates remain uniquely identified due to cancellation that occurs in the long difference contrasts. **DiDInt.jl** makes use of the `\` operator while computing  $\hat{\lambda}_{s,t}$ values in order to facilitate this, which returns the minimum-norm least squares solution, ensuring consistent ATT estimates between procedures, even when $\hat{\lambda}_{s,t}$ is not uniquely identified. In the case of two-way intersection DID-INT, in both the normal lambda estimation procedure and the edge case procedure, a rank revealing QR procedure is used to drop any remaining rank deficiency inducing covariates within each $(s,t)$ block after having already removed covariates that did not vary within the given $(s,t)$ block.
+
+## Plotting with `didint_plot()`
+
+`didint_plot()` is intended as a simple visual tool. For each requested `ccc` option it plots the $\hat{\lambda}_{s,t}$ values from Step 1 of the [Four Step Estimation Procedure](@ref) (equation 45 of the DID-INT paper) by state and period, or, for event study plots, the averages of the treated states' $\hat{\lambda}_{s,t}$ values by periods since treatment. These show how each form of covariate adjustment affects the trends in the outcome. They are not the [Integrated Long Differences](@ref) used by `didint()`, so the plots are not meant to reproduce the ATT estimates exactly (the two differ when `ccc = "int"` is used with covariates).

@@ -1,5 +1,5 @@
 # Tests of the batched engine behind randomization inference and the jackknife, of the draws
-# and of the RI p-values (update spec §7-§9; §12.2 items 7-12).
+# and of the RI p-values.
 # The panel is test/data/didintpy_panel.csv: 12 states observed 2001-2008, cohorts 2004 (s01,
 # s02), 2006 (s03, s04) and 2007 (s05), seven never-treated states, covariates x1 and x2.
 
@@ -23,11 +23,11 @@ const ENGINE_POLICY_WEIGHTINGS = ["equal", "treated_obs", "treated_cells", "trea
 quietly(f) = Base.CoreLogging.with_logger(f, Base.CoreLogging.NullLogger())
 
 # The first stage of one specification, as didint() computes it (it does not depend on the
-# treatment assignment). Integration only applies under ccc = "int" with covariates (D5).
+# treatment assignment). Integration only applies under ccc = "int" with covariates.
 function engine_first_stage(ccc::AbstractString, covariates::Bool)
     data, dates, time_to_index = first_stage_inputs(ENGINE_PANEL)
     lambda_df, vcov_lambda, fit = quietly() do
-        DiDInt.iterative_demean(data, ccc, covariates ? ["x1", "x2"] : String[], "hc1", false)
+        DiDInt.first_stage(data, ccc, covariates ? ["x1", "x2"] : String[], "hc1", false)
     end
     return (data = data, dates = dates, time_to_index = time_to_index, lambda_df = lambda_df, vcov_lambda = vcov_lambda,
             integration = (ccc == "int" && covariates) ? fit : nothing)
@@ -76,8 +76,8 @@ close_enough(a, b) = isapprox(a, b; atol = 1e-10)
 
 const ENGINE_OBSERVED_TIMES = Dict(zip(ENGINE_TREATED, ENGINE_TIMES))
 
-@testset "The engine reproduces every observed estimate (§7.4)" begin
-    # Spec §12.2 item 7, first half: at the observed assignment the engine gives every
+@testset "The engine reproduces every observed estimate" begin
+    # At the observed assignment the engine gives every
     # sub-aggregate, the aggregate ATT, each policy's ATT and the pooled ATT, for every agg,
     # weighting, treated_weight, use_pre_controls and ccc
     for (ccc, covariates) in [("int", false), ("int", true), ("hom", true), ("time", true)]
@@ -104,7 +104,7 @@ const ENGINE_OBSERVED_TIMES = Dict(zip(ENGINE_TREATED, ENGINE_TIMES))
 end
 
 @testset "The engine matches a rebuilt ATT(s,t) table and the loop reference on random draws" begin
-    # Spec §12.2 item 7, second half: for 20 random assignments, the engine built from the
+    # For 20 random assignments, the engine built from the
     # observed assignment gives (a) what the regression-based second stage gives when the
     # ATT(s,t) table is rebuilt for the drawn assignment, and (b) what the per-draw loops it
     # replaced give
@@ -157,7 +157,7 @@ end
     end
 end
 
-@testset "Ranking and unranking arrangements; Floyd sampling (Appendix A)" begin
+@testset "Ranking and unranking arrangements; Floyd sampling" begin
     # Counts (3, 1, 1): 5!/3! = 20 arrangements, numbered in lexicographic order
     counts = [3, 1, 1]
     @test DiDInt.n_arrangements(counts) == 20
@@ -191,8 +191,8 @@ end
     @test length(pair_counts) == 6 && all(850 .<= values(pair_counts) .<= 1150)
 end
 
-@testset "RI draws: exact enumeration and distinct samples of the joint labels (§7.2)" begin
-    # Spec §12.2 item 8. Five states; state 1 treated in period 10 with policy 1, state 2 in
+@testset "RI draws: exact enumeration and distinct samples of the joint labels" begin
+    # Five states; state 1 treated in period 10 with policy 1, state 2 in
     # period 20 with policy 2: 5!/3! = 20 arrangements, 19 alternatives
     L_observed = [10, 20, 0, 0, 0]
     P_observed = [1, 2, 0, 0, 0]
@@ -225,8 +225,8 @@ end
     @test DiDInt.ri_assignment_draws(L_observed, P_observed, 200, Xoshiro(20260116))[1] == L
 end
 
-@testset "Kernel-smoothed RI p-value (§8.2)" begin
-    # Spec §12.2 item 9: reference numbers from didintpy's kernel_smoothed_ri_pvalue
+@testset "Kernel-smoothed RI p-value" begin
+    # Reference numbers from didintpy's kernel_smoothed_ri_pvalue
     placebos = [-0.21, 0.05, 0.33, -0.12, 0.47, -0.38, 0.09, 0.26, -0.02, 0.15, -0.29, 0.41, -0.07]
     @test std(placebos) ≈ 0.2671 atol = 5e-5
     @test 1.575 * std(placebos) * 13^(-4 / 9) ≈ 0.1346 atol = 5e-5
@@ -238,7 +238,7 @@ end
     @test DiDInt.ri_pvalue_kernel(placebos, -0.44) == DiDInt.ri_pvalue_kernel(placebos, 0.44)
     @test DiDInt.ri_pvalue_kernel([placebos; NaN], 0.44) == DiDInt.ri_pvalue_kernel(placebos, 0.44)
 
-    # Fallbacks to the ordinary p-value, ties counted as hits (spec §12.2 item 10): a single
+    # Fallbacks to the ordinary p-value, ties counted as hits: a single
     # placebo, or placebos without any spread
     @test DiDInt.ri_pvalue_kernel([0.3], 0.3) == (1 + 1) / (1 + 1)
     @test DiDInt.ri_pvalue_kernel([0.3, 0.3, 0.3], 0.1 + 0.2) == (1 + 3) / (3 + 1)
@@ -246,8 +246,8 @@ end
     @test ismissing(DiDInt.ri_pvalue_kernel([NaN], 0.3))
 end
 
-@testset "State-level RI: the engine's statistics match the loop with the same stand-ins (§7.5)" begin
-    # Spec §12.2 item 11, on the design without covariates
+@testset "State-level RI: the engine's statistics match the loop with the same stand-ins" begin
+    # On the design without covariates
     stage = engine_first_stage("int", false)
     for upc in [false, true], weighting in ["both", "none"], agg in ["state", "sgt"]
         observed = second_stage(stage, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, agg, weighting, "treated", upc)
@@ -311,8 +311,8 @@ end
     @test size(own.sub) == size(est.sub)
 end
 
-@testset "Batched jackknife equals the delete-one loop (§9.2)" begin
-    # Spec §12.2 item 12: for ccc = "int" and "state" the engine's row h is the estimate without
+@testset "Batched jackknife equals the delete-one loop" begin
+    # For ccc = "int" and "state" the engine's row h is the estimate without
     # state h, as the loop over deletions computed it
     names = ["A", "B"]
     for (ccc, covariates) in [("int", true), ("state", true), ("int", false)], upc in [false, true], weighting in ["both", "none"]
@@ -443,7 +443,7 @@ end
 end
 
 @testset "truejack still refits the first stage" begin
-    # Spec §12.2 item 12, second half: under ccc = "hom" with covariates a deletion changes the
+    # Under ccc = "hom" with covariates a deletion changes the
     # other states' lambdas, so the refit jackknife differs from the fast one; under "int" the
     # argument has no effect
     run(; kwargs...) = quietly() do
