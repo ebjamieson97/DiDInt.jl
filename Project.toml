@@ -16,8 +16,9 @@ StatsAPI = "82ae8749-77ed-4fe6-ae5f-f523153014b0"
 Tables = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
 
 [compat]
+CSV = "0.10, 1"
 CategoricalArrays = "0.10, 1"
-DataFrames = "1"
+DataFrames = "1.6"
 Distributions = "0.25"
 StatsAPI = "1"
 Tables = "1"

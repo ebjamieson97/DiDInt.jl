@@ -21,10 +21,13 @@
 
 function safe_solve(X::Matrix, Y::Vector)
 
-    # Least-squares coefficients of Y on X, or missing (with a warning) if they cannot be computed
+    # Least-squares coefficients of Y on X, or missing (with a warning) if they cannot be
+    # computed. Only failures of the linear algebra are turned into missing; anything else
+    # (such as running out of memory) is an error.
     try
         return X \ Y
     catch e
+        e isa Union{SingularException, LAPACKException, PosDefException, RankDeficientException} || rethrow()
         @warn "$e"
         return missing
     end
@@ -55,7 +58,9 @@ function compute_hc_covariance(X::Matrix, resid::Vector, hc::AbstractString)
     elseif hc == "hc4"
         h_bar = mean(h)
         delta = min.(Ref(4), h ./ h_bar)
-        omega_diag = (resid .^ 2) ./ ((1 .- h) .^ delta)
+        # Rounding can put a leverage of 1 slightly above 1; without the max, the negative base
+        # raised to a non-integer power would throw an error
+        omega_diag = (resid .^ 2) ./ (max.(1 .- h, 0.0) .^ delta)
     end
 
     # A row with leverage 1 (such as the single treated row of an ATT(s,t) regression) leaves
@@ -237,7 +242,11 @@ function cell_lambdas_fwl!(fit::CovariateFit, data, ccc, covariates_to_include)
     #   lambda_{s,t} = ybar_{s,t} - gamma_{s,t}' xbar_{s,t}
     # with gamma_{s,t} the slopes that apply to the cell: gamma ("hom"), gamma_s ("state"),
     # gamma_t ("time") or gamma_s + gamma_t ("add").
-    demean(x) = (x = Float64.(x); x .- mean(skipmissing(x)))
+    # A covariate that does not vary within a cell (for example one measured at the state-period
+    # level) is absorbed by the cell dummies. Its demeaned values are set to exactly zero:
+    # subtracting the mean of identical values can leave rounding noise of about 1e-17, and a
+    # regression on a column of pure rounding noise returns an arbitrary slope.
+    demean(x) = allequal(x) ? zeros(length(x)) : (x = Float64.(x); x .- mean(skipmissing(x)))
     demeaned_covs = [cov * "_demeaned" for cov in covariates_to_include]
     demeaned = transform(groupby(data, CELL_COLUMNS),
                          :outcome_71X9yTx => (y -> y .- mean(y)) => :y_demeaned,
@@ -248,10 +257,17 @@ function cell_lambdas_fwl!(fit::CovariateFit, data, ccc, covariates_to_include)
                          [Symbol(cov) => (x -> mean(skipmissing(x))) => Symbol("cell_mean_" * cov) for cov in covariates_to_include]...)
 
     # Slopes from a regression of the demeaned outcome on the demeaned covariates, without an
-    # intercept as both are already demeaned
+    # intercept as both are already demeaned. A covariate without any within-cell variation in
+    # the data of the regression is left out and has slope 0. The least-squares solution comes
+    # from a column-pivoted QR decomposition, which also handles collinear covariates.
     function estimate_slopes(df)
-        isempty(demeaned_covs) && return Float64[]
-        return Matrix(Float64.(df[:, Symbol.(demeaned_covs)])) \ Float64.(collect(df.y_demeaned))
+        X = Matrix(Float64.(df[:, Symbol.(demeaned_covs)]))
+        varies = [any(!iszero, view(X, :, j)) for j in axes(X, 2)]
+        slopes = zeros(size(X, 2))
+        if any(varies)
+            slopes[varies] = qr(X[:, varies], ColumnNorm()) \ Float64.(collect(df.y_demeaned))
+        end
+        return slopes
     end
 
     # cell_slopes(state, time) gives the slope vectors that apply to a cell (two for "add")
@@ -302,10 +318,11 @@ function estimate_additive_slopes(demeaned, demeaned_covs)
         append!(rows, 1:n); append!(cols, (row_state .- 1) .* ncovs .+ j);                          append!(vals, x)
         append!(rows, 1:n); append!(cols, length(states) * ncovs .+ (row_time .- 1) .* ncovs .+ j); append!(vals, x)
     end
-    Z = sparse(rows, cols, vals, n, (length(states) + length(times)) * ncovs)
+    Z = dropzeros!(sparse(rows, cols, vals, n, (length(states) + length(times)) * ncovs))
 
-    # Without covariates there is nothing to solve for (and the sparse solver rejects an empty design)
-    gamma = ncovs == 0 ? Float64[] : Z \ Float64.(demeaned.y_demeaned)
+    # Without covariates, or without any within-cell variation in them, there is nothing to
+    # solve for (and the sparse solver rejects an empty design): every slope is zero
+    gamma = nnz(Z) == 0 ? zeros(size(Z, 2)) : Z \ Float64.(demeaned.y_demeaned)
     gamma_states = reshape(gamma[1:length(states)*ncovs], ncovs, length(states))
     gamma_times = reshape(gamma[length(states)*ncovs+1:end], ncovs, length(times))
     return gamma_states, gamma_times, state_idx, time_idx
@@ -318,6 +335,10 @@ function prune_covariate_columns(W)
     # informative. Collinear covariates are dropped, and a dropped covariate has slope 0 in that
     # cell. A cell's lambda and slopes must be uniquely identified under "int" (the other ccc
     # options tolerate rank deficiency, as their ATTs are identified anyway).
+    # The decomposition is of the covariates centered at their cell means, because the
+    # regression has an intercept: covariates can be collinear with the intercept without being
+    # collinear with each other (for example the dummies of a factor whose reference category
+    # does not occur in the cell add up to one).
     # This is a choice: the Python implementation didintpy keeps every covariate and uses the
     # minimum-norm least-squares solution instead. The two agree when a covariate is constant
     # within the cell, but can give different slopes, and so different ATT(s,t)'s, for other
@@ -326,7 +347,7 @@ function prune_covariate_columns(W)
     Wcol = size(W, 2)
     Wrow = size(W, 1)
 
-    Wqr = qr(W, ColumnNorm())
+    Wqr = qr(W .- mean(W, dims = 1), ColumnNorm())
     m = min(Wcol, Wrow)
     tol = abs(Wqr.factors[1,1]) * eps(Float64) * m
     # Search for first column below tolerance

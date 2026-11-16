@@ -21,7 +21,7 @@ See more detailed documentation on the [documentation page](https://ebjamieson97
 ## Installation 
 ```
 using Pkg
-Pkg.add(url="https://github.com/ebjamieson97/DiDInt.jl")
+Pkg.add("DiDInt")
 ```
 
 ## `didint()` - Estimate ATT

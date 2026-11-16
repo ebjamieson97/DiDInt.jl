@@ -105,7 +105,7 @@ in `treatment_times`, and so on. A single treatment time applies to every treate
     Name of the column which indicates time of first treatment for each state (missing or `0` for
     never-treated states). Use either `gvar`, or `treated_states` and `treatment_times`.
 - `treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing`
-    A vector of strings (or a single string) noting the treated state(s).
+    A vector of strings or numbers (or a single one) noting the treated state(s), matching the type of the `state` column.
 - `treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing`
     A vector (or single entry) denoting the associated treatment times of the 'treated_states'.
 - `pvar::Union{AbstractString, Symbol, Nothing} = nothing`
@@ -162,7 +162,7 @@ in `treatment_times`, and so on. A single treatment time applies to every treate
 - `covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol, Nothing} = nothing`
     A vector of covariates entered as either strings or symbols (or a single covariate string or symbol),
     or, `nothing` (default).
-- `notyet::Bool = false`
+- `notyet::Union{Nothing, Bool} = nothing`
     Determine if pre-treatment periods from treated states should be used as controls
     (`use_pre_controls` is an alias).
 - `ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing`
@@ -198,7 +198,7 @@ in `treatment_times`, and so on. A single treatment time applies to every treate
     Set it to `nothing`, `false` or `0` to never smooth.
 - `seed::Number = rand(1:1000000)`
     An integer to set the random seed for the randomization inference procedure. The same seed gives the
-    same permutations; the global random number generator is left untouched.
+    same permutations. When a seed is given, the global random number generator is left untouched (the default seed is drawn from it).
 - `hc::Union{AbstractString, Number} = "hc1"`
     Specify which heteroskedasticity-consistent covariance matrix estimator (HCCME) should be used.
     Options are `0`, `1`, `2`, `3`, and `4` (or `"hc0"`, `"hc1"`, `"hc2"`, `"hc3"`, `"hc4"`).
@@ -228,7 +228,7 @@ A [`DiDIntResult`](@ref). Displaying it prints a summary of the specification, t
 Its fields hold the results as tables:
 
 - `agg`: the aggregate ATT (for the policy aggregations, the ATT of each policy and, with `policy_aggregation = true`, the pooled ATT).
-- `sub`: the sub-aggregate ATTs of the chosen `agg`, with the weight of each in the aggregate ATT.
+- `sub`: the sub-aggregate ATTs of the chosen `agg`, with the weight of each in the aggregate ATT (`missing` when they are weighted equally).
 - `att_st`: the ATT of each treated state in each period from its treatment time on.
 - `specs`: the specification that was estimated, including the period length, the date range and the number of permutations used.
 - `table`: every result in one wide table (also returned by `DataFrame(result)`).
@@ -250,7 +250,8 @@ The wide table has one row per sub-aggregate ATT:
   that policy and, with `policy_aggregation = true`, the pooled ATT is in `att_pool` (with the same prefixes) on the first row and
   each policy's weight in it is in `policy_weights`.
 - `nperm`: the number of permutations used in the randomization inference (first row).
-- `weights`: the weight of each sub-aggregate in the aggregate ATT (for the policy aggregations, in its policy's ATT).
+- `weights`: the weight of each sub-aggregate in the aggregate ATT (for the policy aggregations, in its policy's ATT). It is empty
+  (`missing`; `nothing` in the table passed to the wrappers) when the sub-aggregates are weighted equally, under `weighting = "none"` or `"diff"`.
 - `period`, `start_date` and `end_date`: the period length and the date range of the data used.
 
 A jackknife needs at least two treated and two control states, overall and for each estimate, and the sub-aggregates of
@@ -304,6 +305,8 @@ function didint(outcome::Union{AbstractString, Symbol},
     hc = hc_checks(hc)
     wrapper = init_wrapper_check(wrapper)
     data_type_check(data)
+    date_format = check_date_format(date_format)
+    freq_multiplier = check_positive_integer(freq_multiplier, "freq_multiplier")
 
     # Let notyet override use_pre_controls
     use_pre_controls = isnothing(notyet) ? use_pre_controls : notyet
@@ -356,20 +359,11 @@ function didint(outcome::Union{AbstractString, Symbol},
     # Check that the specified columns exist and can be processed
     data_copy, treatment_times, covariates = validate_data(data_copy, outcome, state, time, covariates, treatment_times, date_format;
                                                warn_missing_covariates = false)
-    treatment_times = !(treatment_times isa AbstractVector) ? [treatment_times] : treatment_times
-    if isempty(treatment_times)
-        error("'treatment_times' must have at least one entry.")
-    end
 
+    # Treated states and treatment times as vectors of the same length, each state listed once.
     # A single treatment time applies to every treated state: common adoption is the one-cohort
-    # case of the same estimator
-    treated_states = !(treated_states isa AbstractVector) ? [treated_states] : treated_states
-    if length(treatment_times) == 1 && length(treated_states) > 1
-        treatment_times = fill(treatment_times[1], length(treated_states))
-    end
-    if length(treatment_times) != length(treated_states)
-        error("'treatment_times' should either be the same length as the 'treated_states' vector or of length 1.")
-    end
+    # case of the same estimator.
+    treated_states, treatment_times = check_treated_states(treated_states, treatment_times)
 
     # Make sure control states exist. Not-yet-treated states can only serve as controls when
     # there are at least two treatment times.
@@ -387,7 +381,7 @@ function didint(outcome::Union{AbstractString, Symbol},
     validate_state_types(treated_states, data_copy, state)
     data_copy.state_71X9yTx = data_copy[!, state]
     if (length(unique(data_copy.state_71X9yTx)) == 1)
-        error("Not enough non-missing observations.\nFound", length(unique(data_copy.state_71X9yTx)), "states after dropping missing observations.")
+        error("Not enough non-missing observations: found only 1 state after dropping missing observations.")
     end
 
     # Convert dates to Date objects and keep the data between start_date and end_date
@@ -397,7 +391,10 @@ function didint(outcome::Union{AbstractString, Symbol},
     # Build the period grid and match every date and treatment time to a period on it
     data_copy, treatment_times, treated_states, match_to_these_dates, time_to_index, period = perform_date_matching(data_copy, all_times, freq, freq_multiplier,
                                                                                                                     start_date, end_date, treatment_times,
-                                                                                                                    treated_states)
+                                                                                                                    treated_states; drop_already_treated = true)
+    if isempty(treated_states)
+        error("None of the treated states has a treatment time within the data used (after its first date and no later than its last date).")
+    end
 
     # Check that the treated states exist, and that each has data before and from its treatment time
     treated_states, treatment_times = validate_treated_states(treated_states, treatment_times, data_copy)
@@ -662,9 +659,9 @@ function check_prior_to_ri(diff_df, ri_diff_df)
     # state lacks one.
     combined_df = vcat(diff_df, ri_diff_df)
     required_cells = Set(zip(combined_df.t, combined_df.r1))
-    cells_of_state = Dict{String, Set{Tuple{Date, Date}}}()
-    for (s, t, r1) in zip(combined_df.state, combined_df.t, combined_df.r1)
-        push!(get!(cells_of_state, s, Set{Tuple{Date, Date}}()), (t, r1))
+    cells_of_state = Dict{String, Set{Tuple{Date, Date}}}(s => Set{Tuple{Date, Date}}() for s in unique(combined_df.state))
+    for (s, t, r1, diff) in zip(combined_df.state, combined_df.t, combined_df.r1, combined_df.diff)
+        ismissing(diff) || push!(cells_of_state[s], (t, r1))
     end
     randomize = all(length(cells) == length(required_cells) for cells in values(cells_of_state))
     if !randomize
@@ -1289,8 +1286,13 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
         end
     end
 
-    # Aggregate ATT, over the deletions that leave it defined
+    # Aggregate ATT, over the deletions that leave it defined. If a deletion removes every
+    # treated state of a sub-aggregate (other than under "state" and "sgt", where each treated
+    # state is its own sub-aggregate), the aggregate is then a mean over fewer sub-aggregates.
     if !is_policy_agg(agg)
+        if !(agg in ["state", "sgt"]) && any(any(ismissing, sub_jacks[h, :]) && !ismissing(top_jacks[h]) for h in 1:n_states)
+            @warn "Some jackknife deletions remove every treated state of a sub-aggregate ATT. The jackknife standard error of the aggregate ATT then compares aggregates over different sets of sub-aggregates."
+        end
         results.jknifese_agg_att[1], results.jknifepval_agg_att[1] = jackknife_se_pval(collect(skipmissing(top_jacks)), results.agg_att[1])
         return results
     end
@@ -1432,10 +1434,11 @@ function ri_pvalue(att_ri::AbstractVector, observed::Real)
     # estimate exactly in exact arithmetic, but the two are computed along different paths
     # and can differ by rounding (~1e-16), which also varies with compiler flags such as
     # --check-bounds. Treating |T*| within a relative RI_TIE_RTOL of |T| as a tie keeps
-    # the count deterministic. Returns missing if there is no finite placebo estimate.
+    # the count deterministic. Returns missing if there is no finite placebo estimate or if
+    # the observed estimate is not finite.
     finite_att_ri = filter(isfinite, att_ri)
     n_placebo = length(finite_att_ri)
-    n_placebo == 0 && return missing
+    (n_placebo == 0 || !isfinite(observed)) && return missing
     threshold = abs(observed) * (1 - RI_TIE_RTOL)
     n_hits = count(x -> abs(x) >= threshold, finite_att_ri)
     return (1 + n_hits) / (n_placebo + 1)
@@ -1448,12 +1451,13 @@ function ri_pvalue_kernel(att_ri::AbstractVector, observed::Real)
     # over the S finite placebo estimates T*, with Phi the standard normal CDF and sd the sample
     # standard deviation of the signed T*. With few permutations the ordinary p-value can only
     # take a few values; smoothing the indicator |T*| >= |T| lets it move continuously with T.
-    # Falls back to the ordinary p-value if S < 2 or sd is zero or not finite.
+    # Falls back to the ordinary p-value if S < 2 or if the T* do not vary (their sd is zero up
+    # to rounding, or not finite). Returns missing if the observed estimate is not finite.
     finite_att_ri = filter(isfinite, att_ri)
     n_placebo = length(finite_att_ri)
-    n_placebo == 0 && return missing
+    (n_placebo == 0 || !isfinite(observed)) && return missing
     sd = n_placebo >= 2 ? std(finite_att_ri) : NaN
-    if !(isfinite(sd) && sd > 0)
+    if !(isfinite(sd) && sd > RI_TIE_RTOL * maximum(abs, finite_att_ri))
         return ri_pvalue(att_ri, observed)
     end
     h = 1.575 * sd * n_placebo^(-4 / 9)

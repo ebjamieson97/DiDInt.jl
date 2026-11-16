@@ -211,6 +211,15 @@ Once the period grid is established, each observation in the data is matched to 
    This adjustment ensures that observations are not incorrectly assigned to pre-treatment periods when they occur after treatment begins within that period.
 3. **Treatment time matching**: Treatment times themselves are matched to the first grid period date that is greater than or equal to the treatment time, ensuring treatments are associated with the correct period on the grid.
 
+### Treatment Times Outside the Data
+
+A treated state is part of the analysis as a treated state only if its treatment time falls within the data used, that is, after the first date and no later than the last date (after any restriction through `start_date` and `end_date`). Otherwise, with a warning:
+
+- A state treated **at or before the first date** is treated throughout the data. It has no pre-treatment period, so no ATT can be computed for it, and it is not a valid control either. Its observations are dropped by `didint()`.
+- A state treated **after the last date** is untreated throughout the data, and is used as a control like a never-treated state.
+
+Each treated state can only have one treatment time: listing a state twice, or a `gvar` column that takes more than one value within a state, is an error.
+
 
 ## Standard Errors and P-Values
 
@@ -300,6 +309,8 @@ where $N$ is the number of states whose removal leaves the estimate defined, $\h
 
 A minimum of two treated states and two control states are required to compute jackknife standard errors and p-values; if this condition is not met, these quantities are returned as `missing`. The same minimum applies to each estimate separately: a subaggregate ATT (or the ATT of a policy) only has a jackknife standard error if the $\widehat{\mathrm{ATT}}(s,t)$ values it averages involve at least two treated states and at least two control states, and if it can be computed with any one state removed.
 
+The states that are removed in turn are those that contribute at least one long difference to the estimates; a state that never does (for example one that is only observed before every treatment time) is not counted. If removing a state leaves a subaggregate ATT without any treated state (for example the only state of a treatment cohort), the aggregate ATT for that removal is the mean over the remaining subaggregate ATTs. Its jackknife standard error is still reported, with a warning, since it then compares aggregates over different sets of subaggregate ATTs.
+
 Further, note that for the aggregation methods of `"state"` and `"sgt"`, where each subaggregate ATT involves only one treated state, that the jackknife standard errors and jackknife p-values are never estimated at the subaggregate level: removing that one treated state leaves nothing to estimate. This limitation does **not** prevent the jackknife standard error and jackknife p-value from being calculated for the *aggregate* ATT under `"state"` or `"sgt"` aggregation, so long as there are at least two treated and two control states.
 
 ## Randomization Inference
@@ -337,6 +348,8 @@ Although every alternative assignment differs from the actual assignment, an est
 
 Ties are counted in favour of the null hypothesis (they satisfy $|ATT_{RI,r}| \geq |ATT_{Actual}|$). Because two estimates that are equal in exact arithmetic can differ by rounding error, estimates within a small relative tolerance (about $1.5 \times 10^{-8}$) of the actual estimate are treated as ties.
 
+This applies to the unsmoothed p-value. With [Kernel-Smoothed P-Values](@ref), an estimate equal to the actual estimate contributes $\Phi(0) = 0.5$ to the sum, so a tie counts as half of an exceedance rather than a whole one.
+
 ### Aggregation by State
 
 When the randomization inference procedure is performed while the aggregation is set to `"state"` or `"sgt"`, each subaggregate ATT involves a single treated state, and an alternative assignment does not determine which state should take its place when more than one state receives the same treatment time. There is therefore an additional level of randomization: for each actually treated state, one state is drawn at random from the set of states that the alternative assignment associates with the treatment time of the actually treated state, and is used in its place in every period. This is in order to preserve the structure of the `"state"` and `"sgt"` aggregation methods whereby only one treated state is considered at a time.
@@ -344,7 +357,7 @@ When the randomization inference procedure is performed while the aggregation is
 !!! note "Computing ATTs During Randomization"
     For each alternative assignment, $\widehat{\mathrm{ATT}}(s,t)$ is computed directly as the long difference of the treated state minus the weighted mean of the long differences of its controls (the expression in Step 3 of the [Four Step Estimation Procedure](@ref)), which equals the regression coefficient without having to run a regression. The computations are carried out for all alternative assignments at once using matrix operations, which is why the procedure remains fast for large values of `nperm`. The same approach is used for the fast jackknife.
 
-It should also be noted that the randomization inference procedure will not run unless it is possible to calculate the long differences for each $(g,t)$ used in the computation of the actual ATT values for each state. This may occur in datasets with missing values or inconsistent time period coverage across states. This safeguard is to ensure that the randomization procedure only runs if it is possible to make a proper comparison between the actual $ATT$ values and the $ATT_{RI}$ values.
+It should also be noted that the randomization inference procedure will not run unless it is possible to calculate the long differences for each $(g,t)$ used in the computation of the actual ATT values for *every* state, treated or not: under an alternative assignment any state can take the place of a treated state. If a state is not observed in one of the periods involved (which may occur in datasets with missing values or inconsistent time period coverage across states), the randomization inference p-values are returned as `missing`, with a warning. This safeguard is to ensure that the randomization procedure only runs if it is possible to make a proper comparison between the actual $ATT$ values and the $ATT_{RI}$ values.
 
 ## Estimating Lambda
 
@@ -362,7 +375,7 @@ Y_{i,s,t} = \lambda_{s,t} + \sum_{k=1}^{K} \gamma^k_{s,t} X^k_{i,s,t} + \epsilon
 
 are estimated for each $(s,t)$ cell, where $\hat{\lambda}_{s,t}$ is simply the estimated intercept for the local regression. 
 
-If, for any $(s,t)$ group, a covariate causes the design matrix to be rank-deficient, then that covariate is dropped from the regression for that $(s,t)$ group, and its coefficient is taken to be zero in that group when computing the [Integrated Long Differences](@ref). Covariates that do not vary within the group are dropped first, and any remaining collinear covariates are identified with a rank-revealing QR decomposition.
+If, for any $(s,t)$ group, a covariate causes the design matrix to be rank-deficient, then that covariate is dropped from the regression for that $(s,t)$ group, and its coefficient is taken to be zero in that group when computing the [Integrated Long Differences](@ref). Covariates that do not vary within the group are dropped first, and any remaining collinear covariates are identified with a rank-revealing QR decomposition of the covariates centered at their group means. Centering matters because the regression has an intercept: covariates can be collinear with the intercept without being collinear with each other. The typical case is a categorical covariate whose reference category does not occur in the group, so that the group's dummy variables add up to one; one of them is then dropped in that group. The group contains no information about the absent category, and the estimates can then depend on which category was chosen as the reference.
 
 !!! note "Collinear Covariates"
     Dropping collinear covariates is a choice. The Python implementation of DID-INT (**didintpy**) instead keeps every covariate and uses the minimum-norm least squares solution. The two approaches agree when a covariate is constant within an $(s,t)$ group, but can otherwise yield different covariate coefficients, and therefore different ATT estimates, for groups with collinear covariates.
@@ -370,6 +383,9 @@ If, for any $(s,t)$ group, a covariate causes the design matrix to be rank-defic
 ### State-Varying, Time-Varying, and Homogeneous DID-INT
 
 For state-varying, time-varying, and homogeneous DID-INT, the Frisch-Waugh-Lovell (FWL) theorem is applied. The procedure is the same across all three cases, differing only in the grouping over which the covariate coefficients $\hat{\beta}$ are estimated:
+
+!!! note "Covariates Measured at the State-Period Level"
+    The covariate coefficients are estimated from the variation of the covariates *within* $(s,t)$ cells. A covariate that is constant within every cell, such as a variable measured at the state-period level, is perfectly collinear with the $I(s,t)$ cell dummies: it is absorbed by the $\hat{\lambda}_{s,t}$ values and has no effect on the estimates under any DID-INT variation. By the same reasoning, with data that has a single observation per state and period, covariates have no effect at all.
 
 1. Both the outcome and covariates are demeaned within each $(s,t)$ cell - which is equivalent to residualizing the outcome and covariates by the $I(s,t)$ cell dummies.
 2. The covariate coefficients $\hat{\beta}$ are estimated by regressing the demeaned outcome on the demeaned covariates (without an intercept), where the regression is run:
@@ -424,7 +440,7 @@ The specific regression used to compute $\widehat{\mathrm{Var}}(\hat{\lambda})$ 
 - **Time-varying** (`"time"`): analogous to state-varying, with separate regressions run for each time period $t$. The covariances between the treated state and the control state in the same period are nonzero; all others are zero.
 - **Homogeneous** (`"hom"`): a single global regression is run across all observations. The HCCME for all cell dummies from the regression is exactly $\widehat{\mathrm{Var}}(\hat{\lambda})$, and every term of the decomposition can be nonzero.
 
-If one of these regressions has no residual degrees of freedom or is not of full rank, the corresponding variances cannot be computed and the edge case standard error is returned as `missing`.
+If one of these regressions has no residual degrees of freedom or is not of full rank, the corresponding variances cannot be computed and the edge case standard error is returned as `missing`. It is also `missing` when the estimated variance of one of the four $\hat{\lambda}_{s,t}$ values is exactly zero (for example a binary outcome that takes a single value in one of the cells), and, under HC2, HC3, and HC4, when a block regression includes a cell with a single observation (that observation has a leverage of one). Under HC1, the degrees-of-freedom correction is the one of each block regression.
 
 ### Edge Case Standard Errors for Two-Way Intersection DID-INT with Covariates
 

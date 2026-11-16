@@ -28,7 +28,7 @@ function hc_checks(hc)
 
     # The HC covariance estimator as one of "hc0", ..., "hc4", from a number or a string
     if hc isa Number
-        hc = round(hc)
+        hc = round(Int, hc)
         if !(hc in [0, 1, 2, 3, 4])
             error("'hc' must be one of 0, 1, 2, 3, or 4.")
         end
@@ -76,6 +76,45 @@ function check_ri_kernel_cutoff(ri_kernel_cutoff)
     return ri_kernel_cutoff
 end
 
+function check_date_format(date_format)
+
+    # The date format in lower case (as the date parsing and printing expect it; in upper case
+    # "MM" would mean minutes), after checking that it is a supported format or at least only
+    # made of years, months, days and separators. Nothing if none was given.
+    isnothing(date_format) && return nothing
+    date_format = lowercase(date_format)
+    if !(date_format in DATE_FORMATS) && !occursin(r"^[ymd/\-. ]+$", date_format)
+        error("'date_format' was not recognized. Try one of $DATE_FORMATS.")
+    end
+    return date_format
+end
+
+function check_treated_states(treated_states, treatment_times)
+
+    # `treated_states` and `treatment_times` as vectors of the same length, with each state
+    # listed once. A single treatment time applies to every treated state: common adoption is
+    # the one-cohort case of the same estimator. `treated_states` may be nothing (didint_plot
+    # does not always need it).
+    treatment_times = !(treatment_times isa AbstractVector) ? [treatment_times] : treatment_times
+    if isempty(treatment_times)
+        error("'treatment_times' must have at least one entry.")
+    end
+    isnothing(treated_states) && return treated_states, treatment_times
+
+    treated_states = !(treated_states isa AbstractVector) ? [treated_states] : treated_states
+    if length(treatment_times) == 1 && length(treated_states) > 1
+        treatment_times = fill(treatment_times[1], length(treated_states))
+    end
+    if length(treatment_times) != length(treated_states)
+        error("'treatment_times' should either be the same length as the 'treated_states' vector or of length 1.")
+    end
+    if !allunique(treated_states)
+        repeated = unique(s for s in treated_states if count(isequal(s), treated_states) > 1)
+        error("Each treated state can only have one treatment time, but the following states are listed more than once in 'treated_states' (or have more than one value in the 'gvar' column): $(join(repeated, ", ")).")
+    end
+    return treated_states, treatment_times
+end
+
 function symbol_to_string(outcome, state, time, gvar)
 
     outcome = typeof(outcome) <: Symbol ? string(outcome) : outcome
@@ -95,6 +134,7 @@ function start_end_date_checks(date_value, date_name, date_format)
     # If it's a number or string, convert to Date, otherwise the function inputs
     # already require to be a date, so just leave it as is
     if eltype(date_value) <: Number
+        date_value = round(Int, date_value)
         if length(string(date_value)) != 4
             error("If '$date_name' is a number it must be 4 digits long.")
         end
@@ -137,7 +177,7 @@ function gvar_or_treatment_times(gvar, treatment_times, treated_states, data, st
             error("If 'gvar' is specified, do not specify 'treatment_times' and 'treated_states'!")
         end
 
-        mask = .!ismissing.(data[!, gvar]) .&& data[!, gvar] .!= 0 .&& data[!, gvar] .!= "0" .&& data[!, gvar] .!= "0.0"
+        mask = .!ismissing.(data[!, state]) .&& .!ismissing.(data[!, gvar]) .&& data[!, gvar] .!= 0 .&& data[!, gvar] .!= "0" .&& data[!, gvar] .!= "0.0"
         filtered = unique(data[mask, [state, gvar]])
         treated_states = filtered[!, state]
         treatment_times = filtered[!, gvar]
@@ -479,7 +519,12 @@ function validate_and_convert_dates(data_copy, time, treatment_times, date_forma
     end
 
     # Convert treatment_times to Date objects
-    if !(typeof(treatment_times) <: Vector{Date})
+    if Base.nonmissingtype(eltype(treatment_times)) <: Date
+        treatment_times = convert(Vector{Date}, treatment_times)
+    else
+        if isnothing(date_format)
+            error("If 'treatment_times' are entered as strings, please specify 'date_format'.")
+        end
         treatment_times = parse_string_to_date_didint.(treatment_times, date_format)
     end
 

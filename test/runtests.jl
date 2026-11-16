@@ -38,10 +38,7 @@ for i in eachindex(TREATED_STATES)
     year_values = TEST_DATA[(string.(TEST_DATA.state) .== TREATED_STATES[i]) .& (TEST_DATA.merit .== 1), "year"]
     treated_times[i] = minimum(year_values)
 end
-treated_times_time_collinear = copy(treated_times)
-treated_times_time_collinear[1] = 1990
 const TREATED_TIMES = treated_times
-const TREATED_TIMES_T_COLLINEAR = treated_times_time_collinear
 # Also build test data that has a bunch of missing entries for robustness checks
 test_data_missing = allowmissing(copy(TEST_DATA))
 cols_to_randomize = ["asian", "black", "male", "merit", "coll", "year", "state"]
@@ -56,44 +53,15 @@ const TEST_DATA_GVAR = transform(groupby(TEST_DATA, :state), [:year, :merit] => 
 # Make a copy of TEST_DATA that has string columns for time 
 const TEST_DATA_STR = transform(TEST_DATA, :year => ByRow(string) => :year)
 
-# Create test datasets that trigger collinearity for each ccc case
-# Use first treated state and its times — guaranteed to be in the analysis
-target_state = TREATED_STATES[1]
-target_times = sort(unique(TEST_DATA[TEST_DATA.state .== target_state, :year]))
-target_time = target_times[1]
-
-# ccc = "state": male constant across ALL time periods for one treated state
-# issubset condition will trigger since all times for target_state will be missing
-const TEST_DATA_STATE_COLLINEAR = copy(TEST_DATA)
-TEST_DATA_STATE_COLLINEAR[(TEST_DATA_STATE_COLLINEAR.state .== target_state), :male] .= 1
-TEST_DATA_STATE_COLLINEAR[(TEST_DATA_STATE_COLLINEAR.state .== target_state), :asian] .= 1
-TEST_DATA_STATE_COLLINEAR[(TEST_DATA_STATE_COLLINEAR.state .== target_state), :black] .= 1
-
-# ccc = "time": male constant across ALL states for one time period
-# issubset condition will trigger since all states for target_time will be missing  
-const TEST_DATA_TIME_COLLINEAR = copy(TEST_DATA)
-TEST_DATA_TIME_COLLINEAR[TEST_DATA_TIME_COLLINEAR.year .== target_time, :male] .= 1
-
-# ccc = "hom": male constant across entire dataset
-const TEST_DATA_HOM_COLLINEAR = copy(TEST_DATA)
-TEST_DATA_HOM_COLLINEAR[:, :male] .= 1
-
-
 # ── Edgecase test data ──────────────────────────────────────────────
-# two treated states with DIFFERENT cohorts (forces staggered_adoption = true)
+# two treated states in different cohorts and one control: every ATT(s,t) has a single control
 _t1 = "88"
 _t2 = "71"
 
 const EC_CONTROL    = CONTROL_STATES[1]
-const EC_CONTROL_2  = CONTROL_STATES[2]
-
-# staggered, 2 treated + 1 control 
 const EC_STATES_STAG = [_t1, _t2]
 const EC_TIMES_STAG  = [2000, 1991]
 const TEST_DATA_EC_STAG = filter(r -> r.state ∈ [_t1, _t2, EC_CONTROL], TEST_DATA_FULL)
-
-# common adoption, 1 treated + 1 control → saturated
-const TEST_DATA_EC_COMMON = filter(r -> r.state ∈ [_t1, EC_CONTROL], TEST_DATA_FULL)
 
 # Run tests
 @testset "DiDInt.jl" begin
@@ -120,6 +88,9 @@ const TEST_DATA_EC_COMMON = filter(r -> r.state ∈ [_t1, EC_CONTROL], TEST_DATA
     end
     @testset "DiDIntResult" begin
         include("test_results.jl")
+    end
+    @testset "Input handling and degenerate data" begin
+        include("test_inputs.jl")
     end
     @testset "Batched engine, RI draws and p-values" begin
         include("test_engine.jl")

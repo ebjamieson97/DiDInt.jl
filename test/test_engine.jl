@@ -459,3 +459,44 @@ end
         @test isequal(run(ccc = "int", agg = agg, truejack = true)[!, top], run(ccc = "int", agg = agg, truejack = false)[!, top])
     end
 end
+
+@testset "Randomization inference with more permutations than one batch" begin
+    # 620 permutations are evaluated in two batches: the p-values equal those from evaluating
+    # the same 620 draws in a single engine call
+    @test DiDInt.RI_BATCH_SIZE < 620
+    stage = engine_first_stage("int", false)
+    default_policies = Dict(s => DiDInt.DEFAULT_POLICY for s in ENGINE_TREATED)
+    for agg in ["cohort", "simple"]
+        observed = second_stage(stage, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, agg, "both", "treated", false)
+        states = unique(observed.long_diffs.state)
+        engine = DiDInt.build_engine(observed.long_diffs, DiDInt.att_st_cells(observed.att_st), states, "both", "treated")
+        L_observed, P_observed = DiDInt.assignment_row(states, ENGINE_OBSERVED_TIMES, default_policies, Dict(DiDInt.DEFAULT_POLICY => 1))
+        L, P, _ = DiDInt.ri_assignment_draws(L_observed, P_observed, 620, Xoshiro(77))
+        est = DiDInt.engine_estimates(engine, observed.results, agg, "both", false, L, P)
+
+        result = quietly() do
+            didint_table("y", "state", "year", ENGINE_PANEL; treated_states = ENGINE_TREATED, treatment_times = [2004, 2004, 2006, 2006, 2007],
+                         agg = agg, nperm = 620, seed = 77)
+        end
+        suffix = DiDInt.SUB_AGG_SPECS[agg].suffix
+        @test result.nperm[1] == 620
+        @test result.ri_pval_agg_att[1] ≈ DiDInt.ri_pvalue(est.top, observed.results.agg_att[1])
+        @test result[!, "ri_pval_" * suffix] ≈ [DiDInt.ri_pvalue(est.sub[:, i], observed.results[i, suffix]) for i in 1:nrow(observed.results)]
+    end
+end
+
+@testset "truejack equals deleting each state from the data" begin
+    # Under ccc = "hom" a deletion changes the other states' estimates, so the jackknife
+    # re-estimates the first stage: its estimates are those from the data without the state
+    cohorts = Dict(zip(ENGINE_TREATED, [2004, 2004, 2006, 2006, 2007]))
+    run(data, treated; kwargs...) = quietly() do
+        didint_table("y", "state", "year", data; treated_states = treated, treatment_times = [cohorts[s] for s in treated],
+                     covariates = ["x1", "x2"], ccc = "hom", agg = "cohort", nperm = 2, seed = 1234, kwargs...)
+    end
+    full = run(ENGINE_PANEL, ENGINE_TREATED; truejack = true)
+    states = unique(ENGINE_PANEL.state)
+    deleted = [run(filter(r -> r.state != s, ENGINE_PANEL), filter(!=(s), ENGINE_TREATED)).agg_att[1] for s in states]
+    n = length(states)
+    @test full.jknifese_agg_att[1] ≈ sqrt((n - 1) / n * sum((deleted .- full.agg_att[1]) .^ 2)) rtol = 1e-10
+    @test abs(full.jknifese_agg_att[1] - run(ENGINE_PANEL, ENGINE_TREATED; truejack = false).jknifese_agg_att[1]) > 1e-8
+end

@@ -71,8 +71,8 @@ site describes the current procedure in detail.
   rejecting, with a small tolerance for rounding.
 - Permutations are drawn by a faster method and from a random number
   generator that only depends on `seed`. Randomization inference p-values for a given
-  `seed` therefore differ from earlier versions, and `didint()` no longer changes the
-  global random number generator.
+  `seed` therefore differ from earlier versions, and when a `seed` is given `didint()`
+  no longer changes the global random number generator.
 - Under `agg = "state"` and `"sgt"`, each treated state is represented by the same
   randomly drawn state in all of its periods within a permutation.
 - A jackknife standard error is reported for an estimate only if it involves at least two
@@ -93,3 +93,42 @@ site describes the current procedure in detail.
 - Bug fixes: `truejack = true` with `agg = "time"` no longer errors; string covariates
   with exactly two categories are handled correctly; `edgecase = true` with `ccc = "add"`
   is switched off with a warning.
+
+### Bug fixes that can change estimates
+
+These affect particular kinds of data; results for other data are unchanged by them.
+
+- **Covariates measured at the state-period level.** A covariate that is constant within
+  every state-period cell should have no effect, but under `ccc = "hom"`, `"state"`,
+  `"time"` and `"add"` it could change the estimates substantially (rounding noise left
+  by the within-cell demeaning was being fitted). Such covariates now have no effect.
+- **Categorical covariates under `ccc = "int"`.** When the reference category of a
+  categorical covariate does not occur in a state-period cell, that cell's dummy variables
+  add up to one. They were all kept, which made the estimates depend on the level of the
+  outcome. One of them is now dropped in that cell.
+- **Treated states with a treatment time outside the data.** A state treated at or before
+  the first date of the data (or of `start_date`) was silently used as a control. Its
+  observations are now dropped, with a warning. A state treated after the last date is
+  used as a control, as before, now with a warning; previously a treatment time shortly
+  after the last date could be counted as occurring in the last period.
+- **Automatic period length.** For data spaced several years apart (for example every
+  five or ten years) the detected period could be one year too long. Specifying `freq` and
+  `freq_multiplier` was not affected.
+- **Randomization inference with incomplete data.** The randomization inference could run
+  although a treated state was not observed in a period that it needs under alternative
+  assignments. Its p-values are now `missing` in that case, with a warning.
+
+### Other bug fixes
+
+- `hc = "hc4"` no longer errors under `weighting = "both"` or `"diff"`.
+- Listing a treated state more than once, or a `gvar` column that is not constant within a
+  state, is now an error instead of silently changing the estimates.
+- `gvar` works with a `Date` time column, and with rows whose state is missing.
+- Numbers given as floats are accepted for `hc`, `freq_multiplier`, `start_date` and
+  `end_date`; `date_format` is not case sensitive and an unrecognized format is an error.
+- `didint_plot()` accepts a single treatment time for several treated states, a single
+  treated state, and covariates given as symbols.
+- A jackknife deletion that removes every treated state of a sub-aggregate ATT now gives a
+  warning.
+- The kernel-smoothed p-value falls back to the unsmoothed one when the placebo estimates
+  are equal up to rounding.

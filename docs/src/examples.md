@@ -151,7 +151,7 @@ plot_event[1:4, :]
 
 The `lambda` column in the parallel trends output contains the residualised outcome
 for each state-period cell. The `ccc` column indicates which model was used (`"hom"`,
-`"time"`, `"state"`, `"add"`, or `"int"`). In the event study output,
+`"time"`, `"state"`, `"add"`, `"int"`, or `"none"` for no covariates). In the event study output,
 `time_since_treatment = 0` marks the treatment period; negative values are
 pre-treatment and positive values are post-treatment.
 

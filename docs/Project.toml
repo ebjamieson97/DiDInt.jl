@@ -5,6 +5,6 @@ DiDInt = "a755adf4-2e2b-446b-93e8-5a1a900eb7ed"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 
 [compat]
-CSV = "0.10"
+CSV = "0.10, 1"
 Documenter = "1.16"
 DataFrames = "1"

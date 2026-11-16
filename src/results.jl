@@ -24,7 +24,8 @@ estimates. Its fields hold the estimates as tables:
   weight in the pooled ATT).
 - `sub::DataFrame`: the sub-aggregate ATTs of the chosen `agg`, one row each, identified by the leading
   column(s) (for example `treatment_time` under `agg = "cohort"`). `weight` is the weight of each
-  sub-aggregate in the aggregate ATT (or in its policy's ATT).
+  sub-aggregate in the aggregate ATT (or in its policy's ATT); it is `missing` when the sub-aggregates are
+  weighted equally (`weighting = "none"` or `"diff"`).
 - `att_st::DataFrame`: the ATT of each treated state (`state`) in each period (`t`) from its treatment time
   (`gvar`) on, from which every other estimate is computed, with the number of control states behind it
   (`n_controls`) and the treated state's numbers of observations (`n_t` in period `t`; `n` in period `t`
@@ -85,12 +86,18 @@ function DiDIntResult(table::DataFrame, att_st::DataFrame, specs::NamedTuple)
     agg_option = specs.agg
     spec = SUB_AGG_SPECS[agg_option]
 
+    # When the sub-aggregates are weighted equally (weighting = "none" or "diff") the wide table
+    # holds `nothing` as their weights; here those are `missing`, like every other entry that
+    # is not available, which also lets the table be written to a file
+    table = copy(table; copycols = false)
+    table.weights = Union{Missing, Float64}[isnothing(w) ? missing : w for w in table.weights]
+
     # Sub-aggregates: their key columns, then the estimate with its inference and its weight
     sub = select(table, [string(col) for (col, _, _) in spec.keys])
     for (column, values) in estimate_columns(table, spec.suffix, 1:nrow(table))
         sub[!, column] = values
     end
-    sub.weight = Union{Missing, Float64}[isnothing(w) ? missing : w for w in table.weights]
+    sub.weight = copy(table.weights)
 
     # Top-level estimates
     if !is_policy_agg(agg_option)

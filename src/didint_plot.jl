@@ -21,7 +21,7 @@
                 treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
                 treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing,
                 date_format::Union{AbstractString, Nothing} = nothing,
-                covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing} = nothing,
+                covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol, Nothing} = nothing,
                 ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
                 ccc::Union{AbstractString, Vector{<:AbstractString}} = "all",
                 event::Bool = false,
@@ -72,7 +72,7 @@ in `treatment_times`, and so on.
     Specify which versions of DID-INT should be used.
     Options are either `"all"`, or any combination of: `"none"`, `"hom"`, `"time"`, `"state"`, "`add`", and `"int"`.
     `"none"` uses the unadjusted means of the outcome.
-- `covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol} = nothing`
+- `covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol, Nothing} = nothing`
     A vector of covariates entered as either strings or symbols (or a single covariate string or symbol),
     or, `nothing` (default).
 - `ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing`
@@ -87,7 +87,7 @@ in `treatment_times`, and so on.
     as weighted averages of state-level means for each period relative to treatment, weighted by the states'
     numbers of observations; if `false`, uses simple unweighted averages.
 - `treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing`
-    A vector of strings (or a single string) noting the treated state(s).
+    A vector of strings or numbers (or a single one) noting the treated state(s), matching the type of the `state` column.
 - `ci::Number = 0.95`
     Define the size of confidence bands for the event study plot.
 - `hc::Union{AbstractString, Number} = "hc1"`
@@ -133,7 +133,7 @@ function didint_plot(
          treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing,
          treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing,
          date_format::Union{AbstractString, Nothing} = nothing,
-         covariates::Union{Vector{<:AbstractString}, AbstractString, Nothing} = nothing,
+         covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol, Nothing} = nothing,
          ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
          ccc::Union{AbstractString, Vector{<:AbstractString}} = "all",
          event::Bool = false,
@@ -156,6 +156,8 @@ function didint_plot(
     end
     wrapper = init_wrapper_check(wrapper)
     data_type_check(data)
+    date_format = check_date_format(date_format)
+    freq_multiplier = check_positive_integer(freq_multiplier, "freq_multiplier")
 
     # The ccc options to plot
     if !(ccc isa AbstractVector)
@@ -168,13 +170,14 @@ function didint_plot(
     else
         for c in ccc
             if !(c in ccc_options)
-                error("$c is not a valid 'ccc' option. Try any combination of", join(ccc_options, ", "))
+                error("$c is not a valid 'ccc' option. Try any combination of: ", join(ccc_options, ", "))
             end
         end
     end
 
     # Column names as strings, whether they were given as strings or symbols
     outcome, state, time, gvar = symbol_to_string(outcome, state, time, gvar)
+    covariates = isnothing(covariates) ? covariates : string.(covariates)
 
     # Treated states and their treatment times, from gvar or from treated_states and treatment_times
     treated_states, treatment_times = gvar_or_treatment_times(gvar, treatment_times, treated_states, data, state;
@@ -194,13 +197,15 @@ function didint_plot(
     data_copy, treatment_times, covariates  = validate_data(data_copy, outcome, state, time, covariates, treatment_times, date_format;
                                                 warn_missing_covariates = true)
 
+    # Treated states (when given) and treatment times as vectors of the same length
+    treated_states, treatment_times = check_treated_states(treated_states, treatment_times)
+
     # The treated states are only needed for the event study
     data_copy.state_71X9yTx = data_copy[!, state]
     if event == true
         if ci < 0 || ci >= 1
             error("'ci' must be between 0 and 1")
         end
-        treated_states = !(treated_states isa AbstractVector) ? [treated_states] : treated_states
 
         # The state column and treated_states must both be numbers or both be strings
         validate_state_types(treated_states, data_copy, state)

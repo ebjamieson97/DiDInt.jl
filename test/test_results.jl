@@ -103,6 +103,16 @@ end
     path = tempname() * ".csv"
     CSV.write(path, result)
     @test names(CSV.read(path, DataFrame)) == names(result.table)
+
+    # Without weights for the sub-aggregates (weighting = "none" or "diff") the weights are
+    # missing, and the result can still be written to a file; the wrappers' table is unchanged
+    for weighting in ["none", "diff"], agg in ["cohort", "policy_cohort"]
+        unweighted = result_didint(agg = agg, weighting = weighting)
+        @test all(ismissing, unweighted.table.weights) && all(ismissing, unweighted.sub.weight)
+        CSV.write(path, unweighted)
+        @test nrow(CSV.read(path, DataFrame)) == nrow(unweighted.table)
+        @test all(isnothing, result_didint(agg = agg, weighting = weighting, wrapper = "stata").weights)
+    end
 end
 
 @testset "DiDIntResult display" begin

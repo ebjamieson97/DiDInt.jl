@@ -10,17 +10,20 @@
 # Section 1: Converting between strings and dates                                         #
 ###########################################################################################
 
+# Date formats that the 'date_format' argument accepts. The last two are how Stata prints dates
+# as strings, for example 25dec1991 and 1991m12.
+const DATE_FORMATS = ["yyyy/mm/dd", "yyyy-mm-dd", "yyyymmdd", "yyyy/dd/mm", "yyyy-dd-mm",
+                      "yyyyddmm", "dd/mm/yyyy", "dd-mm-yyyy", "ddmmyyyy", "mm/dd/yyyy",
+                      "mm-dd-yyyy", "mmddyyyy", "mm/yyyy", "mm-yyyy", "mmyyyy", "yyyy",
+                      "ddmonyyyy", "yyyym00"]
+
 function parse_string_to_date_didint(date::Union{Vector{<:AbstractString}, AbstractString},
                                      date_format::AbstractString)
     
-    # Define mapping from months to numbers and possible date formats
+    # Mapping from month abbreviations to numbers
     month_map = Dict("jan" => "01", "feb" => "02", "mar" => "03", "apr" => "04",
                      "may" => "05", "jun" => "06", "jul" => "07", "aug" => "08",
                      "sep" => "09", "oct" => "10", "nov" => "11", "dec" => "12")
-    possible_formats = ["yyyy/mm/dd", "yyyy-mm-dd", "yyyymmdd", "yyyy/dd/mm", "yyyy-dd-mm",
-                        "yyyyddmm", "dd/mm/yyyy", "dd-mm-yyyy", "ddmmyyyy", "mm/dd/yyyy",
-                        "mm-dd-yyyy", "mmddyyyy", "mm/yyyy", "mm-yyyy", "mmyyyy", "yyyy",
-                        "ddmonyyyy", "yyyym00"]
 
     # Convert strings to date objects depending on the specified date_format
     if date_format == "ddmonyyyy"
@@ -37,11 +40,11 @@ function parse_string_to_date_didint(date::Union{Vector{<:AbstractString}, Abstr
         date = lowercase(date)
         info = split(date, "m")        
         output = Date("$(info[2])/$(info[1])", "mm/yyyy")
-    elseif date_format in possible_formats  
+    elseif date_format in DATE_FORMATS
         # Other formats are handled natively by Dates      
         output = Date(date, lowercase(date_format))
     else
-        error("Please specify a date_format listed here $possible_formats.")
+        error("Please specify a date_format listed here $DATE_FORMATS.")
     end 
 
     return output 
@@ -80,13 +83,18 @@ end
 # after them.                                                                             #
 ###########################################################################################
 
-function perform_date_matching(data_copy, all_times, freq, freq_multiplier, start_date, end_date, 
-                               treatment_times, treated_states)
+function perform_date_matching(data_copy, all_times, freq, freq_multiplier, start_date, end_date,
+                               treatment_times, treated_states; drop_already_treated = false)
 
     # Build the period grid (of the given `freq`, or of the longest gap between dates in the data)
-    # and match the dates of the observations and the treatment times to it. Treated states
-    # whose treatment time falls outside the grid are dropped.
-    
+    # and match the dates of the observations and the treatment times to it.
+    # A state whose treatment time is not within the sample is not a treated state of the
+    # analysis and is removed from `treated_states`, with a warning:
+    #   - treated at or before the first date: it is treated throughout, so it has no
+    #     pre-treatment period and is not a valid control either. With `drop_already_treated`
+    #     its observations are removed from the data.
+    #   - treated after the last date: it is untreated throughout and serves as a control.
+
     # Do date matching procedure
     if !isnothing(freq)
         max_dist = Dates.value(maximum(diff(all_times)))
@@ -102,13 +110,30 @@ function perform_date_matching(data_copy, all_times, freq, freq_multiplier, star
         match_to_these_dates = collect(start_date:period:end_date)
     end 
     
-    one_past = end_date + period
+    # Treatment times outside the sample
+    already_treated = treatment_times .<= start_date
+    treated_later = treatment_times .> end_date
+    if !isnothing(treated_states)
+        if any(already_treated)
+            states = join(treated_states[already_treated], ", ")
+            if drop_already_treated
+                @warn "The following states are treated at or before the first date of the data used ($start_date), so they have no pre-treatment period and cannot serve as controls. Their observations are dropped: $states"
+                data_copy = data_copy[.!in.(data_copy.state_71X9yTx, Ref(treated_states[already_treated])), :]
+            else
+                @warn "The following states are treated at or before the first date of the data used ($start_date) and are not counted as treated states: $states"
+            end
+        end
+        if any(treated_later)
+            @warn "The following states are treated after the last date of the data used ($end_date), so they are untreated throughout and are used as controls: $(join(treated_states[treated_later], ", "))"
+        end
+    end
+    in_sample = .!already_treated .& .!treated_later
+
     # Match each distinct date once, then every observation through the lookup
-    matched_date = Dict(t => match_date(t, match_to_these_dates, treatment_times) for t in unique(data_copy.time_71X9yTx))
+    matched_date = Dict(t => match_date(t, match_to_these_dates, treatment_times[in_sample]) for t in unique(data_copy.time_71X9yTx))
     data_copy.time_71X9yTx = [matched_date[t] for t in data_copy.time_71X9yTx]
-    treated_states = isnothing(treated_states) ? nothing : treated_states[(treatment_times .< one_past) .&& (treatment_times .> start_date)]
-    treatment_times = treatment_times[(treatment_times .< one_past) .&& (treatment_times .> start_date)]
-    treatment_times = [match_treatment_time(t, match_to_these_dates) for t in treatment_times]
+    treated_states = isnothing(treated_states) ? nothing : treated_states[in_sample]
+    treatment_times = [match_treatment_time(t, match_to_these_dates) for t in treatment_times[in_sample]]
     time_to_index = Dict(time => idx for (idx, time) in enumerate(match_to_these_dates))
     
     return data_copy, treatment_times, treated_states, match_to_these_dates, time_to_index, period
@@ -180,23 +205,13 @@ function get_max_period(times)
     # This ensures no "empty" periods in the grid 
     
     if days >= 365
-        # If it is 1 day off from being cleanly divided into years, assume leap year
-        if days > 365
-            if days % 365 == 1 
-                years = floor(days / 365)
-                return Year(years)
-            end
-            # Days is > 1461, it is bound to have one leap year
-            if days > 1460
-                leap_count = days ÷ (365*4)
-                if days % 365 == leap_count
-                    years = floor(days / 365)
-                    return Year(years)
-                end 
-            end
+        # A gap of k whole years is 365k days plus the leap days that fall in it, so it is
+        # within a day of 365.2425k. Such a gap is k years; any other gap is rounded up.
+        whole_years = round(Int, days / 365.2425)
+        if abs(days - 365.2425 * whole_years) < 1
+            return Year(whole_years)
         end
-        years = ceil(Int, days / 365)
-        return Year(years)
+        return Year(ceil(Int, days / 365))
     elseif days >= 28
         months = ceil(Int, days / 31)
         return Month(months)
