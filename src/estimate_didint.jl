@@ -23,7 +23,7 @@
            start_date::Union{AbstractString, Number, Date, Nothing} = nothing,
            end_date::Union{AbstractString, Number, Date, Nothing} = nothing,
            nperm::Number = 999,
-           ri_kernel_cutoff::Number = 99,
+           ri_kernel_cutoff::Union{Number, Nothing} = 99,
            seed::Number = rand(1:1000000),
            use_pre_controls::Bool = false,
            notyet::Union{Nothing, Bool} = nothing,
@@ -132,11 +132,11 @@ in `treated_times`, and so on.
 - `nperm::Number = 999`
     The number of unique permutations (not including the initial assignment of treatment times)
     to be considered when performing the randomization inference.
-- `ri_kernel_cutoff::Number = 99`
+- `ri_kernel_cutoff::Union{Number, Nothing} = 99`
     When the randomization inference uses `ri_kernel_cutoff` or fewer alternative assignments (because
     `nperm` is that small, or because no more unique assignments exist), its p-values are kernel-smoothed
     (Racine & MacKinnon 2007) instead of counting the placebo estimates at least as large as the observed one.
-    Set it to `0` to never smooth. The column `ri_procedure` reports which p-value was used.
+    Set it to `nothing`, `false` or `0` to never smooth.
 - `seed::Number = rand(1:1000000)`
     An integer to set the random seed for the randomization inference procedure.
 - `hc::Union{AbstractString, Number} = "hc1"`
@@ -189,7 +189,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 start_date::Union{AbstractString, Number, Date, Nothing} = nothing,
                 end_date::Union{AbstractString, Number, Date, Nothing} = nothing,
                 nperm::Number = 999,
-                ri_kernel_cutoff::Number = 99,
+                ri_kernel_cutoff::Union{Number, Nothing} = 99,
                 seed::Number = rand(1:1000000),
                 use_pre_controls::Bool = false,
                 notyet::Union{Nothing, Bool} = nothing,
@@ -280,10 +280,13 @@ function didint(outcome::Union{AbstractString, Symbol},
         error("'nperm' must be a positive integer > 0.")
     end
 
-    # Round ri_kernel_cutoff
-    ri_kernel_cutoff = Int(round(ri_kernel_cutoff))
+    # Round ri_kernel_cutoff; nothing or false turn kernel smoothing off (the same as 0)
+    if ri_kernel_cutoff === true
+        error("'ri_kernel_cutoff' must be a non-negative integer, or nothing or false to turn kernel smoothing off.")
+    end
+    ri_kernel_cutoff = (isnothing(ri_kernel_cutoff) || ri_kernel_cutoff === false) ? 0 : Int(round(ri_kernel_cutoff))
     if ri_kernel_cutoff < 0
-        error("'ri_kernel_cutoff' must be a non-negative integer.")
+        error("'ri_kernel_cutoff' must be a non-negative integer, or nothing or false to turn kernel smoothing off.")
     end
 
     # Create data copy
@@ -509,8 +512,6 @@ function init_results(agg::AbstractString, nrows::Integer; pooled::Bool = false)
     if pooled
         results.policy_weights = float_column()
     end
-    # How the RI p-values were computed (update spec §8.2); filled by randomization_inference
-    results.ri_procedure = Vector{Union{Missing, String}}(missing, nrows)
     return results
 end
 
@@ -937,7 +938,7 @@ function randomization_inference(results::DataFrame, att_st::DataFrame, long_dif
     L_observed, P_observed = assignment_row(engine.states, Dict(zip(original_treated.state, original_treated.treated_time)),
                                             policy.labels, policy_code)
     rng = Xoshiro(seed)
-    L, P, exact = ri_assignment_draws(L_observed, P_observed, nperm, rng)
+    L, P, _ = ri_assignment_draws(L_observed, P_observed, nperm, rng)
     if size(L, 1) < nperm
         @warn "'nperm' was set to $nperm but only $(size(L, 1)) unique permutations exist. \n
                 Setting 'nperm' to $(size(L, 1))."
@@ -992,10 +993,8 @@ function randomization_inference(results::DataFrame, att_st::DataFrame, long_dif
             results.ri_pval_att_pool[1] = pvalue(att_ri, results.att_pool[1])
         end
     end
-    # nperm is the number of alternatives used; ri_procedure records how the p-values were
-    # computed: kernel-smoothed or ordinary, from all alternatives (exact) or a sample of them
+    # nperm is the number of alternatives used
     results.nperm[1] = nperm
-    results.ri_procedure .= (use_kernel ? "kernel" : "ordinary") * (exact ? "_exact" : "_sampled")
     return results
 end
 

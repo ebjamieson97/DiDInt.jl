@@ -353,23 +353,23 @@ end
     end
 end
 
-@testset "didint(): exact and sampled RI, ri_procedure and nperm" begin
+@testset "didint(): exact and sampled RI, kernel smoothing and nperm" begin
     run(data, cohorts; kwargs...) = quietly() do
         treated = sort(collect(keys(cohorts)))
         DiDInt.didint("y", "state", "year", data; treated_states = treated, treatment_times = [cohorts[s] for s in treated],
                       seed = 1234, kwargs...)
     end
 
-    # Six states, one treated: 5 alternatives, all enumerated, kernel-smoothed p-values. The
-    # p-value equals the kernel formula applied to the estimates obtained by treating each of the
-    # other states instead (through didint() itself).
+    # Six states, one treated: 5 alternatives, all enumerated. With the default ri_kernel_cutoff
+    # (99) the p-value is the kernel formula applied to the estimates obtained by treating each of
+    # the other states instead (through didint() itself).
     data = small_panel(cohorts = Dict("s1" => 2004), n_states = 6, effect = 1.0, noise = 0.6)
     for upc in [false, true]
         exact = run(data, Dict("s1" => 2004); agg = "cohort", nperm = 999, use_pre_controls = upc)
-        @test all(exact.ri_procedure .== "kernel_exact")
         @test exact.nperm[1] == 5
         placebos = [run(data, Dict("s$i" => 2004); agg = "cohort", nperm = 2, use_pre_controls = upc).agg_att[1] for i in 2:6]
-        @test exact.ri_pval_agg_att[1] ≈ DiDInt.ri_pvalue_kernel(placebos, exact.agg_att[1]) atol = 1e-10
+        observed = exact.agg_att[1]
+        @test exact.ri_pval_agg_att[1] ≈ DiDInt.ri_pvalue_kernel(placebos, observed) atol = 1e-10
         @test exact.ri_pval_att_cohort[1] ≈ exact.ri_pval_agg_att[1] atol = 1e-10
         # Exact RI does not depend on the seed or on asking for more permutations
         other = quietly() do
@@ -377,41 +377,31 @@ end
                           nperm = 50, seed = 99, use_pre_controls = upc)
         end
         @test other.ri_pval_agg_att[1] ≈ exact.ri_pval_agg_att[1] atol = 1e-12
-    end
 
-    # Fewer permutations than alternatives, still at most ri_kernel_cutoff: sampled and
-    # kernel-smoothed. With ri_kernel_cutoff = 0, or below the number of alternatives used,
-    # the ordinary p-value on the grid 1/(nperm + 1).
-    sampled = run(data, Dict("s1" => 2004); agg = "cohort", nperm = 3)
-    @test all(sampled.ri_procedure .== "kernel_sampled") && sampled.nperm[1] == 3
-    sampled = run(data, Dict("s1" => 2004); agg = "cohort", nperm = 3, ri_kernel_cutoff = 0)
-    @test all(sampled.ri_procedure .== "ordinary_sampled") && sampled.nperm[1] == 3
-    @test sampled.ri_pval_agg_att[1] in [k / 4 for k in 1:4]
-    exact = run(data, Dict("s1" => 2004); agg = "cohort", nperm = 999, ri_kernel_cutoff = 4)
-    @test all(exact.ri_procedure .== "ordinary_exact") && exact.ri_pval_agg_att[1] in [k / 6 for k in 1:6]
-    @test all(run(data, Dict("s1" => 2004); agg = "cohort", nperm = 999, ri_kernel_cutoff = 5).ri_procedure .== "kernel_exact")
-    @test_throws r"ri_kernel_cutoff" run(data, Dict("s1" => 2004); agg = "cohort", ri_kernel_cutoff = -1)
-
-    # Ten states, four treated in one period: 210 arrangements, 209 alternatives. They are all
-    # enumerated under nperm = 999, with the ordinary p-value as there are more than 99; with
-    # ri_kernel_cutoff = 209 they are kernel-smoothed.
-    common = Dict("s1" => 2004, "s2" => 2004, "s3" => 2004, "s4" => 2004)
-    data = small_panel(cohorts = common, n_states = 10, effect = 1.0, noise = 0.6)
-    @test all(run(data, common; agg = "cohort", nperm = 999, ri_kernel_cutoff = 209).ri_procedure .== "kernel_exact")
-    @test all(run(data, common; agg = "cohort", nperm = 999, ri_kernel_cutoff = 208).ri_procedure .== "ordinary_exact")
-    for agg in ["cohort", "simple", "state", "sgt", "time", "calendar", "policy_cohort"]
-        results = run(data, common; agg = agg, nperm = 999)
-        @test all(results.ri_procedure .== "ordinary_exact") && results.nperm[1] == 209
-        suffix = DiDInt.SUB_AGG_SPECS[agg].suffix
-        # every level has an RI p-value, on the grid 1/210
-        top = agg == "policy_cohort" ? results.ri_pval_att_p[1] : results.ri_pval_agg_att[1]
-        for p in vcat(top, results[!, "ri_pval_" * suffix])
-            @test isapprox(p * 210, round(p * 210); atol = 1e-8) && 1 / 210 <= p <= 1
+        # Smoothing applies when at most ri_kernel_cutoff alternatives are used (here 5), and
+        # nothing, false and 0 turn it off: then the ordinary p-value
+        @test run(data, Dict("s1" => 2004); agg = "cohort", nperm = 999, use_pre_controls = upc,
+                  ri_kernel_cutoff = 5).ri_pval_agg_att[1] ≈ DiDInt.ri_pvalue_kernel(placebos, observed) atol = 1e-10
+        for off in [4, 0, nothing, false]
+            @test run(data, Dict("s1" => 2004); agg = "cohort", nperm = 999, use_pre_controls = upc,
+                      ri_kernel_cutoff = off).ri_pval_agg_att[1] ≈ DiDInt.ri_pvalue(placebos, observed) atol = 1e-12
         end
     end
-    # With every alternative enumerated the aggregate's p-value is the rank of |observed| among
-    # all 210 assignments, here computed by running didint() on each of them
-    results = run(data, common; agg = "cohort", nperm = 999)
+    @test_throws r"ri_kernel_cutoff" run(data, Dict("s1" => 2004); agg = "cohort", ri_kernel_cutoff = -1)
+    @test_throws r"ri_kernel_cutoff" run(data, Dict("s1" => 2004); agg = "cohort", ri_kernel_cutoff = true)
+
+    # Fewer permutations than alternatives (a sample of 3 of the 5) are smoothed too, unless
+    # smoothing is off: then the p-value is on the grid 1/(nperm + 1)
+    grid = [k / 4 for k in 1:4]
+    sampled = run(data, Dict("s1" => 2004); agg = "cohort", nperm = 3)
+    @test sampled.nperm[1] == 3 && !any(isapprox.(sampled.ri_pval_agg_att[1], grid; atol = 1e-8))
+    @test run(data, Dict("s1" => 2004); agg = "cohort", nperm = 3, ri_kernel_cutoff = false).ri_pval_agg_att[1] in grid
+
+    # Ten states, four treated in one period: 210 arrangements, 209 alternatives, all enumerated
+    # under nperm = 999. The estimates under every assignment, by running didint() on each; the
+    # first is the observed assignment (s1-s4).
+    common = Dict("s1" => 2004, "s2" => 2004, "s3" => 2004, "s4" => 2004)
+    data = small_panel(cohorts = common, n_states = 10, effect = 1.0, noise = 0.6)
     all_states = ["s$i" for i in 1:10]
     estimates = Float64[]
     for a in 1:7, b in (a + 1):8, c in (b + 1):9, d in (c + 1):10
@@ -419,7 +409,29 @@ end
         push!(estimates, run(data, cohorts; agg = "cohort", nperm = 2).agg_att[1])
     end
     @test length(estimates) == 210
-    @test results.ri_pval_agg_att[1] ≈ count(abs.(estimates) .>= abs(results.agg_att[1]) * (1 - 1e-8)) / 210 atol = 1e-12
+    observed, placebos = estimates[1], estimates[2:end]
+
+    # More than 99 alternatives: the ordinary p-value, the rank of |observed| among all 210
+    results = run(data, common; agg = "cohort", nperm = 999)
+    @test results.nperm[1] == 209
+    @test results.agg_att[1] ≈ observed atol = 1e-12
+    @test results.ri_pval_agg_att[1] ≈ count(abs.(estimates) .>= abs(observed) * (1 - 1e-8)) / 210 atol = 1e-12
+    # With ri_kernel_cutoff = 209 the same alternatives are kernel-smoothed; 208 is below them
+    @test run(data, common; agg = "cohort", nperm = 999, ri_kernel_cutoff = 209).ri_pval_agg_att[1] ≈
+          DiDInt.ri_pvalue_kernel(placebos, observed) atol = 1e-10
+    @test run(data, common; agg = "cohort", nperm = 999, ri_kernel_cutoff = 208).ri_pval_agg_att[1] ≈
+          results.ri_pval_agg_att[1] atol = 1e-12
+
+    # Every level has an RI p-value, on the grid 1/210
+    for agg in ["cohort", "simple", "state", "sgt", "time", "calendar", "policy_cohort"]
+        results = run(data, common; agg = agg, nperm = 999)
+        @test results.nperm[1] == 209
+        suffix = DiDInt.SUB_AGG_SPECS[agg].suffix
+        top = agg == "policy_cohort" ? results.ri_pval_att_p[1] : results.ri_pval_agg_att[1]
+        for p in vcat(top, results[!, "ri_pval_" * suffix])
+            @test isapprox(p * 210, round(p * 210); atol = 1e-8) && 1 / 210 <= p <= 1
+        end
+    end
 
     # The same seed gives the same results; didint() leaves the global random number stream alone
     Random.seed!(42); before = rand()
@@ -427,7 +439,7 @@ end
     first_run = run(data, common; agg = "sgt", nperm = 149)
     @test rand() == before
     @test isequal(first_run, run(data, common; agg = "sgt", nperm = 149))
-    @test all(first_run.ri_procedure .== "ordinary_sampled")
+    @test !("ri_procedure" in names(first_run))
 end
 
 @testset "truejack still refits the first stage" begin
