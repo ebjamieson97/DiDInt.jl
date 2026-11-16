@@ -22,7 +22,7 @@ const SNAPSHOT_SEED = 1234
 const SNAPSHOT_RTOL = 1e-8
 const SNAPSHOT_ATOL = 1e-10
 
-# Columns that depend on Julia's RNG stream (RI draws via Random.seed!/shuffle). Their
+# Columns that depend on Julia's RNG stream (the RI draws and stand-ins come from Xoshiro(seed)). Their
 # values are only compared on the Julia minor version that recorded the snapshots.
 is_ri_column(col::AbstractString) = startswith(col, "ri_pval")
 

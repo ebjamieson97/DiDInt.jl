@@ -500,6 +500,8 @@ function init_results(agg::AbstractString, nrows::Integer; pooled::Bool = false)
     if pooled
         results.policy_weights = float_column()
     end
+    # How the RI p-values were computed (update spec §8.2); filled by randomization_inference
+    results.ri_procedure = Vector{Union{Missing, String}}(missing, nrows)
     return results
 end
 
@@ -751,7 +753,8 @@ function policy_att_results(results::DataFrame, att_st::DataFrame, agg::Abstract
     return results
 end
 
-### Point estimates for an arbitrary treatment assignment (used by the jackknife and RI)
+### Helpers shared with the batched engine (src/batched_engine.jl), which recomputes the estimates
+### for the jackknife deletions and the randomization inference draws
 
 function long_difference_lookup(long_diffs::AbstractDataFrame)
 
@@ -767,110 +770,11 @@ end
 # The (cohort, period) cells of the observed ATT(s,t)'s, with their base period and event time
 att_st_cells(att_st::DataFrame) = sort(unique(att_st[:, [:gvar, :t, :r1, :periods_post_treat]]), [:gvar, :t])
 
-function att_st_point_estimates(cells::DataFrame, lookup::Dict, labels::Dict, states::AbstractVector,
-                                weighting::AbstractString, use_pre_controls::Bool;
-                                integration::Union{CovariateFit, Nothing} = nothing,
-                                policies::Union{AbstractDict, Nothing} = nothing)
-
-    # ATT(s,t)'s for the assignment `labels` (state => treatment period; states not in it are
-    # never treated), in closed form: ATT(s,t) = diff_s - sum_c v_c diff_c / sum_c v_c over the
-    # controls of the cell (update spec §2, §3.3-§3.4), which equals the ATT(s,t) regression
-    # coefficient. Controls are never-treated states and, with use_pre_controls, states not yet
-    # treated at t; v = n under weighting = "diff"/"both", else 1.
-    # With `integration` the long differences are the integrated ones (DID-INT eqs. 46-47). The
-    # control mean for a treated state s is then a + b' xbar_{s,t}, with a the weighted mean of
-    # the controls' intercept differences and b that of their slope changes (update spec §7.4).
-    # `policies` (treated state => policy) only labels the ATT(s,t)'s: controls do not depend
-    # on policy (§6.2).
-    out = DataFrame(state = String[], gvar = Date[], t = Date[], r1 = Date[], periods_post_treat = Int[],
-                    policy = String[], att = Float64[], n = Float64[], n_t = Float64[])
-    n_covariates = isnothing(integration) ? 0 : length(integration.covariates)
-    for cell in eachrow(cells)
-        g, t, r1 = cell.gvar, cell.t, cell.r1
-        weighted_sum = 0.0
-        weighted_slope_change = zeros(n_covariates)
-        weight_total = 0.0
-        for c in states
-            label = get(labels, c, nothing)
-            (isnothing(label) || (use_pre_controls && t < label)) || continue
-            d = get(lookup, (c, t, r1), nothing)
-            isnothing(d) && continue
-            v = weighting in ["diff", "both"] ? d.n : 1.0
-            weighted_sum += v * d.diff
-            if !isnothing(integration)
-                weighted_slope_change .+= v .* (integration.slopes[(c, t)] .- integration.slopes[(c, r1)])
-            end
-            weight_total += v
-        end
-        weight_total == 0 && continue
-        control_mean = weighted_sum / weight_total
-        control_slope_change = weighted_slope_change ./ weight_total
-        for s in states
-            get(labels, s, nothing) == g || continue
-            d = get(lookup, (s, t, r1), nothing)
-            isnothing(d) && continue
-            att = d.diff - control_mean
-            if !isnothing(integration)
-                att += slope_change_term(integration, s, t, r1, s) - dot(control_slope_change, integration.xbar[(s, t)])
-            end
-            push!(out, (s, g, t, r1, cell.periods_post_treat, isnothing(policies) ? DEFAULT_POLICY : policies[s], att, d.n, d.n_t))
-        end
-    end
-    return out
-end
-
-function point_sub_aggregates(est::DataFrame, agg::AbstractString, weighting::AbstractString,
-                              treated_weight::AbstractString)
-
-    # u-weighted mean ATT and Level 2 weight (sum of n_t) of every group with at least one
-    # ATT(s,t), keyed by the group's key tuple (same weights as sub_aggregate_results)
-    group_cols = group_columns(agg)
-    u = treated_unit_weights(est, weighting, treated_weight)
-    sums = Dict{Tuple, Vector{Float64}}()
-    for i in 1:nrow(est)
-        key = Tuple(est[i, col] for col in group_cols)
-        acc = get!(sums, key, zeros(3))
-        acc[1] += u[i] * est.att[i]
-        acc[2] += u[i]
-        acc[3] += est.n_t[i]
-    end
-    return Dict(key => (att = acc[1] / acc[2], weight = acc[3]) for (key, acc) in sums)
-end
-
-function point_aggregate(sub::Dict, weighting::AbstractString)
-
-    # Aggregate ATT: Level 2 weighted mean of the defined sub-aggregates (update spec §4.2);
-    # NaN if there are none
-    isempty(sub) && return NaN
-    entries = [sub[key] for key in sort(collect(keys(sub)))]
-    atts = [e.att for e in entries]
-    if weighting in ["att", "both"]
-        weights = [e.weight for e in entries]
-        return sum(weights .* atts) / sum(weights)
-    else
-        return mean(atts)
-    end
-end
-
 function result_key(results::DataFrame, i::Integer, agg::AbstractString)
 
-    # Key tuple of results row i, in the form point_sub_aggregates uses (event time as Int)
+    # Key tuple of results row i, with the event time as an Int as in the ATT(s,t) table
     return Tuple(coltype === Float64 ? Int(results[i, col]) : results[i, col]
                  for (col, _, coltype) in SUB_AGG_SPECS[agg].keys)
-end
-
-function point_policy_aggregates(sub::Dict, est::DataFrame, policies::AbstractVector, weighting::AbstractString,
-                                 policy_weighting::AbstractString)
-
-    # Each policy's ATT_p and the pooled ATT for the policy aggregations, from the point
-    # sub-aggregates of one deletion or draw (the policy is the first element of every key).
-    # ATT_p is the Level 2 weighted mean of the policy's sub-aggregates; the pooled ATT weights
-    # the defined ATT_p's by omega_p, recomputed from this deletion's / draw's ATT(s,t)'s (update
-    # spec §6.3-§6.4). A policy without any ATT(s,t) gives NaN and is left out of the pool.
-    att_p = [point_aggregate(filter(entry -> entry.first[1] == p, sub), weighting) for p in policies]
-    defined = isfinite.(att_p)
-    pooled = any(defined) ? sum(policy_pool_weights(est, policies[defined], policy_weighting) .* att_p[defined]) : NaN
-    return att_p, pooled
 end
 
 ### The following functions are parent functions within the didint() function:
@@ -998,31 +902,8 @@ end
 default_policy_options(treated_states) = (labels = Dict(s => DEFAULT_POLICY for s in treated_states),
                                           pooled = false, weighting = "equal")
 
-function draw_ri_assignments(treated::AbstractVector, times::AbstractVector, policies::AbstractVector,
-                             all_states::AbstractVector, nperm::Int)
-
-    # `nperm` distinct random assignments, none equal to the observed one. Each draw gives the
-    # observed joint (treatment time, policy) labels to randomly drawn states, so a state's
-    # policy and treatment time are permuted together (update spec D14, §7.2). Returns, for each
-    # draw, the pair (state => treatment time, state => policy). The caller seeds the random
-    # number generator.
-    k = length(treated)
-    assignment_key(states, times, policies) = join(sort([string(s, "-", t, "-", p) for (s, t, p) in zip(states, times, policies)]), "")
-    seen = Set([assignment_key(treated, times, policies)])
-    draws = Tuple{Dict{String, Date}, Dict{String, String}}[]
-    while length(draws) < nperm
-        shuffled_states = shuffle(all_states)
-        new_treated_states = shuffled_states[1:k]
-        order = randperm(k)
-        key = assignment_key(new_treated_states, times[order], policies[order])
-        if key in seen
-            continue
-        end
-        push!(seen, key)
-        push!(draws, (Dict(zip(new_treated_states, times[order])), Dict(zip(new_treated_states, policies[order]))))
-    end
-    return draws
-end
+# Number of draws that randomization inference evaluates at a time
+const RI_BATCH_SIZE = 500
 
 function randomization_inference(results::DataFrame, att_st::DataFrame, long_diffs::DataFrame, agg::AbstractString,
                                  weighting::AbstractString, treated_weight::AbstractString, use_pre_controls::Bool,
@@ -1030,129 +911,97 @@ function randomization_inference(results::DataFrame, att_st::DataFrame, long_dif
                                  integration::Union{CovariateFit, Nothing} = nothing,
                                  policy = default_policy_options(treated_states))
 
-    # Randomization inference (MacKinnon & Webb 2020): re-assign the observed treatment times to
-    # randomly drawn states, recompute the same estimates for each draw, and compare (update
-    # spec §5.2, §8.1). long_diffs holds every state's long difference in every cell. The first
-    # stage does not depend on the assignment, so the slopes and covariate means used for
-    # integration are the same in every draw (§7.1).
+    # Randomization inference (MacKinnon & Webb 2020): give the observed (treatment time, policy)
+    # labels to other states, recompute the same estimates for each alternative assignment, and
+    # compare them with the observed estimates (update spec §5.2, §7, §8). An RI p-value is
+    # reported at every level of the output: every sub-aggregate, the aggregate ATT or each
+    # policy's ATT, and the pooled ATT. long_diffs holds every state's long difference in every
+    # cell. The first stage does not depend on the assignment, so the batched engine evaluates
+    # all draws from the same lambdas, slopes and covariate means (§7.1, §7.3).
 
-    # PART ONE: DRAW UNIQUE RANDOM ASSIGNMENTS OF THE (TREATMENT TIME, POLICY) LABELS
+    # PART ONE: THE ALTERNATIVE ASSIGNMENTS OF THE (TREATMENT TIME, POLICY) LABELS
+    # All of them if there are at most `nperm`, otherwise `nperm` distinct random ones (§7.2)
+    engine = build_engine(long_diffs, att_st_cells(att_st), unique(long_diffs.state), weighting, treated_weight;
+                          integration = integration)
     original_treated = unique(long_diffs[long_diffs.treat .== 1, [:state, :treated_time]])
-    ri_treatment_times = original_treated.treated_time
-    ri_policies = String[policy.labels[s] for s in original_treated.state]
-    all_states = unique(long_diffs.state)
-
-    # compute_n_unique_assignments() computes all of the possible assignments (including the actual assignment)
-    # so taking compute_n_unique_assignments() - 1 gives us the number of all of the possible unique randomizations besides the actual assignment
-    n_unique_perms = compute_n_unique_assignments(collect(zip(ri_treatment_times, ri_policies)), length(all_states)) - 1
-    if nperm > n_unique_perms
-        @warn "'nperm' was set to $nperm but only $n_unique_perms unique permutations exist. \n
-                Setting 'nperm' to $(n_unique_perms)."
-        nperm = Int(n_unique_perms)
+    policy_names, policy_code = policy_coding(results, agg, policy.labels)
+    L_observed, P_observed = assignment_row(engine.states, Dict(zip(original_treated.state, original_treated.treated_time)),
+                                            policy.labels, policy_code)
+    rng = Xoshiro(seed)
+    L, P, exact = ri_assignment_draws(L_observed, P_observed, nperm, rng)
+    if size(L, 1) < nperm
+        @warn "'nperm' was set to $nperm but only $(size(L, 1)) unique permutations exist. \n
+                Setting 'nperm' to $(size(L, 1))."
+        nperm = size(L, 1)
     end
     if nperm < 399
         @warn "'nperm' is less than 399!"
     end
 
-    Random.seed!(seed)
-    draws = draw_ri_assignments(original_treated.state, ri_treatment_times, ri_policies, all_states, nperm)
-
-    # PART TWO: COMPUTE THE PLACEBO SUB-AGGREGATE AND TOP-LEVEL ATTS FOR EACH DRAW
+    # PART TWO: COMPUTE THE PLACEBO SUB-AGGREGATE AND TOP-LEVEL ATTS FOR EVERY DRAW
     # att_ri holds the placebo aggregate ATT, or for the policy aggregations the pooled ATT;
-    # att_ri_policy holds each policy's placebo ATT_p
-    lookup = long_difference_lookup(long_diffs)
-    cells = att_st_cells(att_st)
-    result_keys = [result_key(results, i, agg) for i in 1:nrow(results)]
-    observed_labels = Dict(zip(treated_states, treatment_times))
-    policies = is_policy_agg(agg) ? unique(results.policy) : String[]
+    # att_ri_policy holds each policy's placebo ATT_p. The statistic is the raw estimate, and a
+    # placebo sub-aggregate is matched to the observed one by its key (§7.4). "state" and "sgt"
+    # keep the stand-in procedure of §7.5.
     att_ri = Vector{Float64}(undef, nperm)
-    att_ri_policy = Matrix{Float64}(undef, nperm, length(policies))
+    att_ri_policy = Matrix{Float64}(undef, nperm, length(policy_names))
     att_ri_sub = Matrix{Float64}(undef, nperm, nrow(results))
-    for (j, (labels, drawn_policies)) in enumerate(draws)
-        est = att_st_point_estimates(cells, lookup, labels, all_states, weighting, use_pre_controls;
-                                     integration = integration, policies = drawn_policies)
+    observed_cohort = Dict(zip(treated_states, treatment_times))
+    for batch in Iterators.partition(1:nperm, RI_BATCH_SIZE)
         if agg in ["state", "sgt"]
-            att_ri_sub[j, :], att_ri[j] = state_level_ri_draw(est, result_keys, observed_labels, agg, weighting, treated_weight)
+            est = state_level_ri_estimates(engine, results, agg, weighting, use_pre_controls, L[batch, :], observed_cohort, rng)
         else
-            sub = point_sub_aggregates(est, agg, weighting, treated_weight)
-            att_ri_sub[j, :] = [haskey(sub, key) ? sub[key].att : NaN for key in result_keys]
-            if is_policy_agg(agg)
-                att_ri_policy[j, :], att_ri[j] = point_policy_aggregates(sub, est, policies, weighting, policy.weighting)
-            else
-                att_ri[j] = point_aggregate(sub, weighting)
-            end
+            est = engine_estimates(engine, results, agg, weighting, use_pre_controls, L[batch, :], P[batch, :];
+                                   policy_names = policy_names, policy_weighting = policy.weighting)
+            att_ri_policy[batch, :] = est.att_p
         end
-        if verbose && j % 100 == 0
-            println("Completed $(j) of $(nperm) permutations")
+        att_ri_sub[batch, :] = est.sub
+        att_ri[batch] = est.top
+        if verbose
+            println("Completed $(last(batch)) of $(nperm) permutations")
         end
     end
 
     # PART THREE: COMPUTE P-VALS BASED ON THE PLACEBO ESTIMATES
+    # The ordinary p-value (§8.1), or the kernel-smoothed one when every alternative was
+    # enumerated and there are fewer than RI_KERNEL_CUTOFF of them (§8.2)
+    pvalue(placebos, observed) = exact ? ri_pvalue_enumerated(placebos, observed) : ri_pvalue(placebos, observed)
     suffix = SUB_AGG_SPECS[agg].suffix
     for i in 1:nrow(results)
-        results[i, "ri_pval_" * suffix] = ri_pvalue(att_ri_sub[:, i], results[i, suffix])
+        results[i, "ri_pval_" * suffix] = pvalue(att_ri_sub[:, i], results[i, suffix])
     end
     if !is_policy_agg(agg)
-        results.ri_pval_agg_att[1] = ri_pvalue(att_ri, results.agg_att[1])
+        results.ri_pval_agg_att[1] = pvalue(att_ri, results.agg_att[1])
     else
         if agg != "policy"
-            for (j, p) in enumerate(policies)
+            for (j, p) in enumerate(policy_names)
                 row = findfirst(results.policy .== p)
-                results[row, "ri_pval_att_p"] = ri_pvalue(att_ri_policy[:, j], results[row, "att_p"])
+                results[row, "ri_pval_att_p"] = pvalue(att_ri_policy[:, j], results[row, "att_p"])
             end
         end
         if policy.pooled
-            results.ri_pval_att_pool[1] = ri_pvalue(att_ri, results.att_pool[1])
+            results.ri_pval_att_pool[1] = pvalue(att_ri, results.att_pool[1])
         end
     end
+    # nperm is the number of alternatives used; ri_procedure records how the p-values were
+    # computed (with a single alternative there is nothing to smooth, and the kernel p-value
+    # falls back to the ordinary one)
     results.nperm[1] = nperm
+    results.ri_procedure .= !exact ? "sampled" : (2 <= nperm < RI_KERNEL_CUTOFF ? "kernel_exact" : "ordinary_exact")
     return results
 end
 
-function state_level_ri_draw(est::DataFrame, result_keys, observed_labels::Dict, agg::AbstractString,
-                             weighting::AbstractString, treated_weight::AbstractString)
-
-    # State-level RI statistics for one draw (agg = "state" or "sgt"; update spec D9, §7.5). For
-    # each observed treated state s, take its treatment time g_s and pick at random one of the
-    # states the draw assigns g_s; that state stands in for s in every period. Its estimate is
-    # the u-weighted mean of its ATT(s,t)'s ("state") or its ATT(s,t) in each of s's periods
-    # ("sgt"). The aggregate is the Level 2 weighted mean of these statistics.
-    stats = fill(NaN, length(result_keys))
-    level2 = zeros(length(result_keys))
-    u = treated_unit_weights(est, weighting, treated_weight)
-    picks = Dict{String, Union{String, Nothing}}()
-    for (i, key) in enumerate(result_keys)
-        s = key[1]
-        g = observed_labels[s]
-        if !haskey(picks, s)
-            candidates = unique(est.state[est.gvar .== g])
-            picks[s] = isempty(candidates) ? nothing : shuffle(candidates)[1]
-        end
-        pick = picks[s]
-        isnothing(pick) && continue
-        rows = agg == "state" ? (est.state .== pick) .& (est.gvar .== g) : (est.state .== pick) .& (est.gvar .== g) .& (est.t .== key[3])
-        any(rows) || continue
-        stats[i] = sum(u[rows] .* est.att[rows]) / sum(u[rows])
-        level2[i] = sum(est.n_t[rows])
-    end
-    defined = isfinite.(stats)
-    if !any(defined)
-        return stats, NaN
-    elseif weighting in ["att", "both"]
-        return stats, sum(level2[defined] .* stats[defined]) / sum(level2[defined])
-    else
-        return stats, mean(stats[defined])
-    end
-end
-
-## The following functions are used within randomization_inference_v2():
+## The following functions compute the randomization inference p-values (update spec §8)
 
 # Relative tolerance for ties between a placebo estimate and the observed estimate
 const RI_TIE_RTOL = sqrt(eps(Float64))
 
+# Exact RI with fewer alternatives than this uses the kernel-smoothed p-value (update spec A4)
+const RI_KERNEL_CUTOFF = 99
+
 function ri_pvalue(att_ri::AbstractVector, observed::Real)
     # RI p-value p = (1 + #{|T*| >= |T|}) / (S + 1) over the S finite placebo estimates T*,
-    # the more conservative of the two versions in MacKinnon & Webb (2020) (update spec D8).
+    # the more conservative of the two versions in MacKinnon & Webb (2020) (update spec D8, §8.1).
     # Ties count as hits. A placebo assignment that leaves a group's treated states and
     # its controls unchanged (common with use_pre_controls = true) reproduces the observed
     # estimate exactly in exact arithmetic, but the two are computed along different paths
@@ -1167,18 +1016,29 @@ function ri_pvalue(att_ri::AbstractVector, observed::Real)
     return (1 + n_hits) / (n_placebo + 1)
 end
 
-function compute_n_unique_assignments(treatment_times::Vector, total_n_states::Number)
-    # This computes the combinations formula * the multinomial coefficient. The labels can be
-    # treatment times or joint (treatment time, policy) labels.
-    n_assignments = length(treatment_times)
-    unique_assignments = unique(treatment_times)
-    num = factorial(big(total_n_states))           
-    den = factorial(big(total_n_states - n_assignments))
-    for m in unique_assignments
-        n_m = count(==(m), treatment_times)
-        den *= factorial(big(n_m))
+function ri_pvalue_kernel(att_ri::AbstractVector, observed::Real)
+    # Kernel-smoothed RI p-value (Racine & MacKinnon 2007, "Inference via kernel smoothing of
+    # bootstrap P values"; update spec D10, §8.2):
+    #   p = 1 - (1/S) sum_j Phi((|T| - |T*_j|) / h),   h = 1.575 sd(T*) S^(-4/9),
+    # over the S finite placebo estimates T*, with Phi the standard normal CDF and sd the sample
+    # standard deviation of the signed T*. With few alternatives the ordinary p-value can only
+    # take a few values; smoothing the indicator |T*| >= |T| lets it move continuously with T.
+    # Falls back to the ordinary p-value if S < 2 or sd is zero or not finite.
+    finite_att_ri = filter(isfinite, att_ri)
+    n_placebo = length(finite_att_ri)
+    n_placebo == 0 && return missing
+    sd = n_placebo >= 2 ? std(finite_att_ri) : NaN
+    if !(isfinite(sd) && sd > 0)
+        return ri_pvalue(att_ri, observed)
     end
-    return num ÷ den                  
+    h = 1.575 * sd * n_placebo^(-4 / 9)
+    return 1 - mean(cdf.(Normal(), (abs(observed) .- abs.(finite_att_ri)) ./ h))
+end
+
+function ri_pvalue_enumerated(att_ri::AbstractVector, observed::Real)
+    # P-value when every alternative assignment was enumerated: kernel-smoothed if fewer than
+    # RI_KERNEL_CUTOFF placebo estimates are finite, the ordinary one otherwise (update spec §8)
+    return count(isfinite, att_ri) < RI_KERNEL_CUTOFF ? ri_pvalue_kernel(att_ri, observed) : ri_pvalue(att_ri, observed)
 end
 
 ## The following functions are for the jackknife procedure
@@ -1191,9 +1051,13 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
 
     # Delete-one-state jackknife (CRV3, centered at the full-sample estimate; update spec §9.1).
     # Each state is deleted as a treated state and as a control, and the same weighted means are
-    # recomputed. With truejack = true (ccc not "int" or "state") the first stage is re-estimated
-    # without the state, since its lambdas then depend on the other states. Under "int", the
-    # only ccc that integrates, each cell's slopes and covariate means are unaffected by deletions.
+    # recomputed, at every level of the output (sub-aggregates, the aggregate ATT or each
+    # policy's ATT, and the pooled ATT). Deleting a state leaves the other states' lambdas and
+    # slopes unchanged under ccc = "int" and "state", or is taken to under truejack = false, so
+    # the batched engine evaluates all deletions in one pass (§9.2). With truejack = true (ccc
+    # not "int" or "state") the first stage is re-estimated without the state, since its lambdas
+    # then depend on the other states. Under "int", the only ccc that integrates, each cell's
+    # slopes and covariate means are unaffected by deletions.
 
     # A jackknife needs at least 2 treated and 2 control states; otherwise every jackknife
     # SE and p-value stays missing
@@ -1204,41 +1068,51 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
         return results
     end
 
-    # Delete-one estimates. top_jacks holds the aggregate ATT, or for the policy aggregations
-    # the pooled ATT; policy_jacks holds each policy's ATT_p.
+    # Delete-one estimates, one row per deleted state. top_jacks holds the aggregate ATT, or for
+    # the policy aggregations the pooled ATT; policy_jacks holds each policy's ATT_p.
     cells = att_st_cells(att_st)
     observed_labels = Dict(zip(treated_states, treatment_times))
     all_states = unique(diff_df.state)
-    lookup = long_difference_lookup(diff_df)
-    result_keys = [result_key(results, i, agg) for i in 1:nrow(results)]
-    policies = is_policy_agg(agg) ? unique(results.policy) : String[]
-    top_jacks = Vector{Union{Missing, Float64}}(missing, length(all_states))
-    policy_jacks = Matrix{Union{Missing, Float64}}(missing, length(all_states), length(policies))
-    sub_jacks = Matrix{Union{Missing, Float64}}(missing, length(all_states), nrow(results))
-    for (h, without) in enumerate(all_states)
-        if truejack
+    n_states = length(all_states)
+    policy_names, policy_code = policy_coding(results, agg, policy.labels)
+    if !truejack
+        # Batched fast jackknife (update spec §9.2): every row of the assignment matrix is the
+        # observed assignment, and row h switches state h off as a treated state and as a
+        # control. The weights renormalize automatically.
+        engine = build_engine(diff_df, cells, all_states, weighting, treated_weight; integration = integration)
+        L_observed, P_observed = assignment_row(all_states, observed_labels, policy.labels, policy_code)
+        est = engine_estimates(engine, results, agg, weighting, use_pre_controls,
+                               repeat(L_observed', n_states), repeat(P_observed', n_states);
+                               active = .!Matrix{Bool}(I, n_states, n_states),
+                               policy_names = policy_names, policy_weighting = policy.weighting)
+        sub, att_p, top = est.sub, est.att_p, est.top
+    else
+        # Refit path: re-estimate the first stage without state h, rebuild the long differences,
+        # and evaluate the observed assignment of the remaining states
+        sub = fill(NaN, n_states, nrow(results))
+        att_p = fill(NaN, n_states, length(policy_names))
+        top = fill(NaN, n_states)
+        for (h, without) in enumerate(all_states)
             lambda_h, _, fit_h = iterative_demean(data_copy[data_copy.state_71X9yTx .!= without, :], ccc, covariates_to_include, "hc0", false)
             diff_h = construct_diff_df(lambda_h, treated_states, treatment_times, time_to_index, match_to_these_dates,
                                        use_pre_controls, data_copy; jackknife = true, without = without)
-            lookup_h = long_difference_lookup(diff_h)
-            integration_h = isnothing(integration) ? nothing : fit_h
-        else
-            lookup_h = lookup
-            integration_h = integration
+            remaining = filter(!=(without), all_states)
+            engine_h = build_engine(diff_h, cells, remaining, weighting, treated_weight;
+                                    integration = isnothing(integration) ? nothing : fit_h)
+            L_h, P_h = assignment_row(remaining, observed_labels, policy.labels, policy_code)
+            est = engine_estimates(engine_h, results, agg, weighting, use_pre_controls, reshape(L_h, 1, :), reshape(P_h, 1, :);
+                                   policy_names = policy_names, policy_weighting = policy.weighting)
+            sub[h, :] = est.sub
+            att_p[h, :] = est.att_p
+            top[h] = est.top[1]
         end
-        labels_h = filter(label -> label.first != without, observed_labels)
-        est = att_st_point_estimates(cells, lookup_h, labels_h, filter(!=(without), all_states), weighting, use_pre_controls;
-                                     integration = integration_h, policies = policy.labels)
-        sub = point_sub_aggregates(est, agg, weighting, treated_weight)
-        sub_jacks[h, :] = [haskey(sub, key) ? sub[key].att : missing for key in result_keys]
-        if is_policy_agg(agg)
-            att_p, top = point_policy_aggregates(sub, est, policies, weighting, policy.weighting)
-            policy_jacks[h, :] = [isfinite(value) ? value : missing for value in att_p]
-        else
-            top = point_aggregate(sub, weighting)
-        end
-        top_jacks[h] = isfinite(top) ? top : missing
     end
+    # An estimate that a deletion leaves undefined is missing
+    defined_or_missing(x) = isfinite(x) ? x : missing
+    sub_jacks = defined_or_missing.(sub)
+    policy_jacks = defined_or_missing.(att_p)
+    top_jacks = defined_or_missing.(top)
+    result_keys = [result_key(results, i, agg) for i in 1:nrow(results)]
 
     # Treated states behind a set of ATT(s,t)'s, and control states in their cells
     control_rows = diff_df[diff_df.treat .== 0, :]
@@ -1275,7 +1149,7 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
     # Each policy's ATT_p, if the policy has at least 2 treated states and its cells at least 2
     # control states (for agg = "policy" it is the sub-aggregate handled above)
     if agg != "policy"
-        for (j, p) in enumerate(policies)
+        for (j, p) in enumerate(policy_names)
             n_policy_treated, n_policy_control = state_counts(att_st.policy .== p)
             if n_policy_treated >= 2 && n_policy_control >= 2
                 row = findfirst(results.policy .== p)
@@ -1288,7 +1162,7 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
     # Pooled ATT across policies. A deletion that removes a policy's only treated state leaves
     # the pool defined over the other policies; the SE is still reported (update spec §9.1).
     if policy.pooled
-        if any(ismissing(policy_jacks[h, j]) && !ismissing(top_jacks[h]) for h in 1:length(all_states), j in 1:length(policies))
+        if any(ismissing(policy_jacks[h, j]) && !ismissing(top_jacks[h]) for h in 1:length(all_states), j in 1:length(policy_names))
             @warn "Some jackknife deletions remove a whole policy. The jackknife standard error of the pooled ATT then compares pools over different sets of policies."
         end
         results.jknifese_att_pool[1], results.jknifepval_att_pool[1] = jackknife_se_pval(collect(skipmissing(top_jacks)), results.att_pool[1])

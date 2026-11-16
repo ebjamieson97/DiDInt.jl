@@ -147,43 +147,44 @@ end
 
 @testset "RI draws permute the joint (treatment time, policy) labels (D14)" begin
     # Spec §12.2 item 8: draws are distinct, exclude the observed assignment, and keep the
-    # count of every joint label
+    # count of every joint label, so a state's policy moves with its treatment time
     states = ["s" * lpad(i, 2, '0') for i in 1:12]
-    times = Date.(POLICY_TIMES)
-    Random.seed!(20260116)
-    draws = DiDInt.draw_ri_assignments(POLICY_TREATED, times, POLICY_LABELS, states, 200)
-    observed = Set(zip(POLICY_TREATED, times, POLICY_LABELS))
-    label_counts(joint) = sort([(label, count(==(label), joint)) for label in unique(joint)])
-    assignments = Set{Set{Tuple{String, Date, String}}}()
-    for (drawn_times, drawn_policies) in draws
-        assignment = Set((s, drawn_times[s], drawn_policies[s]) for s in keys(drawn_times))
-        @test assignment != observed
-        @test label_counts([(drawn_times[s], drawn_policies[s]) for s in keys(drawn_times)]) == label_counts(collect(zip(times, POLICY_LABELS)))
-        push!(assignments, assignment)
-    end
-    @test length(assignments) == 200
+    times = Dict(zip(POLICY_TREATED, Date.(POLICY_TIMES)))
+    policies = Dict(zip(POLICY_TREATED, POLICY_LABELS))
+    L_observed, P_observed = DiDInt.assignment_row(states, times, policies, Dict("A" => 1, "B" => 2))
+    L, P, exact = DiDInt.ri_assignment_draws(L_observed, P_observed, 200, Xoshiro(20260116))
+    observed = collect(zip(L_observed, P_observed))
+    joint(b) = collect(zip(L[b, :], P[b, :]))
+    label_counts(labels) = sort([(label, count(==(label), labels)) for label in unique(labels)])
+    @test !exact && size(L, 1) == 200
+    @test all(joint(b) != observed for b in 1:200)
+    @test all(label_counts(joint(b)) == label_counts(observed) for b in 1:200)
+    @test length(unique(joint(b) for b in 1:200)) == 200
 end
 
-@testset "Closed-form point estimates reproduce the policy estimates" begin
-    # The jackknife and RI recompute ATT_p and the pooled ATT with point_policy_aggregates; at the
-    # observed assignment it must reproduce the regression-based results (hand-built design)
+@testset "The batched engine reproduces the policy estimates" begin
+    # The jackknife and RI recompute ATT_p and the pooled ATT with the batched engine; at the
+    # observed assignment it must reproduce the regression-based results (hand-built design).
+    # More engine tests are in test_engine.jl.
     labels = Dict("A" => Date(2005), "B" => Date(2007))
     policies = Dict("A" => "p1", "B" => "p2")
     for use_pre_controls in [false, true], weighting in ["both", "none"], policy_weighting in ["equal", "treated_obs", "treated_cells", "treated_states"]
         diff_df, ri_diff_df = run_construct_diff_df(use_pre_controls)
         long_diffs = vcat(diff_df, ri_diff_df)
+        states = unique(long_diffs.state)
         att_st = DiDInt.build_att_st(diff_df, weighting, "hc1", nothing; policies = policies)
-        est = DiDInt.att_st_point_estimates(DiDInt.att_st_cells(att_st), DiDInt.long_difference_lookup(long_diffs), labels,
-                                            unique(long_diffs.state), weighting, use_pre_controls; policies = policies)
+        engine = DiDInt.build_engine(long_diffs, DiDInt.att_st_cells(att_st), states, weighting, "treated")
+        L, P = DiDInt.assignment_row(states, labels, policies, Dict("p1" => 1, "p2" => 2))
         policy = (labels = policies, pooled = true, weighting = policy_weighting)
         for agg in POLICY_AGGS
             results = DiDInt.sub_aggregate_results(att_st, agg, weighting, "treated", "hc1"; pooled = true)
             results = DiDInt.policy_att_results(results, att_st, agg, weighting, "hc1", policy)
-            sub = DiDInt.point_sub_aggregates(est, agg, weighting, "treated")
-            att_p, pooled = DiDInt.point_policy_aggregates(sub, est, ["p1", "p2"], weighting, policy_weighting)
+            est = DiDInt.engine_estimates(engine, results, agg, weighting, use_pre_controls, reshape(L, 1, :), reshape(P, 1, :);
+                                          policy_names = ["p1", "p2"], policy_weighting = policy_weighting)
             first_rows = [findfirst(results.policy .== p) for p in ["p1", "p2"]]
-            @test att_p ≈ Float64.(results.att_p[first_rows]) atol = 1e-10
-            @test pooled ≈ results.att_pool[1] atol = 1e-10
+            @test vec(est.sub) ≈ Float64.(results[!, DiDInt.SUB_AGG_SPECS[agg].suffix]) atol = 1e-10
+            @test vec(est.att_p) ≈ Float64.(results.att_p[first_rows]) atol = 1e-10
+            @test est.top[1] ≈ results.att_pool[1] atol = 1e-10
         end
     end
 end

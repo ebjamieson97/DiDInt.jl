@@ -116,11 +116,15 @@ end
             @test integrated.se ≈ plain.se atol = 1e-10
         end
 
-        # The closed-form engine used by the jackknife and RI reproduces the integrated ATT(s,t)'s
+        # The batched engine used by the jackknife and RI reproduces the integrated ATT(s,t)'s
         long_diffs = vcat(diff_df, ri_diff_df)
-        est = DiDInt.att_st_point_estimates(DiDInt.att_st_cells(integrated), DiDInt.long_difference_lookup(long_diffs),
-                                            labels, unique(long_diffs.state), "both", upc; integration = fit)
-        @test sort(est, [:state, :gvar, :t]).att ≈ integrated.att atol = 1e-10
+        states = unique(long_diffs.state)
+        engine = DiDInt.build_engine(long_diffs, DiDInt.att_st_cells(integrated), states, "both", "treated"; integration = fit)
+        L, P = DiDInt.assignment_row(states, labels, Dict(s => DiDInt.DEFAULT_POLICY for s in INTEGRATION_TREATED),
+                                     Dict(DiDInt.DEFAULT_POLICY => 1))
+        sgt_rows = DataFrame(state = integrated.state, gvar = integrated.gvar, t = integrated.t)
+        est = DiDInt.engine_estimates(engine, sgt_rows, "sgt", "both", upc, reshape(L, 1, :), reshape(P, 1, :))
+        @test vec(est.sub) ≈ Float64.(integrated.att) atol = 1e-10
     end
 
     # didint() itself: every ccc except "int" gives the same estimates with and without the

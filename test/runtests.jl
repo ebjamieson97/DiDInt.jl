@@ -115,6 +115,9 @@ const TEST_DATA_EC_COMMON = filter(r -> r.state ∈ [_t1, EC_CONTROL], TEST_DATA
     @testset "Policies" begin
         include("test_policies.jl")
     end
+    @testset "Batched engine, RI draws and p-values" begin
+        include("test_engine.jl")
+    end
     @testset "snapshots" begin
         include("test_snapshots.jl")
     end

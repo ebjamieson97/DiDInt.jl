@@ -39,29 +39,28 @@ end
 const STAG_COHORTS = Dict("s1" => 2003, "s2" => 2003, "s3" => 2005, "s4" => 2005)
 const COMMON_COHORTS = Dict("s1" => 2004, "s2" => 2004, "s3" => 2004)
 
-@testset "Closed-form point estimates reproduce the regression-based estimates" begin
-    # The jackknife and RI recompute estimates with att_st_point_estimates; at the observed
+@testset "The batched engine reproduces the regression-based estimates" begin
+    # The jackknife and RI recompute estimates with the batched engine; at the observed
     # assignment it must reproduce every sub-aggregate and aggregate (update spec §7.4).
     # Uses the hand-built design of test_construct_diff_df.jl (A treated 2005, B 2007).
+    # More engine tests are in test_engine.jl.
     labels = Dict("A" => Date(2005), "B" => Date(2007))
+    policies = Dict("A" => DiDInt.DEFAULT_POLICY, "B" => DiDInt.DEFAULT_POLICY)
     for use_pre_controls in [false, true]
         diff_df, ri_diff_df = run_construct_diff_df(use_pre_controls)
         long_diffs = vcat(diff_df, ri_diff_df)
         states = unique(long_diffs.state)
         for weighting in ["both", "att", "diff", "none"], treated_weight in ["treated", "population"]
             att_st = DiDInt.build_att_st(diff_df, weighting, "hc1", nothing)
-            est = DiDInt.att_st_point_estimates(DiDInt.att_st_cells(att_st), DiDInt.long_difference_lookup(long_diffs),
-                                                labels, states, weighting, use_pre_controls)
-            est = sort(est, [:state, :gvar, :t])
-            @test est.att ≈ att_st.att atol = 1e-10
+            engine = DiDInt.build_engine(long_diffs, DiDInt.att_st_cells(att_st), states, weighting, treated_weight)
+            L, P = DiDInt.assignment_row(states, labels, policies, Dict(DiDInt.DEFAULT_POLICY => 1))
             for agg in SECOND_STAGE_AGGS
                 results = DiDInt.aggregate_att(DiDInt.sub_aggregate_results(att_st, agg, weighting, treated_weight, "hc1"),
                                                agg, weighting, "hc1")
-                sub = DiDInt.point_sub_aggregates(est, agg, weighting, treated_weight)
+                est = DiDInt.engine_estimates(engine, results, agg, weighting, use_pre_controls, reshape(L, 1, :), reshape(P, 1, :))
                 suffix = DiDInt.SUB_AGG_SPECS[agg].suffix
-                @test all(isapprox(sub[DiDInt.result_key(results, i, agg)].att, results[i, suffix]; atol = 1e-10)
-                          for i in 1:nrow(results))
-                @test DiDInt.point_aggregate(sub, weighting) ≈ results.agg_att[1] atol = 1e-10
+                @test vec(est.sub) ≈ Float64.(results[!, suffix]) atol = 1e-10
+                @test est.top[1] ≈ results.agg_att[1] atol = 1e-10
             end
         end
     end
@@ -188,19 +187,4 @@ end
     @test all(ismissing, results.jknifese_att_cohort)
     @test ismissing(results.jknifese_agg_att[1])
     @test ismissing(results.jknifepval_agg_att[1])
-end
-
-@testset "State-level RI (sgt) uses one stand-in state per treated state in every period" begin
-    # Two states, X and Y, received s1's treatment time 2003 in this draw; each has ATT(s,t)'s in
-    # 2003-2005 that differ by state. Every draw's sgt statistics for s1 must come from one of them.
-    periods = [Date(2003), Date(2004), Date(2005)]
-    est = DataFrame(state = repeat(["X", "Y"], inner = 3), gvar = fill(Date(2003), 6), t = repeat(periods, 2),
-                    r1 = fill(Date(2002), 6), periods_post_treat = repeat(0:2, 2),
-                    att = [1.0, 2.0, 3.0, 10.0, 20.0, 30.0], n = fill(10.0, 6), n_t = fill(5.0, 6))
-    result_keys = [("s1", Date(2003), t) for t in periods]
-    observed_labels = Dict("s1" => Date(2003))
-    for _ in 1:50
-        stats, _ = DiDInt.state_level_ri_draw(est, result_keys, observed_labels, "sgt", "both", "treated")
-        @test stats == [1.0, 2.0, 3.0] || stats == [10.0, 20.0, 30.0]
-    end
 end
