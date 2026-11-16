@@ -224,7 +224,20 @@ in `treatment_times`, and so on. A single treatment time applies to every treate
     periods, it omits the covariances between a state's periods and should be read with caution. Not available for `ccc = "add"`.
 
 # Returns
-A DataFrame with one row per sub-aggregate ATT of the chosen `agg`:
+A [`DiDIntResult`](@ref). Displaying it prints a summary of the specification, the aggregate ATT and the sub-aggregate ATTs.
+Its fields hold the results as tables:
+
+- `agg`: the aggregate ATT (for the policy aggregations, the ATT of each policy and, with `policy_aggregation = true`, the pooled ATT).
+- `sub`: the sub-aggregate ATTs of the chosen `agg`, with the weight of each in the aggregate ATT.
+- `att_st`: the ATT of each treated state in each period from its treatment time on.
+- `specs`: the specification that was estimated, including the period length, the date range and the number of permutations used.
+- `table`: every result in one wide table (also returned by `DataFrame(result)`).
+
+In `agg` and `sub` the estimates are in the column `att`, with `se` and `pval` (HC standard error and p-value), `jknife_se` and
+`jknife_pval` (jackknife standard error and p-value) and `ri_pval` (randomization inference p-value).
+`coef(result)`, `stderror(result)` and `coefnames(result)` return the estimates, standard errors and labels as vectors.
+
+The wide table has one row per sub-aggregate ATT:
 
 - The columns identifying the sub-aggregate: `treatment_time` (`"cohort"`), `r1`, `time` and `gvar` (`"simple"`:
   the period before treatment, the period, and the treatment time), `state` (`"state"`), `state`, `gvar` and `t` (`"sgt"`),
@@ -309,6 +322,7 @@ function didint(outcome::Union{AbstractString, Symbol},
     start_date = start_end_date_checks(start_date, "start_date", date_format)
     end_date = start_end_date_checks(end_date, "end_date", date_format)
 
+    ccc = check_option(ccc, "ccc", ["hom", "time", "state", "add", "int"])
     seed = check_positive_integer(seed, "seed")
     nperm = check_positive_integer(nperm, "nperm")
     ri_kernel_cutoff = check_ri_kernel_cutoff(ri_kernel_cutoff)
@@ -486,7 +500,22 @@ function didint(outcome::Union{AbstractString, Symbol},
     results.period .= string(period)
     results.start_date .= parse_date_to_string_didint(start_date, date_format)
     results.end_date .= parse_date_to_string_didint(maximum(data_copy.time_dmG5fpM), date_format)
-    return wrapper_check(results, wrapper)
+
+    #--------------------------------------------------------------------------------------
+    # Step 8: Return the results. The Stata and R wrappers receive the table of results as
+    # it is; otherwise it is arranged into a DiDIntResult (see results.jl).
+    #--------------------------------------------------------------------------------------
+
+    if wrapper in ("stata", "r")
+        return wrapper_check(results, wrapper)
+    end
+    specs = (outcome = outcome, covariates = isnothing(covariates) ? String[] : String.(covariates),
+             ccc = ccc, agg = agg, weighting = weighting, treated_weight = treated_weight,
+             notyet = use_pre_controls, hc = hc, truejack = truejack, edgecase = edgecase,
+             policy_aggregation = policy_aggregation, policy_weighting = policy_weighting,
+             nperm = randomize ? Int(results.nperm[1]) : missing, ri_kernel_cutoff = ri_kernel_cutoff, seed = seed,
+             period = results.period[1], start_date = results.start_date[1], end_date = results.end_date[1])
+    return DiDIntResult(results, att_st, specs)
 end
 
 ###########################################################################################

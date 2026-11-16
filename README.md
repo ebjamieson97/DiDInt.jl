@@ -41,38 +41,55 @@ test_data = CSV.read("merit.csv", DataFrame)
 test_data.state = string.(test_data.state)
 
 # Run DID-INT model
-result = DiDInt.didint("coll", "state", "year", test_data,
-                       treatment_times = treated_times,
-                       treated_states = treated_states, 
-                       seed = 1234, ccc = "state",
-                       covariates = [:male, :asian, :black],
-                       agg = "cohort", nperm = 399)
+result = didint("coll", "state", "year", test_data,
+                treatment_times = treated_times,
+                treated_states = treated_states,
+                seed = 1234, ccc = "state",
+                covariates = [:male, :asian, :black],
+                agg = "cohort", nperm = 399)
 
-# Show aggregate level results (reported on the first row)
-select(result, r"agg_att", :nperm)[1:1, :]
-        
-# 1×7 DataFrame
-#  Row │ agg_att    se_agg_att  pval_agg_att  jknifese_agg_att  jknifepval_agg_att  ri_pval_agg_att  nperm
-#      │ Float64?   Float64?    Float64?      Float64?          Float64?            Float64?         Float64?
-# ─────┼──────────────────────────────────────────────────────────────────────────────────────────────────────
-#    1 │ 0.0462414  0.00769881   0.000959237          0.012354         0.000470121           0.0975     399.0
+# DID-INT results
+#   Outcome:          coll
+#   Model:            State-Varying DID-INT (ccc = "state")
+#   Covariates:       male, asian, black
+#   Aggregation:      "cohort" (by treatment time)
+#   Weighting:        "both", treated_weight = "treated"
+#   Controls:         never-treated states
+#   Periods:          1 year, from 1989 to 2000
+#   Standard errors:  HC1 (se) and jackknife (jknife_se)
+#   Permutations:     399 (seed 1234)
+#
+# Aggregate ATT
+#  estimate       att        se          pval         jknife_se  jknife_pval  ri_pval
+# ────────────────────────────────────────────────────────────────────────────────────
+#  Aggregate ATT  0.0462414  0.00769881  0.000959237   0.012354  0.000470121   0.0975
+#
+# Sub-aggregate ATTs by treatment time (7)
+#  treatment_time  att          se          pval       jknife_se        jknife_pval      ri_pval  weight
+# ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+#  1991-01-01       0.0553354   0.0222024   0.0342914  missing          missing           0.4575  0.201796
+#  1993-01-01       0.0504489   0.0161905   0.0169391  missing          missing           0.5175  0.191535
+#  1996-01-01       0.0424116   0.0255707   0.172536   missing          missing           0.5725  0.0756734
+#  1997-01-01       0.0606879   0.0236147   0.037012         0.0329885        0.0717569   0.28    0.321077
+#  1998-01-01       0.0398137   0.0406649   0.372511         0.0814308        0.627031    0.5825  0.108593
+#  1999-01-01       0.00173622  0.00350574  0.707256   missing          missing           0.985   0.0354853
+#  2000-01-01      -0.0253317   0.0333203   0.586179         0.0976972        0.796477    0.755   0.0658401
 
-# Show sub-aggregate level results
-select(result, :treatment_time, r"att_cohort", :weights)
+# The estimates are stored as tables...
+result.agg          # the aggregate ATT with its standard errors and p-values
+result.sub          # the sub-aggregate ATTs
+result.att_st       # the ATT of each treated state in each period
 
-# 7×8 DataFrame
-#  Row │ treatment_time  att_cohort   se_att_cohort  pval_att_cohort  jknifese_att_cohort  jknifepval_att_cohort  ri_pval_att_cohort  weights
-#      │ Dates.Date      Float64?     Float64?       Float64?         Float64?             Float64?               Float64?            Float64
-# ─────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-#    1 │ 1991-01-01       0.0553354      0.0222024         0.0342914      missing                missing                      0.4575  0.201796
-#    2 │ 1993-01-01       0.0504489      0.0161905         0.0169391      missing                missing                      0.5175  0.191535
-#    3 │ 1996-01-01       0.0424116      0.0255707         0.172536       missing                missing                      0.5725  0.0756734
-#    4 │ 1997-01-01       0.0606879      0.0236147         0.037012             0.0329885              0.0717569              0.28    0.321077
-#    5 │ 1998-01-01       0.0398137      0.0406649         0.372511             0.0814308              0.627031               0.5825  0.108593
-#    6 │ 1999-01-01       0.00173622     0.00350574        0.707256       missing                missing                      0.985   0.0354853
-#    7 │ 2000-01-01      -0.0253317      0.0333203         0.586179             0.0976972              0.796477               0.755   0.0658401
+# ...are available as vectors...
+coef(result)                    # [0.0462414]
+stderror(result)                # [0.00769881]
+coef(result; level = :sub)      # the seven cohort ATTs
 
+# ...and can be collected in one wide table
+DataFrame(result)
 ```
+
+`didint()` returns a `DiDIntResult`, which prints the summary shown above.
 
 Other aggregations are available through the `agg` argument (`"cohort"`, `"simple"`, `"state"`, `"sgt"`, `"time"`, `"calendar"`), as are separate ATTs by policy when treated states adopt different policies (`"policy"`, `"policy_gt"`, `"policy_cohort"`, `"policy_calendar"`, `"policy_time"`). See the [documentation page](https://ebjamieson97.github.io/DiDInt.jl/) for details.
 
@@ -83,7 +100,7 @@ The `didint_plot()` function produces a dataset in a long format that can easily
 ```julia
 
 # Generate data for a parallel trends plot
-plot_parallel = DiDInt.didint_plot("coll", "state", "year", test_data,
+plot_parallel = didint_plot("coll", "state", "year", test_data,
                                    treatment_times = treated_times, 
                                    treated_states = treated_states,
                                    event = false, covariates = ["asian", "black", "male"])
@@ -99,7 +116,7 @@ plot_parallel[1:4, :]
 
 
 # Generate data for an event study plot
-plot_event = DiDInt.didint_plot("coll", "state", "year", test_data,
+plot_event = didint_plot("coll", "state", "year", test_data,
                                treatment_times = treated_times, 
                                treated_states = treated_states,
                                event = true, covariates = ["asian", "black", "male"])

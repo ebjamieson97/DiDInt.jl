@@ -243,5 +243,5 @@ end
                       ccc = "int", agg = "sgt", nperm = 9, seed = 1234)
     end
     # "male" is the reference category (first seen), so the dummy is 1 for "female", i.e. x2
-    @test run(["x1", "sex"]).att_sgt ≈ run(["x1", "x2"]).att_sgt atol = 1e-10
+    @test run(["x1", "sex"]).sub.att ≈ run(["x1", "x2"]).sub.att atol = 1e-10
 end

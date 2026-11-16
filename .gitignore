@@ -19,3 +19,8 @@ CLAUDE.md
 *.jl.mem
 lcov.info
 coverage/
+# Snapshot test outputs: large, generated locally (see test/test_snapshots.jl)
+test/snapshots/
+
+# Script that produced test/data/didintpy_reference.csv; it needs the Python package didintpy
+test/data/didintpy_reference.py

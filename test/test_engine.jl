@@ -356,7 +356,7 @@ end
 @testset "didint(): exact and sampled RI, kernel smoothing and nperm" begin
     run(data, cohorts; kwargs...) = quietly() do
         treated = sort(collect(keys(cohorts)))
-        DiDInt.didint("y", "state", "year", data; treated_states = treated, treatment_times = [cohorts[s] for s in treated],
+        didint_table("y", "state", "year", data; treated_states = treated, treatment_times = [cohorts[s] for s in treated],
                       seed = 1234, kwargs...)
     end
 
@@ -373,7 +373,7 @@ end
         @test exact.ri_pval_att_cohort[1] ≈ exact.ri_pval_agg_att[1] atol = 1e-10
         # Exact RI does not depend on the seed or on asking for more permutations
         other = quietly() do
-            DiDInt.didint("y", "state", "year", data; treated_states = ["s1"], treatment_times = [2004], agg = "cohort",
+            didint_table("y", "state", "year", data; treated_states = ["s1"], treatment_times = [2004], agg = "cohort",
                           nperm = 50, seed = 99, use_pre_controls = upc)
         end
         @test other.ri_pval_agg_att[1] ≈ exact.ri_pval_agg_att[1] atol = 1e-12
@@ -447,7 +447,7 @@ end
     # other states' lambdas, so the refit jackknife differs from the fast one; under "int" the
     # argument has no effect
     run(; kwargs...) = quietly() do
-        DiDInt.didint("y", "state", "year", ENGINE_PANEL; treated_states = ENGINE_TREATED, treatment_times = [2004, 2004, 2006, 2006, 2007],
+        didint_table("y", "state", "year", ENGINE_PANEL; treated_states = ENGINE_TREATED, treatment_times = [2004, 2004, 2006, 2006, 2007],
                       covariates = ["x1", "x2"], nperm = 9, seed = 1234, kwargs...)
     end
     for agg in ["cohort", "state", "policy_cohort"]

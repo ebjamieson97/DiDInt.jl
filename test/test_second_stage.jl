@@ -30,7 +30,7 @@ end
 function quiet_didint(data, cohorts::Dict{String, Int}; kwargs...)
     treated = sort(collect(keys(cohorts)))
     return Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
-        DiDInt.didint("y", "state", "year", data; treated_states = treated,
+        didint_table("y", "state", "year", data; treated_states = treated,
                       treatment_times = [cohorts[s] for s in treated], nperm = 19, seed = 1234,
                       kwargs...)
     end
@@ -142,7 +142,7 @@ end
     # A single treatment time is broadcast to every treated state
     treated = sort(collect(keys(COMMON_COHORTS)))
     broadcast = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
-        DiDInt.didint("y", "state", "year", data; treated_states = treated, treatment_times = 2004,
+        didint_table("y", "state", "year", data; treated_states = treated, treatment_times = 2004,
                       agg = "simple", nperm = 19, seed = 1234)
     end
     @test isequal(broadcast, quiet_didint(data, COMMON_COHORTS; agg = "simple"))
@@ -187,4 +187,46 @@ end
     @test all(ismissing, results.jknifese_att_cohort)
     @test ismissing(results.jknifese_agg_att[1])
     @test ismissing(results.jknifepval_agg_att[1])
+end
+
+@testset "Unbalanced panels: a control missing a period is left out of that period only" begin
+    # Control s6 has no observations in 2005. Its long differences to 2005 are missing, so the
+    # ATTs for 2005 use the other controls (as if s6 were not in the data) and the ATTs for
+    # every other period are unaffected.
+    data = small_panel(cohorts = STAG_COHORTS, effect = 1.0, noise = 0.3)
+    gap = filter(r -> !(r.state == "s6" && r.year == 2005), data)
+    with_gap = quiet_didint(gap, STAG_COHORTS; agg = "sgt")
+    full = quiet_didint(data, STAG_COHORTS; agg = "sgt")
+    without_s6 = quiet_didint(filter(r -> r.state != "s6", data), STAG_COHORTS; agg = "sgt")
+    @test with_gap.state == full.state && with_gap.t == full.t
+    in_2005 = with_gap.t .== Date(2005)
+    @test any(in_2005) && !all(in_2005)
+    @test with_gap.att_sgt[in_2005] ≈ without_s6.att_sgt[in_2005] atol = 1e-10
+    @test with_gap.att_sgt[.!in_2005] ≈ full.att_sgt[.!in_2005] atol = 1e-10
+    @test maximum(abs.(with_gap.att_sgt[in_2005] .- full.att_sgt[in_2005])) > 1e-6
+
+    # Randomization inference needs every state's long difference in every period: it is not
+    # performed, and the result says so
+    @test all(ismissing, with_gap.ri_pval_att_sgt) && ismissing(with_gap.ri_pval_agg_att[1]) && ismissing(with_gap.nperm[1])
+    @test !ismissing(full.ri_pval_agg_att[1])
+    result = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+        DiDInt.didint("y", "state", "year", gap; treated_states = ["s1", "s2", "s3", "s4"], treatment_times = [2003, 2003, 2005, 2005],
+                      agg = "cohort", nperm = 19, seed = 1234)
+    end
+    @test ismissing(result.specs.nperm)
+    @test occursin("randomization inference was not performed", sprint(show, MIME("text/plain"), result))
+end
+
+@testset "Without never-treated states, not-yet-treated states are the only controls" begin
+    # Every state is eventually treated (2003 or 2005). With notyet = true the states treated in
+    # 2005 are controls for the 2003 cohort in 2003 and 2004; later periods, and the 2005 cohort,
+    # have no controls and no ATT. The estimates equal those from the data up to 2004 with the
+    # 2005 cohort as never-treated controls.
+    data = small_panel(cohorts = STAG_COHORTS, n_states = 4, effect = 1.0, noise = 0.3)
+    notyet = quiet_didint(data, STAG_COHORTS; agg = "sgt", notyet = true)
+    @test Set(zip(notyet.state, notyet.t)) == Set((s, Date(y)) for s in ["s1", "s2"] for y in [2003, 2004])
+    early = quiet_didint(filter(r -> r.year <= 2004, data), Dict("s1" => 2003, "s2" => 2003); agg = "sgt")
+    @test notyet.state == early.state && notyet.t == early.t
+    @test notyet.att_sgt ≈ early.att_sgt atol = 1e-10
+    @test notyet.agg_att[1] ≈ early.agg_att[1] atol = 1e-10
 end

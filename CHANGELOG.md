@@ -6,6 +6,19 @@ This version changes how the estimates are computed and aggregated, so results d
 from those of 0.9.6 in the cases listed under "Changes to estimates". The documentation
 site describes the current procedure in detail.
 
+### `didint()` returns a `DiDIntResult`
+
+- `didint()` now returns a `DiDIntResult` instead of a `DataFrame`. Displaying it prints a
+  summary of the specification and the estimates, and its fields hold the estimates as
+  tables: `agg` (the aggregate ATT, or the ATT of each policy and the pooled ATT), `sub`
+  (the sub-aggregate ATTs), `att_st` (the ATT of each treated state in each period) and
+  `specs` (the specification).
+- `coef`, `stderror` and `coefnames` return the estimates, their standard errors and
+  their labels as vectors.
+- **To update existing code:** `DataFrame(didint(...))` returns the table that earlier
+  versions returned, with the same column names.
+- The Stata and R wrappers (`wrapper = "stata"` or `"r"`) still receive that table.
+
 ### Changes to estimates
 
 - **ATT for each treated state and period first.** An ATT is now estimated for every

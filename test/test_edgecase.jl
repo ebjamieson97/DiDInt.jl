@@ -10,10 +10,10 @@
             suffix = DiDInt.SUB_AGG_SPECS[agg].suffix
             sub_att = Symbol(suffix)
             sub_se = Symbol("se_" * suffix)
-            edge = DiDInt.didint("coll", "state", "year", TEST_DATA_EC_STAG;
+            edge = didint_table("coll", "state", "year", TEST_DATA_EC_STAG;
                                  treated_states = EC_STATES_STAG, treatment_times = EC_TIMES_STAG, edgecase = true,
                                  covariates = [:male, :asian, :black], ccc = ccc, agg = agg, nperm = 1)
-            no_edge = DiDInt.didint("coll", "state", "year", TEST_DATA_EC_STAG;
+            no_edge = didint_table("coll", "state", "year", TEST_DATA_EC_STAG;
                                     treated_states = EC_STATES_STAG, treatment_times = EC_TIMES_STAG, edgecase = false,
                                     covariates = [:male, :asian, :black], ccc = ccc, agg = agg, nperm = 1)
 
@@ -33,10 +33,10 @@
         # Common adoption (one cohort) with one control: every ATT(s,t) is an edge case
         for treated_states in [["71"], ["71", "34"]]
             data = filter(r -> r.state ∈ [treated_states..., EC_CONTROL], TEST_DATA_FULL)
-            edge = DiDInt.didint("coll", "state", "year", data;
+            edge = didint_table("coll", "state", "year", data;
                                  treated_states = treated_states, treatment_times = 1991, edgecase = true,
                                  covariates = [:male, :asian, :black], ccc = ccc, agg = "sgt", nperm = 1)
-            no_edge = DiDInt.didint("coll", "state", "year", data;
+            no_edge = didint_table("coll", "state", "year", data;
                                     treated_states = treated_states, treatment_times = 1991, edgecase = false,
                                     covariates = [:male, :asian, :black], ccc = ccc, agg = "sgt", nperm = 1)
             @test all(x -> !ismissing(x) && isfinite(x), edge.se_att_sgt)

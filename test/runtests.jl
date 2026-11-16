@@ -4,6 +4,9 @@ using DataFrames
 using CSV
 using Random
 
+# didint() returns a DiDIntResult; most tests check the columns of its wide table of results
+didint_table(args...; kwargs...) = DataFrame(DiDInt.didint(args...; kwargs...))
+
 # Regenerate the snapshot files instead of testing (see test/update_snapshots.jl)
 if "--update-snapshots" in ARGS
     include("update_snapshots.jl")
@@ -114,6 +117,9 @@ const TEST_DATA_EC_COMMON = filter(r -> r.state ∈ [_t1, EC_CONTROL], TEST_DATA
     end
     @testset "Policies" begin
         include("test_policies.jl")
+    end
+    @testset "DiDIntResult" begin
+        include("test_results.jl")
     end
     @testset "Batched engine, RI draws and p-values" begin
         include("test_engine.jl")

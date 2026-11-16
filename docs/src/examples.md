@@ -28,7 +28,7 @@ merit-aid programmes at different points between 1991 and 2000.
 treated_states = [34, 57, 58, 59, 61, 64, 71, 72, 85, 88];
 treated_times  = [2000, 1998, 1993, 1997, 1999, 1996, 1991, 1998, 1997, 2000];
 
-result = DiDInt.didint(
+result = didint(
     "coll", "state", "year", merit;
     treatment_times = treated_times,
     treated_states  = treated_states,
@@ -37,25 +37,53 @@ result = DiDInt.didint(
     covariates = [:male, :asian, :black],
     agg        = "cohort",
     nperm      = 399
-);
-nothing # hide
+)
 ```
 
-Inspect the aggregate-level ATT and inference columns (reported on the first row):
+`didint()` returns a `DiDIntResult`. Displaying it, as above, prints a summary of the
+specification, the aggregate ATT, and the sub-aggregate ATTs (here, one per treatment
+time). Jackknife standard errors are `missing` for cohorts with a single treated state
+(see the [Jackknife](@ref) section).
+
+### Working with the results
+
+The estimates are stored as tables in the fields of the result. The aggregate ATT with
+its standard errors and p-values:
 
 ```@example didint
-select(result, r"agg_att", :nperm)[1:1, :]
+result.agg
 ```
 
-And the cohort-level ATT and inference columns:
+The sub-aggregate ATTs, with the weight of each in the aggregate ATT:
 
 ```@example didint
-select(result, :treatment_time, r"att_cohort", :weights)
+result.sub
 ```
 
-The remaining columns (`period`, `start_date`, `end_date`) describe the period length and
-the date range of the data that was used. Jackknife standard errors are `missing` for
-cohorts with a single treated state (see the [Jackknife](@ref) section).
+The ATT for each treated state in each period from its treatment time on, which is what
+every other estimate is computed from:
+
+```@example didint
+first(result.att_st, 5)
+```
+
+The estimates and standard errors are also available as vectors:
+
+```@example didint
+coef(result), stderror(result), stderror(result; type = :jackknife)
+```
+
+```@example didint
+coefnames(result; level = :sub), coef(result; level = :sub)
+```
+
+Finally, every result can be collected in a single wide table with `DataFrame(result)`
+(the same table is passed to the Stata and R wrappers), and a result can be written
+straight to a file, for example with `CSV.write("results.csv", result)`:
+
+```@example didint
+names(DataFrame(result))
+```
 
 ### Other aggregations
 
@@ -64,7 +92,7 @@ into sub-aggregate ATTs (see the [Aggregation](@ref) section). For example, `agg
 groups them by the number of periods since treatment:
 
 ```@example didint
-result_time = DiDInt.didint(
+result_time = didint(
     "coll", "state", "year", merit;
     treatment_times = treated_times,
     treated_states  = treated_states,
@@ -75,7 +103,7 @@ result_time = DiDInt.didint(
     nperm      = 399
 );
 
-select(result_time, :periods_post_treat, :att_t, :se_att_t, :jknifese_att_t, :ri_pval_att_t)
+result_time.sub
 ```
 
 ### Running `didint_plot()`
@@ -92,7 +120,7 @@ Setting `event = false` returns a long-format DataFrame of residualised outcome 
 by state and period, suitable for plotting parallel trends across CCC specifications.
 
 ```@example didint
-plot_parallel = DiDInt.didint_plot(
+plot_parallel = didint_plot(
     "coll", "state", "year", merit;
     treatment_times = treated_times,
     treated_states  = treated_states,
@@ -110,7 +138,7 @@ to treatment, along with standard errors and confidence interval bounds, suitabl
 plotting an event study.
 
 ```@example didint
-plot_event = DiDInt.didint_plot(
+plot_event = didint_plot(
     "coll", "state", "year", merit;
     treatment_times = treated_times,
     treated_states  = treated_states,
@@ -140,7 +168,7 @@ argument can be used instead when the policy is stored in a column of the data).
 ```@example didint
 treated_policies = ["A", "A", "B", "A", "B", "A", "B", "B", "A", "B"];
 
-result_policy = DiDInt.didint(
+result_policy = didint(
     "coll", "state", "year", merit;
     treatment_times  = treated_times,
     treated_states   = treated_states,
@@ -151,18 +179,11 @@ result_policy = DiDInt.didint(
     agg        = "policy",
     policy_aggregation = true,
     nperm      = 399
-);
-
-select(result_policy, :policy, r"att_p$", :policy_weights)
+)
 ```
 
-Setting `policy_aggregation = true` also reports the pooled ATT across policies (on the
-first row), here weighting the two policies equally:
-
-```@example didint
-select(result_policy, r"att_pool")[1:1, :]
-```
-
+Setting `policy_aggregation = true` also reports the pooled ATT across policies, here
+weighting the two policies equally (the `policy_weight` column).
 See the [Policies](@ref) section for the other policy aggregation options and for the
 weighting of policies in the pooled ATT.
 
@@ -178,7 +199,7 @@ treatment time applies to every treated state.
 ```@example didint
 merit_common = filter(row -> row.state ∈ [57, 72] || !(row.state ∈ treated_states), merit);
 
-result_common = DiDInt.didint(
+result_common = didint(
     "coll", "state", "year", merit_common;
     treated_states  = [57, 72],
     treatment_times = 1998,
@@ -187,9 +208,7 @@ result_common = DiDInt.didint(
     covariates = [:male, :asian, :black],
     agg        = "time",
     nperm      = 399
-);
-
-select(result_common, :periods_post_treat, :att_t, :se_att_t, :jknifese_att_t, :ri_pval_att_t)
+)
 ```
 
 ### Trying a different CCC assumption
@@ -200,7 +219,7 @@ states and time. Swapping `ccc = "hom"` for any of `"time"`, `"state"`, `"add"`,
 additively by both, or interactively by both, respectively. For example:
 
 ```@example didint
-result_common_int = DiDInt.didint(
+result_common_int = didint(
     "coll", "state", "year", merit_common;
     treated_states  = [57, 72],
     treatment_times = 1998,
@@ -211,7 +230,7 @@ result_common_int = DiDInt.didint(
     nperm      = 399
 );
 
-select(result_common_int, :periods_post_treat, :att_t, :se_att_t, :jknifese_att_t, :ri_pval_att_t)
+result_common_int.sub
 ```
 
 ---
@@ -227,7 +246,7 @@ recovers it from the first-stage estimates instead.
 ```@example didint
 merit_pair = filter(row -> row.state ∈ [71, 73], merit);
 
-result_pair = DiDInt.didint(
+result_pair = didint(
     "coll", "state", "year", merit_pair;
     treated_states  = [71],
     treatment_times = [1991],
@@ -238,7 +257,7 @@ result_pair = DiDInt.didint(
     edgecase   = true
 );
 
-select(result_pair, :state, :t, :att_sgt, :se_att_sgt)
+select(result_pair.sub, :state, :t, :att, :se)
 ```
 
 No p-value accompanies these standard errors, as the regression behind each ATT has no
