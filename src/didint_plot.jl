@@ -405,11 +405,12 @@ function event_study_data(master_lambda, data_copy, treated_states, treatment_ti
     end
 
     # One row per ccc option and period relative to treatment: the weighted mean, with the
-    # standard error and confidence interval of its group
-    return combine(groupby(master_lambda, [:ccc, :time_since_treatment]),
-                   :weighted_y => sum => :y,
-                   :se => first => :se,
-                   :ci_lower => first => :ci_lower,
-                   :ci_upper => first => :ci_upper,
-                   :ngroup => first => :ngroup)
+    # standard error and confidence interval of its group, sorted by ccc option and period
+    event_data = combine(groupby(master_lambda, [:ccc, :time_since_treatment]),
+                         :weighted_y => sum => :y,
+                         :se => first => :se,
+                         :ci_lower => first => :ci_lower,
+                         :ci_upper => first => :ci_upper,
+                         :ngroup => first => :ngroup)
+    return sort!(event_data, [:ccc, :time_since_treatment])
 end

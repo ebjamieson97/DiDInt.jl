@@ -31,3 +31,12 @@ end
                                             event = true, covariates = ["asian", "black", "male"])
     @test !isnothing(test_plot_event)
 end
+# Event study rows are sorted by ccc option and by period relative to treatment
+@testset "Event study rows are sorted" begin
+    plot_event = DiDInt.didint_plot("coll", "state", "year", TEST_DATA,
+                                    treatment_times = TREATED_TIMES,
+                                    treated_states = TREATED_STATES,
+                                    event = true, covariates = ["asian", "black", "male"], ccc = ["int", "hom"])
+    @test issorted(collect(zip(plot_event.ccc, plot_event.time_since_treatment)))
+    @test unique(plot_event.ccc) == ["hom", "int"]
+end

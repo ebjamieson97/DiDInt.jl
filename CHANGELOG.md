@@ -126,6 +126,8 @@ These affect particular kinds of data; results for other data are unchanged by t
 - `gvar` works with a `Date` time column, and with rows whose state is missing.
 - Numbers given as floats are accepted for `hc`, `freq_multiplier`, `start_date` and
   `end_date`; `date_format` is not case sensitive and an unrecognized format is an error.
+- `didint_plot(event = true)` returns its rows sorted by `ccc` and by period relative to
+  treatment.
 - `didint_plot()` accepts a single treatment time for several treated states, a single
   treated state, and covariates given as symbols.
 - A jackknife deletion that removes every treated state of a sub-aggregate ATT now gives a
