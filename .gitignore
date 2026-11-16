@@ -24,3 +24,6 @@ test/snapshots/
 
 # Script that produced test/data/didintpy_reference.csv; it needs the Python package didintpy
 test/data/didintpy_reference.py
+
+# The Changelog page of the docs: copied from CHANGELOG.md by docs/make.jl
+docs/src/changelog.md

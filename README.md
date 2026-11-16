@@ -4,13 +4,13 @@
 [![codecov](https://codecov.io/gh/ebjamieson97/DiDInt.jl/graph/badge.svg?token=7Y95RD0P9N)](https://codecov.io/gh/ebjamieson97/DiDInt.jl)
 [![Docs Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://ebjamieson97.github.io/DiDInt.jl/stable)
 
-Intersection difference-in-differences!
+Integrated difference-in-differences!
 
 **DiDInt.jl** introduces two functions:
 - `didint()`, which is used for estimating the average effect of treatment on the treated (ATT) while accounting for various violations of the common causal covariates (CCC) assumption
 - `didint_plot()` which produces datasets that can easily be used to make parallel trends plots that help determine which CCC violation should be accounted for when using `didint()`. `didint_plot` can also produce datasets that can easily be used to make event study plots.
 
-To learn more about the common causal covariates assumption and intersection difference-in-differences please see [Karim & Webb (2025)](https://arxiv.org/abs/2412.14447).
+To learn more about the common causal covariates assumption and integrated difference-in-differences please see [Karim & Webb (2025)](https://arxiv.org/abs/2412.14447).
 
 A Stata wrapper for this package is available here: **[didintjl](https://github.com/ebjamieson97/didintjl)**.
 
@@ -50,7 +50,7 @@ result = didint("coll", "state", "year", test_data,
 
 # DID-INT results
 #   Outcome:          coll
-#   Model:            State-Varying DID-INT (ccc = "state")
+#   Model:            Region-Varying DID-INT (ccc = "state")
 #   Covariates:       male, asian, black
 #   Aggregation:      "cohort" (by treatment time)
 #   Weighting:        "both", treated_weight = "treated"

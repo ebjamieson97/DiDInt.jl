@@ -119,6 +119,30 @@ By default, the outputted dataset will include the parallel trends (or event stu
 Setting `event = false` returns a long-format DataFrame of residualised outcome means
 by state and period, suitable for plotting parallel trends across CCC specifications.
 
+These plots remain valid for assessing parallel trends under every `ccc` option except
+`"int"`. Under `"none"`, `"hom"`, `"state"`, `"time"` and `"add"`, how the series of a
+treated state changes over time relative to the series of its controls is exactly the
+comparison that `didint()` bases its estimates on. The *level* of a plotted series does
+rest on a convention: a covariate-adjusted mean has to be evaluated at some values of the
+covariates, and the plotted values are evaluated at covariates equal to zero. Under these
+options, however, a different choice of covariate values would make the plotted series
+shift together. Under `"hom"` and `"time"`, every state's series would move by the same
+amount in a given period; under `"state"`, each state's series would move up or down by
+an amount that is the same in every period; under `"add"`, both happen at once. In every
+case, whether the series move in parallel is unaffected.
+
+Under `ccc = "int"` with covariates this is no longer true, and the plots should be
+interpreted with care. The covariate coefficients are then specific to each state and
+period, so a different choice of covariate values would change each plotted point by its
+own amount, and series that look parallel at covariates equal to zero need not look
+parallel at other covariate values. The plot therefore depends on how the covariates are
+coded (measuring age in years, or in years above 40, gives different plots). The `"int"`
+estimates of `didint()` do not rest on the plotted values either: they evaluate the
+changes over time at the covariate means of each treated state (see the
+[Integrated Long Differences](@ref) section). The `"int"` series describe the outcome at
+covariates equal to zero, and parallel or non-parallel series there are not, on their own,
+evidence for or against the parallel trends that the `"int"` estimates rely on.
+
 ```@example didint
 plot_parallel = didint_plot(
     "coll", "state", "year", merit;
@@ -186,6 +210,112 @@ Setting `policy_aggregation = true` also reports the pooled ATT across policies,
 weighting the two policies equally (the `policy_weight` column).
 See the [Policies](@ref) section for the other policy aggregation options and for the
 weighting of policies in the pooled ATT.
+
+### Cohort ATTs With and Without Policies
+
+`agg = "cohort"` reports one ATT per treatment time and ignores the policies, whereas
+`agg = "policy_cohort"` reports one ATT per treatment time *within each policy*. With the
+made-up policies above, the two treated states of the 1998 cohort have different policies,
+as do the two treated states of the 2000 cohort; the two states of the 1997 cohort both
+have policy `"A"`, and every other cohort consists of a single state.
+
+Under `agg = "cohort"` there are seven cohort ATTs, whether or not policies are given:
+
+```@example didint
+result_cohort = didint(
+    "coll", "state", "year", merit;
+    treatment_times  = treated_times,
+    treated_states   = treated_states,
+    treated_policies = treated_policies,
+    seed       = 1234,
+    ccc        = "state",
+    covariates = [:male, :asian, :black],
+    agg        = "cohort",
+    nperm      = 399
+);
+
+select(result_cohort.sub, :treatment_time, :att, :se, :jknife_se, :weight)
+```
+
+Under `agg = "policy_cohort"` the cohorts are formed within each policy:
+
+```@example didint
+result_policy_cohort = didint(
+    "coll", "state", "year", merit;
+    treatment_times  = treated_times,
+    treated_states   = treated_states,
+    treated_policies = treated_policies,
+    seed       = 1234,
+    ccc        = "state",
+    covariates = [:male, :asian, :black],
+    agg        = "policy_cohort",
+    nperm      = 399
+)
+```
+
+Comparing the two sets of results:
+
+- The 1998 and 2000 cohorts, which contain both policies, are each split in two: one ATT
+  for the state with policy `"A"` and one for the state with policy `"B"`. Each of these
+  is now based on a single treated state, so it has no jackknife standard error. The
+  split can matter: the 2000 cohort has an ATT of about -0.025 as a whole, which is made
+  up of about -0.046 under policy `"A"` and 0.070 under policy `"B"`.
+- The cohorts that contain a single policy (1991, 1993, 1996, 1997 and 1999) appear once,
+  under that policy, with the same ATT and standard errors as under `agg = "cohort"`.
+  Their randomization inference p-values differ slightly, because for the policy
+  aggregation options a state's policy is reassigned together with its treatment time.
+- The `weight` column now gives the weight of each cohort ATT *within its policy*, and the
+  ATT of each policy (the first table of the output) is the weighted mean of the cohort
+  ATTs of that policy. There is no single aggregate ATT; setting
+  `policy_aggregation = true` adds the pooled ATT across policies, as in the example above.
+
+---
+
+## The Aggregate ATT Across Aggregation Options
+
+The aggregate ATT is the weighted mean of the sub-aggregate ATTs of the chosen `agg`
+option. With the default weighting (`weighting = "both"` and `treated_weight = "treated"`),
+and also with `weighting = "att"`, this weighted mean is the same number for every `agg`
+option: the mean of the ATTs for each treated state and period, weighted by their numbers
+of treated observations (see the [Weighting](@ref) section for why). With the other
+weighting options the aggregate ATT depends on how the ATTs are grouped.
+
+The table below reports the aggregate ATT of the staggered adoption example for every
+(non-policy) `agg` option under five weighting choices:
+
+```@example didint
+aggregate_att(agg; kwargs...) = coef(didint(
+    "coll", "state", "year", merit;
+    treatment_times = treated_times,
+    treated_states  = treated_states,
+    seed       = 1234,
+    ccc        = "state",
+    covariates = [:male, :asian, :black],
+    agg        = agg,
+    nperm      = 399,
+    kwargs...
+))[1]
+
+aggs = ["cohort", "simple", "state", "sgt", "time", "calendar"]
+
+DataFrame(
+    agg            = aggs,
+    both           = [aggregate_att(agg) for agg in aggs],
+    att            = [aggregate_att(agg; weighting = "att") for agg in aggs],
+    diff           = [aggregate_att(agg; weighting = "diff") for agg in aggs],
+    none           = [aggregate_att(agg; weighting = "none") for agg in aggs],
+    both_population = [aggregate_att(agg; treated_weight = "population") for agg in aggs]
+)
+```
+
+The `both` column (the default) and the `att` column are constant across the `agg`
+options. Under `weighting = "diff"` and `"none"` the sub-aggregate ATTs are averaged with
+equal weights, and under `treated_weight = "population"` the ATTs within a sub-aggregate
+are weighted by different observation counts than the sub-aggregates themselves, so the
+aggregate ATT changes with the grouping. (Under `"sgt"` every sub-aggregate is a single
+ATT, which is why `both_population` equals `both` in that row.) The sub-aggregate ATTs
+and their standard errors always differ across `agg` options, as they answer different
+questions.
 
 ---
 
