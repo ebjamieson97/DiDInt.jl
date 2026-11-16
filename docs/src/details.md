@@ -385,7 +385,7 @@ If, for any $(s,t)$ group, a covariate causes the design matrix to be rank-defic
 For state-varying, time-varying, and homogeneous DID-INT, the Frisch-Waugh-Lovell (FWL) theorem is applied. The procedure is the same across all three cases, differing only in the grouping over which the covariate coefficients $\hat{\beta}$ are estimated:
 
 !!! note "Covariates Measured at the State-Period Level"
-    The covariate coefficients are estimated from the variation of the covariates *within* $(s,t)$ cells. A covariate that is constant within every cell, such as a variable measured at the state-period level, is perfectly collinear with the $I(s,t)$ cell dummies: it is absorbed by the $\hat{\lambda}_{s,t}$ values and has no effect on the estimates under any DID-INT variation. By the same reasoning, with data that has a single observation per state and period, covariates have no effect at all.
+    The covariate coefficients are estimated from the variation of the covariates *within* $(s,t)$ cells. A covariate that is constant within every cell, such as a variable measured at the state-period level, is perfectly collinear with the $I(s,t)$ cell dummies: it is absorbed by the $\hat{\lambda}_{s,t}$ values and has no effect on the estimates under any DID-INT variation.
 
 1. Both the outcome and covariates are demeaned within each $(s,t)$ cell - which is equivalent to residualizing the outcome and covariates by the $I(s,t)$ cell dummies.
 2. The covariate coefficients $\hat{\beta}$ are estimated by regressing the demeaned outcome on the demeaned covariates (without an intercept), where the regression is run:
