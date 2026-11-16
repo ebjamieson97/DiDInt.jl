@@ -272,7 +272,7 @@ end
     @test isequal(data, INTEGRATION_PANEL) && names(data) == names(INTEGRATION_PANEL)
 end
 
-@testset "Randomization inference needs every state's long difference; jackknife warnings" begin
+@testset "Randomization inference needs every state's long difference; jackknife with a single-state cohort" begin
     # s1 is the only state treated in 2003 and is not observed in 2006. That period only
     # matters for the 2005 cohort, where s1 could not stand in as a treated state: the
     # randomization inference is not performed.
@@ -290,12 +290,34 @@ end
     # A p-value needs a finite estimate
     @test ismissing(DiDInt.ri_pvalue([0.1, -0.2], NaN)) && ismissing(DiDInt.ri_pvalue_kernel([0.1, -0.2, 0.3], NaN))
 
-    # Deleting the only treated state of a cohort leaves the aggregate defined over the other
-    # cohorts: the standard error is reported, with a warning
+    # Deleting the only treated state of a cohort leaves that cohort's ATT undefined, so it has
+    # no jackknife SE, and the aggregate is defined over the other cohorts: its jackknife SE is
+    # reported. Neither gives a warning.
     cohorts = Dict("s1" => 2003, "s2" => 2003, "s3" => 2005)
     data = small_panel(cohorts = cohorts, effect = 1.0, noise = 0.3)
-    jackknife_warning = r"remove every treated state of a sub-aggregate"
-    @test_logs (:warn, jackknife_warning) match_mode = :any didint("y", "state", "year", data; treated_states = ["s1", "s2", "s3"],
-        treatment_times = [2003, 2003, 2005], agg = "cohort", nperm = 399, seed = 1234)
-    @test !ismissing(quiet_didint(data, cohorts; agg = "cohort").jknifese_agg_att[1])
+    # Messages of the warnings that a call raises
+    function warning_messages(f)
+        logger = Test.TestLogger(min_level = Base.CoreLogging.Warn)
+        Base.CoreLogging.with_logger(f, logger)
+        return [string(record.message) for record in logger.logs]
+    end
+    mentions_jackknife(messages) = any(m -> occursin("jackknife", lowercase(m)), messages)
+    for agg in ["cohort", "simple", "time", "calendar"]
+        messages = warning_messages(() -> didint("y", "state", "year", data; treated_states = ["s1", "s2", "s3"],
+                                                 treatment_times = [2003, 2003, 2005], agg = agg, nperm = 399, seed = 1234))
+        @test !mentions_jackknife(messages)
+    end
+    result = quiet_didint(data, cohorts; agg = "cohort")
+    @test !ismissing(result.jknifese_att_cohort[1]) && ismissing(result.jknifese_att_cohort[2])
+    @test !ismissing(result.jknifese_agg_att[1]) && !ismissing(result.jknifepval_agg_att[1])
+
+    # The same for a policy with a single treated state and the pooled ATT across policies
+    policies = ["A", "A", "B"]
+    messages = warning_messages(() -> didint("y", "state", "year", data; treated_states = ["s1", "s2", "s3"],
+                                             treatment_times = [2003, 2003, 2005], treated_policies = policies, agg = "policy",
+                                             policy_aggregation = true, nperm = 399, seed = 1234))
+    @test !mentions_jackknife(messages)
+    pooled = quiet_didint(data, cohorts; treated_policies = policies, agg = "policy", policy_aggregation = true)
+    @test !ismissing(pooled.jknifese_att_p[1]) && ismissing(pooled.jknifese_att_p[2])
+    @test !ismissing(pooled.jknifese_att_pool[1])
 end

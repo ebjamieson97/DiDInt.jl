@@ -224,7 +224,8 @@ in `treatment_times`, and so on. A single treatment time applies to every treate
     Under `ccc = "int"` with covariates the ATT also depends on the treated state's covariate means, and the `edgecase` standard error
     includes their sampling variance (the unconditional variance). Every `edgecase` standard error assumes that observations in different
     state-period cells are independent, as in repeated cross-sections. With panel data, where the same individuals are observed in several
-    periods, it omits the covariances between a state's periods and should be read with caution. Not available for `ccc = "add"`.
+    periods, it omits the covariances between a state's periods, and the `edgecase` standard errors are then generally biased.
+    Not available for `ccc = "add"`.
 
 # Returns
 A [`DiDIntResult`](@ref). Displaying it prints a summary of the specification, the aggregate ATT and the sub-aggregate ATTs.
@@ -1291,13 +1292,11 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
         end
     end
 
-    # Aggregate ATT, over the deletions that leave it defined. If a deletion removes every
-    # treated state of a sub-aggregate (other than under "state" and "sgt", where each treated
-    # state is its own sub-aggregate), the aggregate is then a mean over fewer sub-aggregates.
+    # Aggregate ATT, over the deletions that leave it defined. A deletion that removes every
+    # treated state of a sub-aggregate leaves that sub-aggregate undefined (so it has no
+    # jackknife SE, above), and the aggregate for that deletion is the mean over the remaining
+    # sub-aggregates.
     if !is_policy_agg(agg)
-        if !(agg in ["state", "sgt"]) && any(any(ismissing, sub_jacks[h, :]) && !ismissing(top_jacks[h]) for h in 1:n_states)
-            @warn "Some jackknife deletions remove every treated state of a sub-aggregate ATT. The jackknife standard error of the aggregate ATT then compares aggregates over different sets of sub-aggregates."
-        end
         results.jknifese_agg_att[1], results.jknifepval_agg_att[1] = jackknife_se_pval(collect(skipmissing(top_jacks)), results.agg_att[1])
         return results
     end
@@ -1316,11 +1315,8 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
     end
 
     # Pooled ATT across policies. A deletion that removes a policy's only treated state leaves
-    # the pool defined over the other policies; the SE is still reported, with a warning.
+    # the pool defined over the other policies.
     if policy.pooled
-        if any(ismissing(policy_jacks[h, j]) && !ismissing(top_jacks[h]) for h in 1:length(all_states), j in 1:length(policy_names))
-            @warn "Some jackknife deletions remove a whole policy. The jackknife standard error of the pooled ATT then compares pools over different sets of policies."
-        end
         results.jknifese_att_pool[1], results.jknifepval_att_pool[1] = jackknife_se_pval(collect(skipmissing(top_jacks)), results.att_pool[1])
     end
     return results

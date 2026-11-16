@@ -125,9 +125,9 @@ end
 # Section 3: Display                                                                      #
 ###########################################################################################
 
-const MODEL_LABELS = Dict("hom" => "Homogeneous DID-INT", "state" => "State-Varying DID-INT",
+const MODEL_LABELS = Dict("hom" => "Homogeneous DID-INT", "state" => "Region-Varying DID-INT",
                           "time" => "Time-Varying DID-INT", "add" => "Two One-Way DID-INT",
-                          "int" => "Two-Way Intersection DID-INT")
+                          "int" => "Two-Way DID-INT")
 
 const GROUP_LABELS = Dict("cohort" => "treatment time", "simple" => "treatment time and period",
                           "state" => "treated state", "sgt" => "treated state and period",
