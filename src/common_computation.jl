@@ -349,7 +349,12 @@ function prune_covariate_columns(W)
 
     Wqr = qr(W .- mean(W, dims = 1), ColumnNorm())
     m = min(Wcol, Wrow)
-    tol = abs(Wqr.factors[1,1]) * eps(Float64) * m
+    # A column counts as collinear when what is left of it after removing the earlier columns
+    # is within rounding error of zero. Centering a column leaves rounding errors in proportion
+    # to its uncentered values, so the tolerance is relative to the largest uncentered column
+    # norm, with the usual factor of the larger matrix dimension. (A tighter tolerance lets the
+    # decision depend on the processor, as the rounding errors differ between them.)
+    tol = eps(Float64) * max(Wcol, Wrow) * maximum(norm, eachcol(W))
     # Search for first column below tolerance
     rank = something(findfirst(i -> abs(Wqr.factors[i,i]) <= tol, 1:m), m+1) - 1
 

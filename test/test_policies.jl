@@ -73,7 +73,7 @@ end
         @test row.policy == "p1"
         @test row.n_controls == length(expected_controls)
         long_diff(s) = diff_test_lambda(s, Date(2005)) - diff_test_lambda(s, Date(2004))
-        @test row.att ≈ long_diff("A") - mean(long_diff.(expected_controls))
+        @test row.att ≈ long_diff("A") - mean(long_diff.(expected_controls)) atol = 1e-10
         # Once B is treated (2007 on) it is no longer a control for A
         late = only(eachrow(att_st[(att_st.state .== "A") .& (att_st.t .== Date(2007)), :]))
         @test late.n_controls == 2

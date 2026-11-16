@@ -68,6 +68,19 @@ end
     cell_dummies = Float64.(hcat(panel.cat[in_cell] .== "v", panel.cat[in_cell] .== "w"))
     @test length(DiDInt.prune_covariate_columns(cell_dummies)) == 1
 
+    # Collinearity is recognized through the rounding error that centering leaves behind, with a
+    # tolerance wide enough not to depend on the processor: three dummies that add up to one,
+    # and a covariate that is another one plus a large constant. Covariates that are not
+    # collinear are all kept.
+    n_cell = count(in_cell)
+    three_dummies = Float64.(hcat([mod(i, 3) == 0 for i in 1:n_cell], [mod(i, 3) == 1 for i in 1:n_cell], [mod(i, 3) == 2 for i in 1:n_cell]))
+    @test length(DiDInt.prune_covariate_columns(three_dummies)) == 2
+    x1_cell = panel.x1[in_cell]
+    @test length(DiDInt.prune_covariate_columns(hcat(x1_cell, 1000 .+ 3 .* x1_cell))) == 1
+    @test length(DiDInt.prune_covariate_columns(hcat(x1_cell, 1e6 .+ x1_cell ./ 7))) == 1
+    @test length(DiDInt.prune_covariate_columns(hcat(x1_cell, Float64.(panel.x2[in_cell])))) == 2
+    @test length(DiDInt.prune_covariate_columns(hcat(x1_cell, x1_cell .^ 2))) == 2
+
     run(data) = input_didint(data; ccc = "int", agg = "sgt", covariates = ["cat"], ref = Dict("cat" => "u"))
     shifted = copy(panel)
     shifted.y = shifted.y .+ 100
