@@ -121,7 +121,7 @@ const CELL_COLUMNS = [:state_71X9yTx, :time_71X9yTx]
 
 function first_stage(data_working, ccc, covariates_to_include, hc, edgecase;
                      time_to_index = nothing, treatment_times = nothing, match_to_these_dates = nothing,
-                     treated_states = nothing, use_pre_controls = nothing)
+                     treated_states = nothing, use_pre_controls = nothing, warn = true)
 
     # Estimate lambda_{s,t} for every cell under the chosen ccc (Karim & Webb 2025, eq. 45).
     # Returns
@@ -134,11 +134,22 @@ function first_stage(data_working, ccc, covariates_to_include, hc, edgecase;
     # its own regression. Under "hom", "state", "time" and "add" the slopes are estimated from
     # outcomes and covariates demeaned within cells (the Frisch-Waugh-Lovell theorem) and
     # lambda_{s,t} = ybar_{s,t} - gamma' xbar_{s,t}. Both give the lambdas of the large regression.
+    # `warn = false` silences the warnings about collinear covariates (used when the first
+    # stage is re-estimated for the jackknife, after the full sample has been reported on).
 
     # Covariate means of every cell
     fit = CovariateFit(String[string(cov) for cov in covariates_to_include])
     for cell in groupby(data_working, [:state_71X9yTx, :time_dmG5fpM])
         fit.xbar[(cell.state_71X9yTx[1], cell.time_dmG5fpM[1])] = Float64[mean(cell[!, Symbol(cov)]) for cov in covariates_to_include]
+    end
+
+    # With covariates: the outcome and the covariates demeaned within cells, and the covariates
+    # that each slope block keeps. The kept covariates are determined once, here, and used by
+    # the regular and the edge-case procedure alike, so that both estimate the same model.
+    kept = Dict{Tuple{String, String}, Vector{Int}}()
+    if ccc != "none" && !isempty(covariates_to_include)
+        data_working = with_demeaned_columns(data_working, fit.covariates)
+        kept = kept_covariates(data_working, ccc, fit.covariates; warn = warn)
     end
 
     # With `edgecase`, the cells behind an ATT(s,t) with a single control (if there are any) get
@@ -159,13 +170,13 @@ function first_stage(data_working, ccc, covariates_to_include, hc, edgecase;
 
         in_edgecase = edgecase_rows(data_working, ccc, edgecase_cells)
         skeleton, vcov_lambda = first_stage_edgecase(data_working[in_edgecase, :], ccc, covariates_to_include,
-                                                     skeleton, vcov_lambda, hc, fit)
+                                                     skeleton, vcov_lambda, hc, fit, kept)
         data_working = data_working[.!in_edgecase, :]
     end
 
     # Regular procedure
     if !has_edgecase || !isempty(data_working)
-        lambda_df = cell_lambdas!(fit, data_working, ccc, covariates_to_include)
+        lambda_df = cell_lambdas!(fit, data_working, ccc, covariates_to_include, kept; warn = warn)
         sort!(lambda_df, CELL_COLUMNS)
         lambda_df.lambda_index = 1:nrow(lambda_df)
         rename!(lambda_df, :state_71X9yTx => :state, :time_71X9yTx => :time)
@@ -190,98 +201,88 @@ function first_stage(data_working, ccc, covariates_to_include, hc, edgecase;
     return lambda_df, vcov_lambda, fit
 end
 
-function cell_lambdas!(fit::CovariateFit, data, ccc, covariates_to_include)
+function cell_lambdas!(fit::CovariateFit, data, ccc, covariates_to_include, kept; warn = true)
 
     # lambda of every cell of `data` by the regular procedure, as a DataFrame with the cell
-    # columns and `lambda`. Also records every cell's covariate slopes in `fit`.
+    # columns and `lambda`. Also records every cell's covariate slopes in `fit`. `kept` gives
+    # the covariates that each slope block keeps (see kept_covariates).
     if ccc == "int"
-        return cell_lambdas_int!(fit, data, covariates_to_include)
-    elseif ccc == "none"
-        # No covariate adjustment (used by didint_plot): lambda is the cell mean of the outcome
+        return cell_lambdas_int!(fit, data, covariates_to_include, kept)
+    elseif ccc == "none" || isempty(covariates_to_include)
+        # No covariate adjustment (ccc = "none" is used by didint_plot): lambda is the cell
+        # mean of the outcome
         return combine(groupby(data, CELL_COLUMNS)) do df
             fit.slopes[(df.state_71X9yTx[1], df.time_dmG5fpM[1])] = zeros(length(covariates_to_include))
             DataFrame(lambda = [mean(Float64.(collect(df.outcome_71X9yTx)))])
         end
     else
-        return cell_lambdas_fwl!(fit, data, ccc, covariates_to_include)
+        return cell_lambdas_fwl!(fit, data, ccc, covariates_to_include, kept; warn = warn)
     end
 end
 
-function cell_lambdas_int!(fit::CovariateFit, data, covariates_to_include)
+function cell_lambdas_int!(fit::CovariateFit, data, covariates_to_include, kept)
 
     # ccc = "int": the slopes are specific to the cell, so each cell has its own regression of
-    # the outcome on an intercept and the covariates, and lambda is the intercept. Covariates
-    # that do not vary in the cell, or that are collinear, are dropped from that cell's
-    # regression and keep slope 0 there (see prune_covariate_columns).
+    # the outcome on an intercept and the covariates that the cell keeps, and lambda is the
+    # intercept. A covariate that does not vary in the cell, or that is collinear with
+    # covariates listed before it, is not kept and has slope 0 there (see kept_covariates).
     return combine(groupby(data, CELL_COLUMNS)) do df
-        active_covs = filter(covariates_to_include) do c
-            length(unique(skipmissing(df[!, Symbol(c)]))) > 1
-        end
         y = Float64.(collect(df.outcome_71X9yTx))
         gamma = zeros(length(covariates_to_include))
-        if isempty(active_covs)
+        cell_kept = get(kept, (df.state_71X9yTx[1], df.time_71X9yTx[1]), Int[])
+        if isempty(cell_kept)
             X = ones(nrow(df), 1)
             beta = X \ y
         else
-            W = Matrix(Float64.(df[:, Symbol.(active_covs)]))
-            kept = prune_covariate_columns(W)
-            X = hcat(ones(nrow(df)), W[:, kept])
+            X = hcat(ones(nrow(df)), Matrix{Float64}(df[:, covariates_to_include[cell_kept]]))
             beta = X \ y
-            gamma[Int.(indexin(active_covs[kept], covariates_to_include))] = beta[2:end]
+            gamma[cell_kept] = beta[2:end]
         end
         fit.slopes[(df.state_71X9yTx[1], df.time_dmG5fpM[1])] = gamma
         DataFrame(lambda = [beta[1]])
     end
 end
 
-function cell_lambdas_fwl!(fit::CovariateFit, data, ccc, covariates_to_include)
+function cell_lambdas_fwl!(fit::CovariateFit, data, ccc, covariates_to_include, kept; warn = true)
 
     # ccc = "hom", "state", "time" or "add": the slopes are shared across cells. By the
     # Frisch-Waugh-Lovell theorem they can be estimated from the outcome and the covariates
     # demeaned within cells (which removes the cell dummies), and then
     #   lambda_{s,t} = ybar_{s,t} - gamma_{s,t}' xbar_{s,t}
     # with gamma_{s,t} the slopes that apply to the cell: gamma ("hom"), gamma_s ("state"),
-    # gamma_t ("time") or gamma_s + gamma_t ("add").
-    # A covariate that does not vary within a cell (for example one measured at the state-period
-    # level) is absorbed by the cell dummies. Its demeaned values are set to exactly zero:
-    # subtracting the mean of identical values can leave rounding noise of about 1e-17, and a
-    # regression on a column of pure rounding noise returns an arbitrary slope.
-    demean(x) = allequal(x) ? zeros(length(x)) : (x = Float64.(x); x .- mean(skipmissing(x)))
-    demeaned_covs = [cov * "_demeaned" for cov in covariates_to_include]
-    demeaned = transform(groupby(data, CELL_COLUMNS),
-                         :outcome_71X9yTx => (y -> y .- mean(y)) => :y_demeaned,
-                         [Symbol(cov) => demean => Symbol(cov * "_demeaned") for cov in covariates_to_include]...)
+    # gamma_t ("time") or gamma_s + gamma_t ("add"). `data` holds the demeaned outcome and
+    # covariates (see with_demeaned_columns).
+    demeaned_covs = demeaned_name.(covariates_to_include)
     cell_means = combine(groupby(data, CELL_COLUMNS),
                          :time_dmG5fpM => first => :date,
                          :outcome_71X9yTx => (y -> mean(y)) => :cell_mean_y,
                          [Symbol(cov) => (x -> mean(skipmissing(x))) => Symbol("cell_mean_" * cov) for cov in covariates_to_include]...)
 
-    # Slopes from a regression of the demeaned outcome on the demeaned covariates, without an
-    # intercept as both are already demeaned. A covariate without any within-cell variation in
-    # the data of the regression is left out and has slope 0. The least-squares solution comes
-    # from a column-pivoted QR decomposition, which also handles collinear covariates.
+    # Slopes of one slope block ("hom", "state", "time"), from the regression of the demeaned
+    # outcome on the block's kept covariates, demeaned; there is no intercept, as both sides
+    # are demeaned. The kept covariates are linearly independent, so the least-squares
+    # solution is unique. A covariate that is not kept has slope 0.
     function estimate_slopes(df)
-        X = Matrix(Float64.(df[:, Symbol.(demeaned_covs)]))
-        varies = [any(!iszero, view(X, :, j)) for j in axes(X, 2)]
-        slopes = zeros(size(X, 2))
-        if any(varies)
-            slopes[varies] = qr(X[:, varies], ColumnNorm()) \ Float64.(collect(df.y_demeaned))
+        slopes = zeros(length(covariates_to_include))
+        block_kept = kept[slope_block(ccc, df.state_71X9yTx[1], df.time_71X9yTx[1])]
+        if !isempty(block_kept)
+            slopes[block_kept] = qr(Matrix{Float64}(df[:, demeaned_covs[block_kept]])) \ df.outcome_demeaned_71X9yTx
         end
         return slopes
     end
 
     # cell_slopes(state, time) gives the slope vectors that apply to a cell (two for "add")
     if ccc == "hom"
-        gamma = estimate_slopes(demeaned)
+        gamma = estimate_slopes(data)
         cell_slopes = (state, time) -> (gamma,)
     elseif ccc == "state"
-        gamma_by_state = Dict(df.state_71X9yTx[1] => estimate_slopes(df) for df in groupby(demeaned, :state_71X9yTx))
+        gamma_by_state = Dict(df.state_71X9yTx[1] => estimate_slopes(df) for df in groupby(data, :state_71X9yTx))
         cell_slopes = (state, time) -> (gamma_by_state[state],)
     elseif ccc == "time"
-        gamma_by_time = Dict(df.time_71X9yTx[1] => estimate_slopes(df) for df in groupby(demeaned, :time_71X9yTx))
+        gamma_by_time = Dict(df.time_71X9yTx[1] => estimate_slopes(df) for df in groupby(data, :time_71X9yTx))
         cell_slopes = (state, time) -> (gamma_by_time[time],)
     elseif ccc == "add"
-        gamma_states, gamma_times, state_idx, time_idx = estimate_additive_slopes(demeaned, demeaned_covs)
+        gamma_states, gamma_times, state_idx, time_idx = estimate_additive_slopes(data, demeaned_covs; warn = warn)
         cell_slopes = (state, time) -> (gamma_states[:, state_idx[state]], gamma_times[:, time_idx[time]])
     end
 
@@ -297,13 +298,20 @@ function cell_lambdas_fwl!(fit::CovariateFit, data, ccc, covariates_to_include)
     return lambda_df
 end
 
-function estimate_additive_slopes(demeaned, demeaned_covs)
+function estimate_additive_slopes(demeaned, demeaned_covs; warn = true)
 
     # ccc = "add": state slopes gamma_s and period slopes gamma_t are estimated jointly, from the
     # regression of the demeaned outcome on a sparse design with one block of covariate columns
     # per state followed by one per period. An observation of state s in period t has its
     # demeaned covariates in the block of s and in the block of t. Returns the slopes as
     # matrices with one column per state and per period, and the column of each state and period.
+    # This design is always rank deficient: adding a constant to every state's slope of a
+    # covariate and subtracting it from every period's slope leaves the slope of every cell,
+    # gamma_s + gamma_t, unchanged. Every least-squares solution therefore gives the same
+    # lambdas, and no covariate is dropped. The system is solved by a sparse QR decomposition
+    # (SuiteSparseQR, which is what `\` uses for a rectangular sparse matrix). For a rank
+    # deficient design it returns a basic solution: the coefficients of the columns that it
+    # finds linearly dependent on others are set to zero. It is not the minimum-norm solution.
     states = sort(unique(demeaned.state_71X9yTx))
     times = sort(unique(demeaned.time_71X9yTx))
     state_idx = Dict(s => i for (i, s) in enumerate(states))
@@ -320,58 +328,194 @@ function estimate_additive_slopes(demeaned, demeaned_covs)
     end
     Z = dropzeros!(sparse(rows, cols, vals, n, (length(states) + length(times)) * ncovs))
 
-    # Without covariates, or without any within-cell variation in them, there is nothing to
-    # solve for (and the sparse solver rejects an empty design): every slope is zero
-    gamma = nnz(Z) == 0 ? zeros(size(Z, 2)) : Z \ Float64.(demeaned.y_demeaned)
+    # Without any within-cell variation in the covariates there is nothing to solve for (and
+    # the sparse solver rejects an empty design): every slope is zero
+    if nnz(Z) == 0
+        gamma = zeros(size(Z, 2))
+    else
+        Zqr = qr(Z)
+        gamma = Zqr \ Float64.(demeaned.outcome_demeaned_71X9yTx)
+        warn && check_additive_rank(Zqr, demeaned, demeaned_covs, length(states), length(times))
+    end
     gamma_states = reshape(gamma[1:length(states)*ncovs], ncovs, length(states))
     gamma_times = reshape(gamma[length(states)*ncovs+1:end], ncovs, length(times))
     return gamma_states, gamma_times, state_idx, time_idx
 end
 
-function prune_covariate_columns(W)
+function check_additive_rank(Zqr, demeaned, demeaned_covs, n_states, n_times)
 
-    # Columns of the covariate matrix W to keep in a cell's regression under ccc = "int", in the
-    # order of a rank-revealing (column-pivoted) QR decomposition, from most to least
-    # informative. Collinear covariates are dropped, and a dropped covariate has slope 0 in that
-    # cell. A cell's lambda and slopes must be uniquely identified under "int" (the other ccc
-    # options tolerate rank deficiency, as their ATTs are identified anyway).
-    # The decomposition is of the covariates centered at their cell means, because the
-    # regression has an intercept: covariates can be collinear with the intercept without being
-    # collinear with each other (for example the dummies of a factor whose reference category
-    # does not occur in the cell add up to one).
-    # This is a choice: the Python implementation didintpy keeps every covariate and uses the
-    # minimum-norm least-squares solution instead. The two agree when a covariate is constant
-    # within the cell, but can give different slopes, and so different ATT(s,t)'s, for other
-    # collinearities.
-
-    Wcol = size(W, 2)
-    Wrow = size(W, 1)
-
-    Wqr = qr(W .- mean(W, dims = 1), ColumnNorm())
-    m = min(Wcol, Wrow)
-    # A column counts as collinear when what is left of it after removing the earlier columns
-    # is within rounding error of zero. Centering a column leaves rounding errors in proportion
-    # to its uncentered values, so the tolerance is relative to the largest uncentered column
-    # norm, with the usual factor of the larger matrix dimension. (A tighter tolerance lets the
-    # decision depend on the processor, as the rounding errors differ between them.)
-    tol = eps(Float64) * max(Wcol, Wrow) * maximum(norm, eachcol(W))
-    # Search for first column below tolerance
-    rank = something(findfirst(i -> abs(Wqr.factors[i,i]) <= tol, 1:m), m+1) - 1
-
-    # Keep only the first rank columns in pivoted order (most to least informative)
-    kept = Wqr.p[1:rank]
-
-    # Account for fact that we are adding an intercept column afterwards
-    row_surplus = Wrow - length(kept) # Needs to be >= 1
-
-    # Prune the least important covariates according to RRQR if theres still a dimensionality issue
-    if row_surplus < 1
-        nprune = iszero(row_surplus) ? 1 : abs(row_surplus) + 1
-        # Drop the last nprune columns in pivoted order (least informative)
-        kept = kept[1:length(kept) - nprune]
+    # Warn if the "add" design has more rank deficiency than the split of each covariate's
+    # slope between states and periods (see estimate_additive_slopes), since the lambdas then
+    # depend on which least-squares solution the solver returns. The split costs one rank per
+    # covariate with within-cell variation and per connected component of the graph that links
+    # each state to the periods it is observed in (one component, unless the panel falls apart
+    # into groups of states observed in disjoint sets of periods). The rank is the one found
+    # by the sparse QR decomposition that solved the system, which treats a column as linearly
+    # dependent when its norm, after removing the earlier columns, is at most
+    # 20 * (rows + columns) * eps * (largest column norm), the default of SuiteSparseQR.
+    n_varying = count(cov -> any(!iszero, demeaned[!, cov]), demeaned_covs)
+    components = count_panel_components(demeaned.state_71X9yTx, demeaned.time_71X9yTx)
+    expected_rank = n_varying * (n_states + n_times - components)
+    if rank(Zqr) < expected_rank
+        @warn "Under ccc = \"add\" the covariate slopes are less well determined than usual: the first-stage regression " *
+              "has rank $(rank(Zqr)) where $expected_rank is expected. The covariate-adjusted means, and with them some " *
+              "ATTs, may depend on which of the equally good least-squares solutions is used. Likely causes: a covariate " *
+              "that does not vary within any state-period cell of some state or of some period, or covariates that are " *
+              "collinear within cells."
     end
+end
 
+function count_panel_components(states, times)
+
+    # Number of connected components of the graph whose nodes are the states and the periods,
+    # with a link between a state and every period it is observed in (union-find)
+    parent = Dict{Any, Any}()
+    function root(node)
+        while parent[node] != node
+            node = parent[node]
+        end
+        return node
+    end
+    for (state, time) in unique(zip(states, times))
+        a = root(get!(parent, (:state, state), (:state, state)))
+        b = root(get!(parent, (:time, time), (:time, time)))
+        parent[a] = b
+    end
+    return count(node -> root(node) == node, collect(keys(parent)))
+end
+
+# Relative tolerance of the collinearity rule in prune_covariate_columns: a covariate is
+# dropped when less than this share of it (in norm) is left after removing what the
+# covariates before it explain. 1e-7 is also the tolerance of R's lm().
+const COLLINEARITY_RTOL = 1e-7
+
+# Name of the column that holds a covariate demeaned within cells (the suffix keeps it from
+# clashing with a column of the user's data)
+demeaned_name(covariate) = covariate * "_demeaned_71X9yTx"
+
+function with_demeaned_columns(data, covariates)
+
+    # `data` with two kinds of added columns: the outcome demeaned within cells (outcome_demeaned_71X9yTx)
+    # and every covariate demeaned within cells (named by demeaned_name). The existing columns
+    # are shared with `data`, not copied.
+    # A covariate that does not vary within a cell (for example one measured at the state-period
+    # level) is absorbed by the cell dummies. Its demeaned values are set to exactly zero:
+    # subtracting the mean of identical values can leave rounding noise of about 1e-17, and a
+    # regression on a column of pure rounding noise returns an arbitrary slope.
+    cell_rows = [parentindices(cell)[1] for cell in groupby(data, CELL_COLUMNS)]
+    function demean(x, exact_zero)
+        demeaned = zeros(length(x))
+        for rows in cell_rows
+            values = view(x, rows)
+            exact_zero && allequal(values) && continue
+            demeaned[rows] .= values .- mean(values)
+        end
+        return demeaned
+    end
+    demeaned_data = copy(data, copycols = false)
+    demeaned_data.outcome_demeaned_71X9yTx = demean(data.outcome_71X9yTx, false)
+    for cov in covariates
+        demeaned_data[!, demeaned_name(cov)] = demean(data[!, cov], true)
+    end
+    return demeaned_data
+end
+
+# The slope block of a cell: the observations that share one set of covariate slopes are all
+# the data ("hom"), a state ("state"), a period ("time") or a cell ("int")
+function slope_block(ccc, state, time)
+    return ccc == "hom" ? ("", "") : ccc == "state" ? (state, "") : ccc == "time" ? ("", time) : (state, time)
+end
+
+function kept_covariates(data, ccc, covariates; warn = true)
+
+    # The covariates that each slope block keeps under ccc = "hom", "state", "time" and "int",
+    # as positions in `covariates`, keyed by slope_block. `data` holds the covariates demeaned
+    # within cells (see with_demeaned_columns).
+    # When the demeaned covariates of a block are linearly dependent, its slopes, and with them
+    # the lambdas, are not determined by the data. The ATTs would only be unaffected if the
+    # lambdas could change by amounts that are additive in state and period, which cancel in
+    # the long differences; collinear covariates do not have that form in general. Redundant
+    # covariates are therefore dropped, by the rule of prune_covariate_columns, and have slope
+    # 0 in that block. A warning names every covariate that was dropped although it varies
+    # within cells. Under "int" the block is a cell and demeaning within the cell is centering
+    # at the cell means, as needed for a regression with an intercept: covariates can be
+    # collinear with the intercept without being collinear with each other (the dummies of a
+    # factor whose reference category does not occur in the cell add up to one).
+    # ccc = "add" keeps every covariate (see estimate_additive_slopes).
+    kept = Dict{Tuple{String, String}, Vector{Int}}()
+    ccc in ("hom", "state", "time", "int") || return kept
+
+    X = Matrix{Float64}(data[:, demeaned_name.(covariates)])
+    block_columns = ccc == "state" ? [:state_71X9yTx] : ccc == "time" ? [:time_71X9yTx] : CELL_COLUMNS
+    blocks = ccc == "hom" ? [collect(1:nrow(data))] : [parentindices(block)[1] for block in groupby(data, block_columns)]
+    collinear_blocks = [Tuple{String, String}[] for _ in covariates]
+    for rows in blocks
+        block = slope_block(ccc, data.state_71X9yTx[rows[1]], data.time_71X9yTx[rows[1]])
+        kept[block], collinear = prune_covariate_columns(view(X, rows, :))
+        for j in collinear
+            push!(collinear_blocks[j], block)
+        end
+    end
+    warn && warn_collinear_covariates(covariates, collinear_blocks, ccc)
     return kept
+end
+
+function prune_covariate_columns(X)
+
+    # Which columns of X (the covariates of one slope block, demeaned within cells) to keep,
+    # going through them in order, which is the order in which the user listed the covariates
+    # (with the dummies of a factor in its place). A column is kept if it is not, up to the
+    # relative tolerance COLLINEARITY_RTOL, a linear combination of the columns kept before it:
+    # the norm of what is left of it after projecting on those columns must exceed the
+    # tolerance times its own norm. This is a Gram-Schmidt orthogonalization without column
+    # pivoting, so the decision does not depend on the units of the covariates, only on their
+    # order. (Each column is orthogonalized twice, which keeps the result accurate to rounding
+    # error when columns are nearly dependent.)
+    # Returns the kept columns and the columns dropped as collinear. A column of zeros (a
+    # covariate without any within-cell variation in the block, which the cell dummies absorb)
+    # is in neither.
+    kept = Int[]
+    collinear = Int[]
+    basis = Vector{Float64}[]
+    for j in axes(X, 2)
+        column = X[:, j]
+        column_norm = norm(column)
+        column_norm == 0 && continue
+        for _ in 1:2, q in basis
+            column .-= dot(q, column) .* q
+        end
+        remainder = norm(column)
+        if remainder > COLLINEARITY_RTOL * column_norm
+            push!(kept, j)
+            push!(basis, column ./ remainder)
+        else
+            push!(collinear, j)
+        end
+    end
+    return kept, collinear
+end
+
+function warn_collinear_covariates(covariates, collinear_blocks, ccc)
+
+    # One warning that names every covariate dropped as collinear and where it was dropped
+    any(!isempty, collinear_blocks) || return nothing
+    where_label(block) = ccc == "state" ? "state $(block[1])" : ccc == "time" ? "period $(block[2])" :
+                         "state $(block[1]) in period $(block[2])"
+    descriptions = String[]
+    for (cov, blocks) in zip(covariates, collinear_blocks)
+        isempty(blocks) && continue
+        if ccc == "hom"
+            push!(descriptions, cov)
+        else
+            shown = join(where_label.(first(blocks, 3)), ", ")
+            more = length(blocks) > 3 ? " and $(length(blocks) - 3) more" : ""
+            push!(descriptions, "$cov ($shown$more)")
+        end
+    end
+    @warn "Under ccc = \"$ccc\", covariates that are collinear with covariates listed before them were dropped" *
+          (ccc == "hom" ? "" : " where their slopes are estimated") * ": " * join(descriptions, "; ") *
+          ". The estimates depend on which of the collinear covariates is dropped, which is decided by the order of 'covariates'."
+    return nothing
 end
 
 
@@ -438,12 +582,15 @@ function edgecase_rows(data_working, ccc, edgecase_cells)
     end
 end
 
-function first_stage_edgecase(data_working, ccc, covariates_to_include, lambda_df, vcov_lambda, hc, fit::CovariateFit)
+function first_stage_edgecase(data_working, ccc, covariates_to_include, lambda_df, vcov_lambda, hc, fit::CovariateFit, kept)
 
     # Lambdas of the cells in `data_working` with their HC covariance matrix, from regressions
     # of the outcome on cell dummies and the covariates. Fills the rows of `lambda_df` and the
     # blocks of `vcov_lambda` that belong to those cells, and records the cells' slopes in `fit`.
     # Cells in different blocks are estimated separately, so their covariances stay zero.
+    # The blocks are the slope blocks of the ccc, and each regression includes the covariates
+    # that its block keeps (`kept`, see kept_covariates): the same covariates as the regular
+    # procedure, so both give the same lambdas (the Frisch-Waugh-Lovell theorem).
     n_lambda = nrow(lambda_df)
 
     # Position of each cell in lambda_df and vcov_lambda (lambda_df.time is still a string here,
@@ -469,33 +616,19 @@ function first_stage_edgecase(data_working, ccc, covariates_to_include, lambda_d
             D_block[i, ci] = 1.0
         end
 
-        # Covariates that vary within at least one cell of the block (the others are absorbed
-        # by the cell dummies)
-        active = filter(covariates_to_include) do c
-            stds = combine(groupby(sub_df, CELL_COLUMNS)) do df
-                vals = collect(skipmissing(df[!, Symbol(c)]))
-                DataFrame(has_var = length(unique(vals)) > 1)
-            end
-            any(stds.has_var)
-        end
-
-        # Covariates in the regression: those with variation, pruned further under "int"
-        kept_covs = active
-        if isempty(active)
-            Z = D_block
-        elseif int
-            W = Matrix(Float64.(sub_df[:, Symbol.(active)]))
-            kept = prune_covariate_columns(W)
-            kept_covs = active[kept]
-            Z = hcat(D_block, W[:, kept])
-        else
-            Z = hcat(D_block, Matrix(Float64.(sub_df[:, Symbol.(active)])))
-        end
+        # Covariates in the regression: the ones that the block keeps. The others either do not
+        # vary within any cell of the block (the cell dummies absorb them) or are collinear
+        # with covariates listed before them.
+        kept_positions = get(kept, slope_block(ccc, sub_df.state_71X9yTx[1], sub_df.time_71X9yTx[1]), Int[])
+        Z = isempty(kept_positions) ? D_block :
+            hcat(D_block, Matrix{Float64}(sub_df[:, covariates_to_include[kept_positions]]))
 
         y     = Float64.(sub_df.outcome_71X9yTx)
         β = Z \ y
-        # Without residual degrees of freedom, or without full rank, the covariance matrix
-        # (and so the edge-case SE) cannot be computed
+        # Without residual degrees of freedom the covariance matrix (and so the edge-case SE)
+        # cannot be computed. The design has full column rank, as the kept covariates are
+        # linearly independent after removing the cell dummies; the rank is still checked, as
+        # a guard against inverting a singular matrix.
         estimable = (size(Z, 1) > size(Z, 2)) && (rank(Z) == size(Z, 2))
         if estimable
             resid = y .- Z * β
@@ -506,7 +639,6 @@ function first_stage_edgecase(data_working, ccc, covariates_to_include, lambda_d
 
         # Record the slopes of every cell in the block: common to the block for "hom", "state"
         # and "time", the cell's own for "int"
-        kept_positions = Int.(indexin(kept_covs, covariates_to_include))
         gamma = zeros(length(covariates_to_include))
         gamma[kept_positions] = β[n_cells+1:end]
         for cell in cells_seen

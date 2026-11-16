@@ -161,7 +161,10 @@ in `treatment_times`, and so on. A single treatment time applies to every treate
     (its number of treated states). Only used with `policy_aggregation = true`.
 - `covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol, Nothing} = nothing`
     A vector of covariates entered as either strings or symbols (or a single covariate string or symbol),
-    or, `nothing` (default).
+    or, `nothing` (default). The order of the covariates matters when covariates are collinear: under
+    `ccc = "hom"`, `"state"`, `"time"` and `"int"`, a covariate that is a linear combination of covariates
+    listed before it is dropped, with a warning, wherever the covariate slopes are estimated (in all the data,
+    in each state, in each period, or in each state-period cell).
 - `notyet::Union{Nothing, Bool} = nothing`
     Determine if pre-treatment periods from treated states should be used as controls
     (`use_pre_controls` is an alias).
@@ -1233,12 +1236,14 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
         sub, att_p, top = est.sub, est.att_p, est.top
     else
         # True jackknife: re-estimate the first stage without state h, rebuild the long
-        # differences, and evaluate the observed assignment of the remaining states
+        # differences, and evaluate the observed assignment of the remaining states. The
+        # re-estimation decides anew which collinear covariates to drop, as removing a state
+        # can create or remove collinearity; it does not repeat the full sample's warnings.
         sub = fill(NaN, n_states, nrow(results))
         att_p = fill(NaN, n_states, length(policy_names))
         top = fill(NaN, n_states)
         for (h, without) in enumerate(all_states)
-            lambda_h, _, fit_h = first_stage(data_copy[data_copy.state_71X9yTx .!= without, :], ccc, covariates_to_include, "hc0", false)
+            lambda_h, _, fit_h = first_stage(data_copy[data_copy.state_71X9yTx .!= without, :], ccc, covariates_to_include, "hc0", false; warn = false)
             diff_h = construct_diff_df(lambda_h, treated_states, treatment_times, time_to_index, match_to_these_dates,
                                        use_pre_controls, data_copy; jackknife = true, without = without)
             remaining = filter(!=(without), all_states)

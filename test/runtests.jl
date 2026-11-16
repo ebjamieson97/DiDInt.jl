@@ -92,6 +92,9 @@ const TEST_DATA_EC_STAG = filter(r -> r.state ∈ [_t1, _t2, EC_CONTROL], TEST_D
     @testset "Input handling and degenerate data" begin
         include("test_inputs.jl")
     end
+    @testset "Collinear covariates" begin
+        include("test_collinearity.jl")
+    end
     @testset "Batched engine, RI draws and p-values" begin
         include("test_engine.jl")
     end
