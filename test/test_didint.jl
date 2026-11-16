@@ -240,7 +240,7 @@ end
     run(covariates) = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
         DiDInt.didint("y", "state", "year", panel; treated_states = ["s01", "s02", "s03", "s04", "s05"],
                       treatment_times = [2004, 2004, 2006, 2006, 2007], covariates = covariates,
-                      ccc = "int", agg = "sgt", nperm = 9, seed = 1234, verbose = false)
+                      ccc = "int", agg = "sgt", nperm = 9, seed = 1234)
     end
     # "male" is the reference category (first seen), so the dummy is 1 for "female", i.e. x2
     @test run(["x1", "sex"]).att_sgt ≈ run(["x1", "x2"]).att_sgt atol = 1e-10

@@ -16,7 +16,7 @@ const POLICY_AGGS = ["policy", "policy_gt", "policy_cohort", "policy_calendar", 
 function policy_didint(; data = POLICY_PANEL, treated_states = POLICY_TREATED, treatment_times = POLICY_TIMES, kwargs...)
     return Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
         DiDInt.didint("y", "state", "year", data; treated_states = treated_states, treatment_times = treatment_times,
-                      nperm = 29, seed = 1234, verbose = false, kwargs...)
+                      nperm = 29, seed = 1234, kwargs...)
     end
 end
 

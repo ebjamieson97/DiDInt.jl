@@ -18,7 +18,7 @@ function integration_didint(panel = INTEGRATION_PANEL; cohorts = INTEGRATION_COH
     return Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
         DiDInt.didint("y", "state", "year", panel; treated_states = treated,
                       treatment_times = [cohorts[s] for s in treated], covariates = INTEGRATION_COVARIATES,
-                      nperm = 19, seed = 1234, verbose = false, kwargs...)
+                      nperm = 19, seed = 1234, kwargs...)
     end
 end
 
@@ -133,7 +133,7 @@ end
     no_covariates(ccc) = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
         DiDInt.didint("y", "state", "year", INTEGRATION_PANEL; treated_states = INTEGRATION_TREATED,
                       treatment_times = [INTEGRATION_COHORTS[s] for s in INTEGRATION_TREATED],
-                      ccc = ccc, agg = "sgt", nperm = 19, seed = 1234, verbose = false).att_sgt
+                      ccc = ccc, agg = "sgt", nperm = 19, seed = 1234).att_sgt
     end
     @test no_covariates("add") ≈ no_covariates("int")
     @test no_covariates("time") ≈ no_covariates("int")

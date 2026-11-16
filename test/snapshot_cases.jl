@@ -266,7 +266,7 @@ function run_snapshot_case(case, datasets)
         return Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
             DiDInt.didint(ds.outcome, "state", "year", ds.data;
                           ds.treat..., covariates = covariates, seed = SNAPSHOT_SEED,
-                          nperm = SNAPSHOT_NPERM, verbose = false, case.kwargs...)
+                          nperm = SNAPSHOT_NPERM, case.kwargs...)
         end
     catch err
         return first(split(sprint(showerror, err), '\n'))

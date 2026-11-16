@@ -32,7 +32,7 @@ function quiet_didint(data, cohorts::Dict{String, Int}; kwargs...)
     return Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
         DiDInt.didint("y", "state", "year", data; treated_states = treated,
                       treatment_times = [cohorts[s] for s in treated], nperm = 19, seed = 1234,
-                      verbose = false, kwargs...)
+                      kwargs...)
     end
 end
 
@@ -143,7 +143,7 @@ end
     treated = sort(collect(keys(COMMON_COHORTS)))
     broadcast = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
         DiDInt.didint("y", "state", "year", data; treated_states = treated, treatment_times = 2004,
-                      agg = "simple", nperm = 19, seed = 1234, verbose = false)
+                      agg = "simple", nperm = 19, seed = 1234)
     end
     @test isequal(broadcast, quiet_didint(data, COMMON_COHORTS; agg = "simple"))
 

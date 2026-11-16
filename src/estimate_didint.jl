@@ -23,7 +23,7 @@
            start_date::Union{AbstractString, Number, Date, Nothing} = nothing,
            end_date::Union{AbstractString, Number, Date, Nothing} = nothing,
            nperm::Number = 999,
-           verbose::Bool = true,
+           ri_kernel_cutoff::Number = 99,
            seed::Number = rand(1:1000000),
            use_pre_controls::Bool = false,
            notyet::Union{Nothing, Bool} = nothing,
@@ -132,8 +132,11 @@ in `treated_times`, and so on.
 - `nperm::Number = 999`
     The number of unique permutations (not including the initial assignment of treatment times)
     to be considered when performing the randomization inference.
-- `verbose::Bool = true`
-    A boolean option for displaying progress of the randomization procedure. 
+- `ri_kernel_cutoff::Number = 99`
+    When the randomization inference uses `ri_kernel_cutoff` or fewer alternative assignments (because
+    `nperm` is that small, or because no more unique assignments exist), its p-values are kernel-smoothed
+    (Racine & MacKinnon 2007) instead of counting the placebo estimates at least as large as the observed one.
+    Set it to `0` to never smooth. The column `ri_procedure` reports which p-value was used.
 - `seed::Number = rand(1:1000000)`
     An integer to set the random seed for the randomization inference procedure.
 - `hc::Union{AbstractString, Number} = "hc1"`
@@ -186,7 +189,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                 start_date::Union{AbstractString, Number, Date, Nothing} = nothing,
                 end_date::Union{AbstractString, Number, Date, Nothing} = nothing,
                 nperm::Number = 999,
-                verbose::Bool = true,
+                ri_kernel_cutoff::Number = 99,
                 seed::Number = rand(1:1000000),
                 use_pre_controls::Bool = false,
                 notyet::Union{Nothing, Bool} = nothing,
@@ -275,7 +278,13 @@ function didint(outcome::Union{AbstractString, Symbol},
     nperm = Int(round(nperm))
     if nperm < 1
         error("'nperm' must be a positive integer > 0.")
-    end 
+    end
+
+    # Round ri_kernel_cutoff
+    ri_kernel_cutoff = Int(round(ri_kernel_cutoff))
+    if ri_kernel_cutoff < 0
+        error("'ri_kernel_cutoff' must be a non-negative integer.")
+    end
 
     # Create data copy
     data_copy = DataFrame(data; copycols = false)
@@ -429,7 +438,7 @@ function didint(outcome::Union{AbstractString, Symbol},
                                   time_to_index, match_to_these_dates; integration = integration, policy = policy)
     if randomize
         results = randomization_inference(results, att_st, vcat(diff_df, ri_diff_df), agg, weighting, treated_weight,
-                                          use_pre_controls, treated_states, treatment_times, nperm, verbose, seed;
+                                          use_pre_controls, treated_states, treatment_times, nperm, ri_kernel_cutoff, seed;
                                           integration = integration, policy = policy)
     end
 
@@ -907,7 +916,7 @@ const RI_BATCH_SIZE = 500
 
 function randomization_inference(results::DataFrame, att_st::DataFrame, long_diffs::DataFrame, agg::AbstractString,
                                  weighting::AbstractString, treated_weight::AbstractString, use_pre_controls::Bool,
-                                 treated_states, treatment_times, nperm::Int, verbose::Bool, seed::Number;
+                                 treated_states, treatment_times, nperm::Int, ri_kernel_cutoff::Int, seed::Number;
                                  integration::Union{CovariateFit, Nothing} = nothing,
                                  policy = default_policy_options(treated_states))
 
@@ -957,15 +966,15 @@ function randomization_inference(results::DataFrame, att_st::DataFrame, long_dif
         end
         att_ri_sub[batch, :] = est.sub
         att_ri[batch] = est.top
-        if verbose
-            println("Completed $(last(batch)) of $(nperm) permutations")
-        end
     end
 
     # PART THREE: COMPUTE P-VALS BASED ON THE PLACEBO ESTIMATES
-    # The ordinary p-value (§8.1), or the kernel-smoothed one when every alternative was
-    # enumerated and there are fewer than RI_KERNEL_CUTOFF of them (§8.2)
-    pvalue(placebos, observed) = exact ? ri_pvalue_enumerated(placebos, observed) : ri_pvalue(placebos, observed)
+    # The kernel-smoothed p-value (§8.2) when at most ri_kernel_cutoff alternatives were used,
+    # whether they were all enumerated or sampled (author's choice; the spec smooths only
+    # enumerated ones), otherwise the ordinary p-value (§8.1). With a single alternative there
+    # is nothing to smooth.
+    use_kernel = 2 <= nperm <= ri_kernel_cutoff
+    pvalue(placebos, observed) = use_kernel ? ri_pvalue_kernel(placebos, observed) : ri_pvalue(placebos, observed)
     suffix = SUB_AGG_SPECS[agg].suffix
     for i in 1:nrow(results)
         results[i, "ri_pval_" * suffix] = pvalue(att_ri_sub[:, i], results[i, suffix])
@@ -984,10 +993,9 @@ function randomization_inference(results::DataFrame, att_st::DataFrame, long_dif
         end
     end
     # nperm is the number of alternatives used; ri_procedure records how the p-values were
-    # computed (with a single alternative there is nothing to smooth, and the kernel p-value
-    # falls back to the ordinary one)
+    # computed: kernel-smoothed or ordinary, from all alternatives (exact) or a sample of them
     results.nperm[1] = nperm
-    results.ri_procedure .= !exact ? "sampled" : (2 <= nperm < RI_KERNEL_CUTOFF ? "kernel_exact" : "ordinary_exact")
+    results.ri_procedure .= (use_kernel ? "kernel" : "ordinary") * (exact ? "_exact" : "_sampled")
     return results
 end
 
@@ -995,9 +1003,6 @@ end
 
 # Relative tolerance for ties between a placebo estimate and the observed estimate
 const RI_TIE_RTOL = sqrt(eps(Float64))
-
-# Exact RI with fewer alternatives than this uses the kernel-smoothed p-value (update spec A4)
-const RI_KERNEL_CUTOFF = 99
 
 function ri_pvalue(att_ri::AbstractVector, observed::Real)
     # RI p-value p = (1 + #{|T*| >= |T|}) / (S + 1) over the S finite placebo estimates T*,
@@ -1033,12 +1038,6 @@ function ri_pvalue_kernel(att_ri::AbstractVector, observed::Real)
     end
     h = 1.575 * sd * n_placebo^(-4 / 9)
     return 1 - mean(cdf.(Normal(), (abs(observed) .- abs.(finite_att_ri)) ./ h))
-end
-
-function ri_pvalue_enumerated(att_ri::AbstractVector, observed::Real)
-    # P-value when every alternative assignment was enumerated: kernel-smoothed if fewer than
-    # RI_KERNEL_CUTOFF placebo estimates are finite, the ordinary one otherwise (update spec §8)
-    return count(isfinite, att_ri) < RI_KERNEL_CUTOFF ? ri_pvalue_kernel(att_ri, observed) : ri_pvalue(att_ri, observed)
 end
 
 ## The following functions are for the jackknife procedure
