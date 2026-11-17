@@ -273,18 +273,15 @@ Comparing the two sets of results:
 
 ## The Aggregate ATT Across Aggregation Options
 
-The aggregate ATT is the weighted mean of the sub-aggregate ATTs of the chosen `agg`
-option. With the default weighting (`weighting = "both"` and `treated_weight = "treated"`),
-and also with `weighting = "att"`, this weighted mean is the same number for every `agg`
-option: the mean of the ATTs for each treated state and period, weighted by their numbers
-of treated observations (see the [Weighting](@ref) section for why). With the other
-weighting options the aggregate ATT depends on how the ATTs are grouped.
-
-The table below reports the aggregate ATT of the staggered adoption example for every
-(non-policy) `agg` option under five weighting choices:
+With the default weighting (`weighting = "both"`), and also with `weighting = "att"`, the
+aggregate ATT does not depend on the `agg` option (see the
+[Aggregate ATT Equivalency](@ref) section). Running the staggered adoption example above
+with every (non-policy) `agg` option and the default weighting:
 
 ```@example didint
-aggregate_att(agg; kwargs...) = coef(didint(
+aggs = ["cohort", "simple", "state", "sgt", "time", "calendar"]
+
+results = [didint(
     "coll", "state", "year", merit;
     treatment_times = treated_times,
     treated_states  = treated_states,
@@ -292,30 +289,18 @@ aggregate_att(agg; kwargs...) = coef(didint(
     ccc        = "state",
     covariates = [:male, :asian, :black],
     agg        = agg,
-    nperm      = 399,
-    kwargs...
-))[1]
-
-aggs = ["cohort", "simple", "state", "sgt", "time", "calendar"]
+    nperm      = 399
+) for agg in aggs]
 
 DataFrame(
-    agg            = aggs,
-    both           = [aggregate_att(agg) for agg in aggs],
-    att            = [aggregate_att(agg; weighting = "att") for agg in aggs],
-    diff           = [aggregate_att(agg; weighting = "diff") for agg in aggs],
-    none           = [aggregate_att(agg; weighting = "none") for agg in aggs],
-    both_population = [aggregate_att(agg; treated_weight = "population") for agg in aggs]
+    agg     = aggs,
+    agg_att = [coef(result)[1] for result in results],
+    se      = [stderror(result)[1] for result in results]
 )
 ```
 
-The `both` column (the default) and the `att` column are constant across the `agg`
-options. Under `weighting = "diff"` and `"none"` the sub-aggregate ATTs are averaged with
-equal weights, and under `treated_weight = "population"` the ATTs within a sub-aggregate
-are weighted by different observation counts than the sub-aggregates themselves, so the
-aggregate ATT changes with the grouping. (Under `"sgt"` every sub-aggregate is a single
-ATT, which is why `both_population` equals `both` in that row.) The sub-aggregate ATTs
-and their standard errors always differ across `agg` options, as they answer different
-questions.
+The aggregate ATT (`agg_att`) is identical in every row. Its standard error differs, as it
+is computed from the sub-aggregate ATTs of each option.
 
 ---
 
@@ -327,7 +312,10 @@ that adopted merit-aid programmes in 1998 along with the never-treated states. A
 treatment time applies to every treated state.
 
 ```@example didint
-merit_common = filter(row -> row.state ∈ [57, 72] || !(row.state ∈ treated_states), merit);
+merit_common = filter(
+    row -> row.state ∈ [57, 72] || !(row.state ∈ treated_states),
+    merit
+);
 
 result_common = didint(
     "coll", "state", "year", merit_common;

@@ -53,7 +53,7 @@ result = didint("coll", "state", "year", test_data,
 #   Model:            Region-Varying DID-INT (ccc = "state")
 #   Covariates:       male, asian, black
 #   Aggregation:      "cohort" (by treatment time)
-#   Weighting:        "both", treated_weight = "treated"
+#   Weighting:        "both"
 #   Controls:         never-treated states
 #   Periods:          1 year, from 1989 to 2000
 #   Standard errors:  HC1 (se) and jackknife (jknife_se)

@@ -67,17 +67,19 @@ The `didint()` function estimates the average effect of treatment on the treated
 while accounting for covariates that may vary by state, time, or by both state and time simultaneously.
 
 # Details
-The estimator of Karim & Webb (2025) is computed in four steps:
+The estimator of Karim & Webb (2025) is computed in five steps:
 
-1. **First stage.** A covariate-adjusted mean of the outcome, `λ(s,t)`, is estimated for every state `s`
+1. First stage: a covariate-adjusted mean of the outcome, `λ(s,t)`, is estimated for every state `s`
    and period `t`, with the covariate effects restricted as the `ccc` argument specifies.
-2. **Long differences.** For every state, the change in `λ` between a period `t` and the period just
+2. Long differences: for every state, the change in `λ` between a period `t` and the period just
    before a cohort's treatment time.
-3. **ATT(s,t).** For each treated state `s` and each period `t` from its treatment time on, its long
+3. ATT(s,t): for each treated state `s` and each period `t` from its treatment time on, its long
    difference minus the weighted mean of the long differences of its controls: the never-treated states
    and, with `notyet = true`, the states not yet treated at `t`.
-4. **Aggregation.** The sub-aggregate ATTs of the chosen `agg` are weighted means of the ATT(s,t)'s, and the
-   aggregate ATT is a weighted mean of the sub-aggregate ATTs.
+4. Sub-aggregate ATTs: weighted means of the ATT(s,t)'s within the groups of the chosen `agg`.
+5. Aggregate ATT: the weighted mean of the sub-aggregate ATTs.
+
+With `policy_aggregation = true`, an optional sixth step pools the ATTs of different policies.
 
 Common adoption (every treated state treated at the same time) is the one-cohort case of the same
 estimator, so every `agg` option is available whatever the adoption pattern.
@@ -138,9 +140,10 @@ in `treatment_times`, and so on. A single treatment time applies to every treate
     Unlike the group effects of Callaway & Sant'Anna (2021), which weight a cohort's post-treatment periods
     equally, `"cohort"` weights them as `weighting` specifies.
 - `weighting::AbstractString = "both"`
-    Specify which weighting method should be used. Observation counts can be used as weights when
-    computing the ATT(s,t)'s and sub-aggregates from long differences (`"diff"`), when computing the
-    aggregate ATT from the sub-aggregates (`"att"`), at both levels (`"both"`), or not at all (`"none"`).
+    Decides which of the three averages behind an estimate are weighted by numbers of observations:
+    the controls' long differences within each ATT(s,t) (first), the ATT(s,t)'s within each sub-aggregate
+    ATT (second), and the sub-aggregate ATTs within the aggregate ATT (third). `"diff"` weights the first,
+    `"att"` the second and third, `"both"` all three, and `"none"` none.
     Options are: `"both"`, `"att"`, `"diff"`, or `"none"`.
 - `policy_aggregation::Bool = false`
     With a policy aggregation, also report the pooled estimate across policies, `att_pool`, the
@@ -156,8 +159,9 @@ in `treatment_times`, and so on. A single treatment time applies to every treate
     A vector of covariates entered as either strings or symbols (or a single covariate string or symbol),
     or, `nothing` (default). The order of the covariates matters when covariates are collinear: under
     `ccc = "hom"`, `"state"`, `"time"` and `"int"`, a covariate that is a linear combination of covariates
-    listed before it is dropped, with a warning, wherever the covariate slopes are estimated (in all the data,
-    in each state, in each period, or in each state-period cell).
+    listed before it is dropped wherever the covariate slopes are estimated (in all the data, in each state,
+    in each period, or in each state-period cell). A warning names the dropped covariates under `"hom"`,
+    `"state"` and `"time"`, and under `"int"` the ATT(s,t)'s that depend on a dropped covariate.
 - `notyet::Union{Nothing, Bool} = nothing`
     Determine if pre-treatment periods from treated states should be used as controls
     (`use_pre_controls` is an alias).
