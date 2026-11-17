@@ -360,10 +360,22 @@ function estimate_additive_slopes(demeaned, demeaned_covs; null_space = true)
         rank_found = 0
         directions = null_space ? Matrix{Float64}(I, n_columns, n_columns) : zeros(n_columns, 0)
     else
-        Zqr = qr(Z)
-        gamma = Zqr \ Float64.(demeaned.outcome_demeaned_71X9yTx)
+        # The columns are scaled to unit length before the decomposition, and a column counts
+        # as linearly dependent on the others when less than COLLINEARITY_RTOL of it is left
+        # once they are removed: the same scale-free rule as prune_covariate_columns. (The
+        # default tolerance of SuiteSparseQR is relative to the largest column and much smaller,
+        # so rounding error in demeaning, for example of a covariate with a large mean that is
+        # collinear with another, would count as a genuine covariate and its fit to that noise
+        # would change from one platform to another.) Scaling the columns changes neither the
+        # fitted values nor the lambdas; the slopes and the null space are scaled back.
+        # (a column of zeros, a covariate without within-cell variation in that state or
+        # period, keeps scale 1)
+        column_norms = [norm(view(nonzeros(Z), nzrange(Z, j))) for j in 1:n_columns]
+        column_scale = [column_norm > 0 ? 1 / column_norm : 1.0 for column_norm in column_norms]
+        Zqr = qr(Z * Diagonal(column_scale); tol = COLLINEARITY_RTOL)
+        gamma = column_scale .* (Zqr \ Float64.(demeaned.outcome_demeaned_71X9yTx))
         rank_found = rank(Zqr)
-        directions = null_space ? sparse_qr_null_space(Zqr, n_columns) : zeros(n_columns, 0)
+        directions = null_space ? column_scale .* sparse_qr_null_space(Zqr, n_columns) : zeros(n_columns, 0)
     end
 
     # The split between states and periods costs one rank per covariate and per connected
@@ -385,9 +397,8 @@ function sparse_qr_null_space(Zqr, n_columns)
     # vector per column of the matrix returned. With r the rank that the decomposition found,
     # Z[:, pcol] = Q R with R = [R11 R12], R11 upper triangular of size r: the columns pcol[1:r]
     # are the ones the decomposition treats as independent (it calls a column dependent when
-    # its norm, after removing the earlier columns, is at most 20 * (rows + columns) * eps *
-    # (largest column norm), the default of SuiteSparseQR), and every other column is a
-    # combination of them. For each dependent column pcol[r + j] the basis vector has a one in
+    # its norm, after removing the earlier columns, is at most the `tol` it was given), and
+    # every other column is a combination of them. For each dependent column pcol[r + j] the basis vector has a one in
     # that position and -inv(R11) R12[:, j] in the positions pcol[1:r]. This is the null space
     # that goes with the solution that `\` returns, which sets the dependent columns'
     # coefficients to zero.

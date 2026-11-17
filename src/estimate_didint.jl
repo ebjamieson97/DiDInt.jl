@@ -886,16 +886,17 @@ end
 function warn_additive_identification(fit::CovariateFit, diff_df::Union{DataFrame, Nothing} = nothing,
                                       weighting::AbstractString = "both")
 
-    # ccc = "add": one warning if the first-stage regression leaves the lambdas undetermined
-    # beyond the split of the slopes between states and periods (see additive_lambda_shifts!),
-    # saying whether the ATTs are affected.
-    # For every direction in which the lambdas can move, the ATT(s,t)'s are recomputed with the
-    # lambdas moved along it. Under "add" the ATT(s,t)'s are linear in the lambdas, so the
-    # change is the ATT(s,t) of the shifts themselves. An ATT(s,t) counts as changed when it
-    # moves by more than IDENTIFICATION_RTOL times the largest shift of a lambda. If none
-    # changes, every least-squares solution gives the same ATTs (for example a covariate that
-    # is constant within the cells of a state and over time: it shifts every lambda of that
-    # state by the same amount, which cancels in its long differences).
+    # ccc = "add": one warning if the first-stage regression leaves the ATT(s,t)'s undetermined.
+    # For every direction in which the lambdas can move (see additive_lambda_shifts!), the
+    # ATT(s,t)'s are recomputed with the lambdas moved along it. Under "add" the ATT(s,t)'s are
+    # linear in the lambdas, so the change is the ATT(s,t) of the shifts themselves, and since
+    # every least-squares solution is the package's solution plus a combination of these
+    # directions, the ATTs are unique if and only if no direction changes them. An ATT(s,t)
+    # counts as changed when it moves by more than IDENTIFICATION_RTOL times the largest shift
+    # of a lambda. If none changes, nothing is said: the lambdas are not unique, but every
+    # solution gives the same ATTs (for example a covariate that is constant within the cells
+    # of a state and over time shifts every lambda of that state by the same amount, which
+    # cancels in its long differences).
     # Without `diff_df` (didint_plot, which shows the lambdas themselves) the warning only says
     # that the lambdas are not uniquely determined.
     isempty(fit.lambda_shifts) && return nothing
@@ -922,13 +923,9 @@ function warn_additive_identification(fit::CovariateFit, diff_df::Union{DataFram
         end
     end
     n_changed = count(changed)
-    if n_changed == 0
-        @warn opening * "The ATT estimates are not affected: every solution gives the same ATTs. Covariates involved: " *
-              involved(fit.lambda_shifts) * "."
-    else
-        @warn opening * "The ATT estimates are affected: $n_changed ATT(s,t) estimate" * (n_changed == 1 ? " depends" : "s depend") *
-              " on the solution used. Covariates involved: " * involved(affecting) * "." * causes
-    end
+    n_changed == 0 && return nothing
+    @warn opening * "The ATT estimates are affected: $n_changed ATT(s,t) estimate" * (n_changed == 1 ? " depends" : "s depend") *
+          " on the solution used. Covariates involved: " * involved(affecting) * "." * causes
     return nothing
 end
 

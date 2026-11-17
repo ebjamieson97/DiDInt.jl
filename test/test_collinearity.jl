@@ -4,7 +4,7 @@
 # and the edge-case procedure use the same covariates. Under "hom", "state" and "time" a
 # warning names the dropped covariates. Under "int" a warning is given only for the ATT(s,t)'s
 # that depend on a dropped covariate. Under ccc = "add" no covariate is dropped, and a warning
-# is given if the lambdas are not uniquely determined, saying whether the ATTs are affected.
+# is given if the ATTs depend on which least-squares solution of the first stage is used.
 # The panel is INTEGRATION_PANEL (see test_integration.jl): 12 states observed 2001-2008.
 
 using Dates
@@ -20,7 +20,6 @@ end
 dropped_warnings(f) = filter(w -> occursin("were dropped", w), warnings_of(f))
 rank_warnings(f) = filter(w -> occursin("has rank", w), warnings_of(f))
 atts_affected(warning) = occursin("ATT estimates are affected", warning)
-atts_unaffected(warning) = occursin("ATT estimates are not affected", warning)
 
 # 2 states x 2 periods with 20 observations per cell, state A treated in 2002, and
 # x2 = 2 x1 + c_{s,t} with c = (0, 1, 3, -2): after demeaning within cells x2 is exactly
@@ -375,14 +374,12 @@ end
     # A covariate that is constant within the cells of one state and over time. That state's
     # slope is not determined, and any value of it shifts all of the state's lambdas by the
     # same amount, which cancels in its long differences: the lambdas are not unique, the ATTs
-    # are. This holds for a treated state and for a control state.
+    # are, and nothing is said. This holds for a treated state and for a control state.
     for state in ["s01", "s07"]
         flat = with_z([s == state ? 5.0 : z for (s, z) in zip(INTEGRATION_PANEL.state, noise)])
-        warnings = rank_warnings(add_call(flat, ["x1", "z"]))
-        @test length(warnings) == 1
-        @test occursin("ccc = \"add\"", warnings[1]) && occursin("not uniquely determined", warnings[1])
-        @test atts_unaffected(warnings[1]) && !atts_affected(warnings[1])
-        @test occursin("Covariates involved: z.", warnings[1])
+        _, flat_fit = quiet_call(() -> first_stage_of(flat, "add", ["x1", "z"]))
+        @test !isempty(flat_fit.lambda_shifts)
+        @test isempty(rank_warnings(add_call(flat, ["x1", "z"])))
         @test isempty(dropped_warnings(add_call(flat, ["x1", "z"])))
         # another solution, with any slope of z in that state, gives the same ATTs
         @test att_of_moved_solution(flat, ["x1", "z"], Dict(state => [0.0, 1.0])) ≈ add_att(flat, ["x1", "z"]) rtol = 1e-8 atol = 1e-10
@@ -394,7 +391,7 @@ end
     moving = with_z([s == "s07" ? Float64(yr - 2000)^2 : z for (s, yr, z) in zip(INTEGRATION_PANEL.state, INTEGRATION_PANEL.year, noise)])
     warnings = rank_warnings(add_call(moving, ["x1", "z"]))
     @test length(warnings) == 1
-    @test atts_affected(warnings[1]) && !atts_unaffected(warnings[1])
+    @test atts_affected(warnings[1])
     @test occursin("Covariates involved: z.", warnings[1])
     @test maximum(abs, att_of_moved_solution(moving, ["x1", "z"], Dict("s07" => [0.0, 1.0])) .- add_att(moving, ["x1", "z"])) > 1e-3
 
@@ -405,18 +402,24 @@ end
     # ... and one that is the same in every cell: it shifts the lambdas by amounts that are
     # additive in state and period, so the ATTs are unaffected
     constant = with_z(fill(4.0, nrow(INTEGRATION_PANEL)))
-    warnings = rank_warnings(add_call(constant, ["x1", "z"]))
-    @test length(warnings) == 1 && atts_unaffected(warnings[1])
+    @test isempty(rank_warnings(add_call(constant, ["x1", "z"])))
     @test add_att(constant, ["x1", "z"]) ≈ add_att(INTEGRATION_PANEL, ["x1"]) rtol = 1e-8 atol = 1e-10
 
     # Covariates that are collinear within cells: unaffected if the relation is the same
     # everywhere, affected if its constant differs from cell to cell
     same_relation = with_z(2 .* INTEGRATION_PANEL.x1 .+ 3)
-    warnings = rank_warnings(add_call(same_relation, ["x1", "z"]))
-    @test length(warnings) == 1 && atts_unaffected(warnings[1])
-    @test occursin("Covariates involved: x1, z.", warnings[1])
+    @test isempty(rank_warnings(add_call(same_relation, ["x1", "z"])))
     # moving a state's slopes along the collinear direction: z = 2 x1 + 3, so (-2, 1) fits equally well
     @test att_of_moved_solution(same_relation, ["x1", "z"], Dict("s07" => [-2.0, 1.0])) ≈ add_att(same_relation, ["x1", "z"]) rtol = 1e-8 atol = 1e-10
+    # ... also when the covariate has a large mean, so that demeaning leaves rounding error of
+    # about 1e-10 of its size: the rank is decided by the same relative tolerance as the
+    # pruning rule, the covariate counts as collinear, and the estimates do not depend on the
+    # order of the rows (which changes the rounding, as another platform would)
+    large_mean = with_z(2 .* INTEGRATION_PANEL.x1 .+ 1e6)
+    @test isempty(rank_warnings(add_call(large_mean, ["x1", "z"])))
+    @test add_att(large_mean, ["x1", "z"]) ≈ add_att(INTEGRATION_PANEL, ["x1"]) rtol = 1e-7 atol = 1e-9
+    reordered = large_mean[[isodd(i) ? (i + 1) ÷ 2 : nrow(large_mean) - i ÷ 2 + 1 for i in 1:nrow(large_mean)], :]
+    @test add_att(reordered, ["x1", "z"]) ≈ add_att(large_mean, ["x1", "z"]) rtol = 1e-7 atol = 1e-9
     cell_constants = with_z(2 .* INTEGRATION_PANEL.x1 .+ [sin(yr + 3 * parse(Int, s[2:end])) for (s, yr) in zip(INTEGRATION_PANEL.state, INTEGRATION_PANEL.year)])
     warnings = rank_warnings(add_call(cell_constants, ["x1", "z"]))
     @test length(warnings) == 1 && atts_affected(warnings[1])
