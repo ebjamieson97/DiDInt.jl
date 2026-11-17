@@ -668,7 +668,13 @@ Under `ccc = "int"` with covariates, the [Integrated Long Differences](@ref) of 
 a_b + \beta_b'\,\overline{X}_{i,t}, \qquad \beta_b = \frac{\sum_{c} C_{b,c}\, v_c\, \Delta\hat{\gamma}_c}{\sum_{c} C_{b,c}\, v_c}
 ```
 
-where $\beta_b$ is the weighted mean of the controls' changes in covariate coefficients. Computing $\beta_b$ for all cases takes one more matrix product, and evaluating it at the covariate means of every state another. For every other `ccc` option the covariate terms cancel and are skipped.
+where $\beta_b$ is the weighted mean of the controls' changes in covariate coefficients. The long difference of the treated state includes its own covariate term, so that
+
+```math
+\widehat{\mathrm{ATT}}_{b}(i,t) = \left(d_i + \Delta\hat{\gamma}_i'\,\overline{X}_{i,t}\right) - \left(a_b + \beta_b'\,\overline{X}_{i,t}\right)
+```
+
+The term $\Delta\hat{\gamma}_i'\,\overline{X}_{i,t}$ does not depend on the case and is computed once per state and cell. Computing $\beta_b$ for all cases takes one more matrix product, and evaluating it at the covariate means of every state another. For every other `ccc` option the covariate terms cancel and are skipped.
 
 ### State-Level Aggregation Options
 

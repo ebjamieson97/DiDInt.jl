@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.10.1
+
+### Naming
+
+- The model with state-specific covariate coefficients is now called **region-varying
+  DID-INT** (previously state-varying), and the model with coefficients specific to each
+  state and period **two-way DID-INT**. The printed summary uses these names. The `ccc`
+  values (`"state"`, `"int"`) and every other argument and column name are unchanged.
+- DID-INT is spelled out as "integrated difference-in-differences" throughout.
+
+### Collinear covariates
+
+- **Collinear covariates are dropped in the order of `covariates`** under `ccc = "hom"`,
+  `"state"`, `"time"` and `"int"`: a covariate is dropped where it is a linear combination
+  of the covariates listed before it, in the part of the data over which its coefficient
+  is estimated (all data, a state, a period, or a state-period cell). The rule uses a
+  relative tolerance and no column pivoting, so the estimates no longer depend on the
+  units in which covariates are measured, and they can be changed only by reordering
+  `covariates`.
+- **A warning names the covariates that were dropped** as collinear and where. Covariates
+  that do not vary within any state-period cell of that part of the data are still dropped
+  silently, as they cannot affect the estimates.
+- **Changes to estimates.** Estimates change only where covariates are collinear:
+  - under `"hom"`, `"state"` and `"time"`, which previously used a least-squares solution
+    that spread the coefficient across the collinear covariates;
+  - under `"int"`, in cells where the previous rule dropped a different one of the
+    collinear covariates.
+
+  Estimates without collinear covariates, and all estimates under `"add"`, are unchanged.
+- **Edge case standard errors** (`edgecase = true`) are now computed with the same
+  covariates as the estimates. Standard errors that were `missing` because a regression
+  was rank deficient are now reported, and the edge case procedure always returns the
+  same ATTs as the regular procedure.
+- **`ccc = "add"` warns about unusual rank deficiency.** Its first-stage regression is
+  always rank deficient in a way that does not affect the estimates. A warning is now
+  given when it is rank deficient beyond that (for example, a covariate that does not vary
+  within any cell of some state or period), as the ATTs may then depend on the
+  least-squares solution used.
+
+### Jackknife warnings
+
+- When removing a state leaves a sub-aggregate ATT (or a policy) without any treated
+  state, its jackknife standard error is `missing` and no warning is given. This reverses
+  the warning introduced in 0.10.0. The jackknife standard error of the aggregate ATT (or
+  the pooled ATT) is still reported.
+- The warning that the jackknife of the aggregate ATT averages over different sets of
+  sub-aggregate ATTs is removed.
+
+### Documentation
+
+- This changelog is now a page of the documentation site.
+- The Details page has rewritten sections on weighting (as three successive averages),
+  on the edge case standard errors of two-way DID-INT with covariates, and on how
+  alternative assignments are drawn for randomization inference, and new sections on rank
+  deficiency and on how randomization inference and the jackknife are computed quickly.
+- The Examples page has new examples on cohort ATTs with and without policies and on the
+  aggregate ATT across aggregation options, and explains when the parallel trends plots
+  are valid.
+- The `edgecase` documentation states that edge case standard errors are generally biased
+  with panel data.
+
 ## 0.10.0
 
 This version changes how the estimates are computed and aggregated, so results differ
