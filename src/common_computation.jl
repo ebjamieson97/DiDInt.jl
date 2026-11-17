@@ -73,18 +73,6 @@ function compute_hc_covariance(X::Matrix, resid::Vector, hc::AbstractString)
     return XXinv * (X' * (omega_diag .* X)) * XXinv
 end
 
-function hc_mean_covariance(Z::Matrix, hc::AbstractString)
-
-    # HC covariance matrix of the column means of Z: the multivariate version of the HC variance
-    # of the intercept in a regression on a constant (every row has leverage 1/n), so for one
-    # column it equals compute_hc_covariance(ones(n, 1), z .- mean(z), hc)
-    n = size(Z, 1)
-    centered = Z .- mean(Z, dims = 1)
-    h = 1 / n
-    scale = hc == "hc0" ? 1.0 : hc == "hc1" ? n / (n - 1) : hc == "hc3" ? 1 / (1 - h)^2 : 1 / (1 - h)
-    return scale .* (centered' * centered) ./ n^2
-end
-
 
 ###########################################################################################
 # Section 2: First-stage results beyond the lambdas (CovariateFit)                        #
@@ -95,21 +83,40 @@ end
 # `covariates` (0 for a covariate dropped in that cell), and `xbar` the cell's covariate
 # means; the integrated long differences need both (Karim & Webb 2025, eqs. 46-47). For the
 # cells of an edge case under ccc = "int", `cell_vcov` holds the HC covariance of (lambda,
-# gamma) from the cell's regression and `cell_obs` the cell's outcome vector and covariate
-# matrix, which edge_case_se_integrated needs.
+# gamma) from the cell's regression, which edge_case_se_integrated needs.
+# The last two fields describe what the data leave undetermined. Under ccc = "int",
+# `null_space` holds, for every cell whose regression drops covariates, the directions in
+# which that cell's slopes can move without changing its fit (one column per dropped
+# covariate; see null_space_basis), and `covariate_scale` the root mean square of every
+# covariate over the data, the unit in which differences between covariate means are judged
+# (see dropped_covariate_effects). Under ccc = "add", `lambda_shifts` holds, for every
+# direction in which the additive slopes are undetermined and the lambdas change, the change
+# in every cell's lambda and the covariates involved, and `additive_rank` the rank of the
+# first-stage design and the rank expected (see additive_lambda_shifts!); both are empty
+# when the lambdas are uniquely determined.
+const LambdaShift = NamedTuple{(:shift, :covariates), Tuple{Dict{Tuple{String, Date}, Float64}, Vector{String}}}
+
 struct CovariateFit
     covariates::Vector{String}
     slopes::Dict{Tuple{String, Date}, Vector{Float64}}
     xbar::Dict{Tuple{String, Date}, Vector{Float64}}
     cell_vcov::Dict{Tuple{String, Date}, Matrix{Float64}}
-    cell_obs::Dict{Tuple{String, Date}, Tuple{Vector{Float64}, Matrix{Float64}}}
+    null_space::Dict{Tuple{String, Date}, Matrix{Float64}}
+    covariate_scale::Vector{Float64}
+    lambda_shifts::Vector{LambdaShift}
+    additive_rank::Vector{Int}
 end
 
 function CovariateFit(covariates::Vector{String})
     return CovariateFit(covariates, Dict{Tuple{String, Date}, Vector{Float64}}(), Dict{Tuple{String, Date}, Vector{Float64}}(),
-                        Dict{Tuple{String, Date}, Matrix{Float64}}(),
-                        Dict{Tuple{String, Date}, Tuple{Vector{Float64}, Matrix{Float64}}}())
+                        Dict{Tuple{String, Date}, Matrix{Float64}}(), Dict{Tuple{String, Date}, Matrix{Float64}}(),
+                        Float64[], LambdaShift[], Int[])
 end
+
+# Relative tolerance of the checks of what the data leave undetermined (dropped_covariate_effects
+# under ccc = "int", additive_lambda_shifts! and additive_att_shifts under ccc = "add"):
+# a change smaller than this share of the size of the quantities involved counts as zero
+const IDENTIFICATION_RTOL = 1e-8
 
 
 ###########################################################################################
@@ -149,7 +156,13 @@ function first_stage(data_working, ccc, covariates_to_include, hc, edgecase;
     kept = Dict{Tuple{String, String}, Vector{Int}}()
     if ccc != "none" && !isempty(covariates_to_include)
         data_working = with_demeaned_columns(data_working, fit.covariates)
-        kept = kept_covariates(data_working, ccc, fit.covariates; warn = warn)
+        kept, null_space = kept_covariates(data_working, ccc, fit.covariates; warn = warn)
+        # Under "int": what the cells that drop covariates leave undetermined, for the check
+        # of which ATT(s,t)'s that affects (warn_dropped_covariates_int)
+        for ((state, time), basis) in null_space
+            fit.null_space[(state, Date(time))] = basis
+        end
+        append!(fit.covariate_scale, Float64[sqrt(mean(abs2, data_working[!, Symbol(cov)])) for cov in covariates_to_include])
     end
 
     # With `edgecase`, the cells behind an ATT(s,t) with a single control (if there are any) get
@@ -282,8 +295,11 @@ function cell_lambdas_fwl!(fit::CovariateFit, data, ccc, covariates_to_include, 
         gamma_by_time = Dict(df.time_71X9yTx[1] => estimate_slopes(df) for df in groupby(data, :time_71X9yTx))
         cell_slopes = (state, time) -> (gamma_by_time[time],)
     elseif ccc == "add"
-        gamma_states, gamma_times, state_idx, time_idx = estimate_additive_slopes(data, demeaned_covs; warn = warn)
-        cell_slopes = (state, time) -> (gamma_states[:, state_idx[state]], gamma_times[:, time_idx[time]])
+        additive = estimate_additive_slopes(data, demeaned_covs; null_space = warn)
+        cell_slopes = (state, time) -> (additive.gamma_states[:, additive.state_idx[state]],
+                                        additive.gamma_times[:, additive.time_idx[time]])
+        # What the data leave undetermined beyond the split of the slopes between states and periods
+        warn && additive_lambda_shifts!(fit, additive, cell_means, covariates_to_include)
     end
 
     lambdas = Vector{Float64}(undef, nrow(cell_means))
@@ -298,13 +314,12 @@ function cell_lambdas_fwl!(fit::CovariateFit, data, ccc, covariates_to_include, 
     return lambda_df
 end
 
-function estimate_additive_slopes(demeaned, demeaned_covs; warn = true)
+function estimate_additive_slopes(demeaned, demeaned_covs; null_space = true)
 
     # ccc = "add": state slopes gamma_s and period slopes gamma_t are estimated jointly, from the
     # regression of the demeaned outcome on a sparse design with one block of covariate columns
     # per state followed by one per period. An observation of state s in period t has its
-    # demeaned covariates in the block of s and in the block of t. Returns the slopes as
-    # matrices with one column per state and per period, and the column of each state and period.
+    # demeaned covariates in the block of s and in the block of t.
     # This design is always rank deficient: adding a constant to every state's slope of a
     # covariate and subtracting it from every period's slope leaves the slope of every cell,
     # gamma_s + gamma_t, unchanged. Every least-squares solution therefore gives the same
@@ -312,6 +327,14 @@ function estimate_additive_slopes(demeaned, demeaned_covs; warn = true)
     # (SuiteSparseQR, which is what `\` uses for a rectangular sparse matrix). For a rank
     # deficient design it returns a basic solution: the coefficients of the columns that it
     # finds linearly dependent on others are set to zero. It is not the minimum-norm solution.
+    # Returns
+    #   gamma_states, gamma_times  the slopes, as matrices with one column per state and period
+    #   state_idx, time_idx        the column of each state and period
+    #   null_space                 a basis of the directions in which the solution can move
+    #                              without changing the fit, one per column (only computed with
+    #                              `null_space = true`; additive_lambda_shifts! uses it)
+    #   rank, expected_rank        the rank of the design and the rank that the split between
+    #                              states and periods alone would leave
     states = sort(unique(demeaned.state_71X9yTx))
     times = sort(unique(demeaned.time_71X9yTx))
     state_idx = Dict(s => i for (i, s) in enumerate(states))
@@ -326,43 +349,97 @@ function estimate_additive_slopes(demeaned, demeaned_covs; warn = true)
         append!(rows, 1:n); append!(cols, (row_state .- 1) .* ncovs .+ j);                          append!(vals, x)
         append!(rows, 1:n); append!(cols, length(states) * ncovs .+ (row_time .- 1) .* ncovs .+ j); append!(vals, x)
     end
-    Z = dropzeros!(sparse(rows, cols, vals, n, (length(states) + length(times)) * ncovs))
+    n_columns = (length(states) + length(times)) * ncovs
+    Z = dropzeros!(sparse(rows, cols, vals, n, n_columns))
 
     # Without any within-cell variation in the covariates there is nothing to solve for (and
-    # the sparse solver rejects an empty design): every slope is zero
+    # the sparse solver rejects an empty design): every slope is zero, and every direction
+    # leaves the fit unchanged
     if nnz(Z) == 0
-        gamma = zeros(size(Z, 2))
+        gamma = zeros(n_columns)
+        rank_found = 0
+        directions = null_space ? Matrix{Float64}(I, n_columns, n_columns) : zeros(n_columns, 0)
     else
         Zqr = qr(Z)
         gamma = Zqr \ Float64.(demeaned.outcome_demeaned_71X9yTx)
-        warn && check_additive_rank(Zqr, demeaned, demeaned_covs, length(states), length(times))
+        rank_found = rank(Zqr)
+        directions = null_space ? sparse_qr_null_space(Zqr, n_columns) : zeros(n_columns, 0)
     end
-    gamma_states = reshape(gamma[1:length(states)*ncovs], ncovs, length(states))
-    gamma_times = reshape(gamma[length(states)*ncovs+1:end], ncovs, length(times))
-    return gamma_states, gamma_times, state_idx, time_idx
+
+    # The split between states and periods costs one rank per covariate and per connected
+    # component of the graph that links each state to the periods it is observed in (one
+    # component, unless the panel falls apart into groups of states observed in disjoint sets
+    # of periods)
+    components = null_space ? count_panel_components(demeaned.state_71X9yTx, demeaned.time_71X9yTx) : 1
+    expected_rank = ncovs * (length(states) + length(times) - components)
+
+    return (gamma_states = reshape(gamma[1:length(states)*ncovs], ncovs, length(states)),
+            gamma_times = reshape(gamma[length(states)*ncovs+1:end], ncovs, length(times)),
+            state_idx = state_idx, time_idx = time_idx, null_space = directions,
+            rank = rank_found, expected_rank = expected_rank)
 end
 
-function check_additive_rank(Zqr, demeaned, demeaned_covs, n_states, n_times)
+function sparse_qr_null_space(Zqr, n_columns)
 
-    # Warn if the "add" design has more rank deficiency than the split of each covariate's
-    # slope between states and periods (see estimate_additive_slopes), since the lambdas then
-    # depend on which least-squares solution the solver returns. The split costs one rank per
-    # covariate with within-cell variation and per connected component of the graph that links
-    # each state to the periods it is observed in (one component, unless the panel falls apart
-    # into groups of states observed in disjoint sets of periods). The rank is the one found
-    # by the sparse QR decomposition that solved the system, which treats a column as linearly
-    # dependent when its norm, after removing the earlier columns, is at most
-    # 20 * (rows + columns) * eps * (largest column norm), the default of SuiteSparseQR.
-    n_varying = count(cov -> any(!iszero, demeaned[!, cov]), demeaned_covs)
-    components = count_panel_components(demeaned.state_71X9yTx, demeaned.time_71X9yTx)
-    expected_rank = n_varying * (n_states + n_times - components)
-    if rank(Zqr) < expected_rank
-        @warn "Under ccc = \"add\" the covariate slopes are less well determined than usual: the first-stage regression " *
-              "has rank $(rank(Zqr)) where $expected_rank is expected. The covariate-adjusted means, and with them some " *
-              "ATTs, may depend on which of the equally good least-squares solutions is used. Likely causes: a covariate " *
-              "that does not vary within any state-period cell of some state or of some period, or covariates that are " *
-              "collinear within cells."
+    # A basis of the null space of the matrix Z behind the sparse QR decomposition Zqr, one
+    # vector per column of the matrix returned. With r the rank that the decomposition found,
+    # Z[:, pcol] = Q R with R = [R11 R12], R11 upper triangular of size r: the columns pcol[1:r]
+    # are the ones the decomposition treats as independent (it calls a column dependent when
+    # its norm, after removing the earlier columns, is at most 20 * (rows + columns) * eps *
+    # (largest column norm), the default of SuiteSparseQR), and every other column is a
+    # combination of them. For each dependent column pcol[r + j] the basis vector has a one in
+    # that position and -inv(R11) R12[:, j] in the positions pcol[1:r]. This is the null space
+    # that goes with the solution that `\` returns, which sets the dependent columns'
+    # coefficients to zero.
+    r = rank(Zqr)
+    basis = zeros(n_columns, n_columns - r)
+    r == n_columns && return basis
+    if r > 0
+        basis[Zqr.pcol[1:r], :] = -(UpperTriangular(Matrix(Zqr.R[1:r, 1:r])) \ Matrix(Zqr.R[1:r, r+1:end]))
     end
+    for (j, column) in enumerate(Zqr.pcol[r+1:end])
+        basis[column, j] = 1.0
+    end
+    return basis
+end
+
+function additive_lambda_shifts!(fit::CovariateFit, additive, cell_means, covariates_to_include)
+
+    # ccc = "add": find the directions in which the least-squares solution is undetermined and
+    # that change the lambdas, and record them in `fit`.
+    # Moving the solution along a null-space direction d changes the slopes of cell (s,t) by
+    # d_s + d_t and its lambda by -(d_s + d_t)' xbar_{s,t}. For the split between states and
+    # periods d_s + d_t = 0 in every cell, so the lambdas do not change: that direction is
+    # harmless and is skipped. Any other direction changes some lambdas; whether it changes
+    # an ATT is checked once the ATT(s,t)'s are known (warn_additive_identification).
+    # A lambda counts as changed when the change exceeds IDENTIFICATION_RTOL times
+    # sum_i w_i scale_i, with w_i the largest entry of d for covariate i and scale_i the root
+    # mean square of covariate i over the data. The covariates recorded as involved are those
+    # whose own term of the change, (d_s + d_t)_i xbar_i, exceeds the same threshold in some cell.
+    n_states, p = length(additive.state_idx), length(covariates_to_include)
+    # Covariate means of every cell (one column per cell), and each cell's state and period
+    xbar = permutedims(Matrix{Float64}(cell_means[:, [Symbol("cell_mean_" * cov) for cov in covariates_to_include]]))
+    state_of_cell = [additive.state_idx[s] for s in cell_means.state_71X9yTx]
+    time_of_cell = [additive.time_idx[t] for t in cell_means.time_71X9yTx]
+    for direction in eachcol(additive.null_space)
+        d_states = reshape(direction[1:n_states*p], p, n_states)
+        d_times = reshape(direction[n_states*p+1:end], p, :)
+        weight = vec(max.(maximum(abs, d_states, dims = 2), maximum(abs, d_times, dims = 2)))
+
+        # Each covariate's term of the change in every cell's lambda, and the changes themselves
+        terms = (d_states[:, state_of_cell] .+ d_times[:, time_of_cell]) .* xbar
+        shifts = -vec(sum(terms, dims = 1))
+        threshold = IDENTIFICATION_RTOL * dot(weight, fit.covariate_scale)
+        if maximum(abs, shifts) > threshold
+            involved = covariates_to_include[vec(maximum(abs, terms, dims = 2)) .> threshold]
+            shift = Dict(zip(zip(cell_means.state_71X9yTx, cell_means.date), shifts))
+            push!(fit.lambda_shifts, (shift = shift, covariates = String.(involved)))
+        end
+    end
+    if !isempty(fit.lambda_shifts)
+        append!(fit.additive_rank, [additive.rank, additive.expected_rank])
+    end
+    return nothing
 end
 
 function count_panel_components(states, times)
@@ -436,14 +513,21 @@ function kept_covariates(data, ccc, covariates; warn = true)
     # lambdas could change by amounts that are additive in state and period, which cancel in
     # the long differences; collinear covariates do not have that form in general. Redundant
     # covariates are therefore dropped, by the rule of prune_covariate_columns, and have slope
-    # 0 in that block. A warning names every covariate that was dropped although it varies
-    # within cells. Under "int" the block is a cell and demeaning within the cell is centering
-    # at the cell means, as needed for a regression with an intercept: covariates can be
-    # collinear with the intercept without being collinear with each other (the dummies of a
-    # factor whose reference category does not occur in the cell add up to one).
+    # 0 in that block.
+    # Under "hom", "state" and "time" a warning names every covariate that was dropped although
+    # it varies within cells.
+    # Under "int" the block is a cell and demeaning within the cell is centering at the cell
+    # means, as needed for a regression with an intercept: covariates can be collinear with the
+    # intercept without being collinear with each other (the dummies of a factor whose
+    # reference category does not occur in the cell add up to one). No warning is given here:
+    # whether a dropped covariate affects an ATT(s,t) depends on where the cell's slopes are
+    # evaluated, which is checked once the ATT(s,t)'s are known (warn_dropped_covariates_int).
+    # For that check the second value returned holds, for every cell that drops covariates,
+    # a basis of the directions in which its slopes are undetermined (see null_space_basis).
     # ccc = "add" keeps every covariate (see estimate_additive_slopes).
     kept = Dict{Tuple{String, String}, Vector{Int}}()
-    ccc in ("hom", "state", "time", "int") || return kept
+    null_space = Dict{Tuple{String, String}, Matrix{Float64}}()
+    ccc in ("hom", "state", "time", "int") || return kept, null_space
 
     X = Matrix{Float64}(data[:, demeaned_name.(covariates)])
     block_columns = ccc == "state" ? [:state_71X9yTx] : ccc == "time" ? [:time_71X9yTx] : CELL_COLUMNS
@@ -455,9 +539,12 @@ function kept_covariates(data, ccc, covariates; warn = true)
         for j in collinear
             push!(collinear_blocks[j], block)
         end
+        if ccc == "int" && length(kept[block]) < length(covariates)
+            null_space[block] = null_space_basis(view(X, rows, :), kept[block])
+        end
     end
-    warn && warn_collinear_covariates(covariates, collinear_blocks, ccc)
-    return kept
+    warn && ccc != "int" && warn_collinear_covariates(covariates, collinear_blocks, ccc)
+    return kept, null_space
 end
 
 function prune_covariate_columns(X)
@@ -495,12 +582,34 @@ function prune_covariate_columns(X)
     return kept, collinear
 end
 
+function null_space_basis(X, kept)
+
+    # A basis of the null space of X (the covariates of one cell, centered at the cell means),
+    # consistent with the columns that prune_covariate_columns keeps: one basis vector per
+    # dropped column j, as the columns of the matrix returned. If column j is zero (the
+    # covariate does not vary in the cell), the vector is the unit vector e_j. Otherwise
+    # column j is a linear combination of the kept columns before it, x_j = sum_i c_i x_i, and
+    # the vector is e_j - sum_i c_i e_i. Adding any multiple of a basis vector to the cell's
+    # slopes leaves its fitted values on its own data unchanged.
+    p = size(X, 2)
+    dropped = setdiff(1:p, kept)
+    basis = zeros(p, length(dropped))
+    for (column, j) in enumerate(dropped)
+        basis[j, column] = 1.0
+        kept_before = filter(<(j), kept)
+        if !isempty(kept_before) && !iszero(view(X, :, j))
+            basis[kept_before, column] = -(qr(X[:, kept_before]) \ X[:, j])
+        end
+    end
+    return basis
+end
+
 function warn_collinear_covariates(covariates, collinear_blocks, ccc)
 
     # One warning that names every covariate dropped as collinear and where it was dropped
+    # (ccc = "hom", "state" and "time")
     any(!isempty, collinear_blocks) || return nothing
-    where_label(block) = ccc == "state" ? "state $(block[1])" : ccc == "time" ? "period $(block[2])" :
-                         "state $(block[1]) in period $(block[2])"
+    where_label(block) = ccc == "state" ? "state $(block[1])" : "period $(block[2])"
     descriptions = String[]
     for (cov, blocks) in zip(covariates, collinear_blocks)
         isempty(blocks) && continue
@@ -646,8 +755,8 @@ function first_stage_edgecase(data_working, ccc, covariates_to_include, lambda_d
         end
 
         # Under "int" with covariates the block is one cell. Keep the HC covariance of its
-        # (lambda, gamma), with zero rows and columns for dropped covariates, and its
-        # observations: edge_case_se_integrated needs them.
+        # (lambda, gamma), with zero rows and columns for dropped covariates:
+        # edge_case_se_integrated needs it.
         if int && !isempty(covariates_to_include)
             n_coef = 1 + length(covariates_to_include)
             positions = vcat(1, 1 .+ kept_positions)
@@ -657,7 +766,6 @@ function first_stage_edgecase(data_working, ccc, covariates_to_include, lambda_d
             end
             cell_key = (cells_seen[1][1], Date(cells_seen[1][2]))
             fit.cell_vcov[cell_key] = cell_vcov
-            fit.cell_obs[cell_key] = (y, Matrix(Float64.(sub_df[:, Symbol.(covariates_to_include)])))
         end
         return V[1:n_cells, 1:n_cells], global_idx, β[1:n_cells]
     end

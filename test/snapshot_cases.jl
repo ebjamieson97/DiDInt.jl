@@ -165,9 +165,8 @@ const SNAPSHOT_POLICIES = ["A", "A", "B", "B", "A"]
 
 Vector of cases, each a NamedTuple (id, file, dataset, kwargs). The main grid
 crosses every dataset with: no covariates (ccc irrelevant, run as "int") or covariates
-with ccc ∈ ("int", "hom"); every `agg`; every `weighting`; `use_pre_controls` false/true,
-all with the default `treated_weight = "treated"`. The "extras" file adds
-`treated_weight = "population"`, `truejack = true` and `edgecase = true` runs, and the
+with ccc ∈ ("int", "hom"); every `agg`; every `weighting`; `use_pre_controls` false/true.
+The "extras" file adds `truejack = true` and `edgecase = true` runs, and the
 "policies" file the policy aggregations with two policies, with and without pooling.
 """
 function snapshot_cases()
@@ -181,13 +180,6 @@ function snapshot_cases()
                 push!(cases, (id = id, file = dataset, dataset = dataset, covariates = covs, kwargs = kwargs))
             end
         end
-    end
-
-    # treated_weight = "population" (it only matters when weighting uses observation counts)
-    for dataset in ["merit_stag", "synth_stag"], agg in SNAPSHOT_AGGS, weighting in ["both", "att", "diff"], upc in [false, true]
-        id = join([dataset, "nocov", "ccc=int", "agg=$agg", "w=$weighting", "upc=$upc", "tw=population"], "|")
-        kwargs = (ccc = "int", agg = agg, weighting = weighting, use_pre_controls = upc, treated_weight = "population")
-        push!(cases, (id = id, file = "extras", dataset = dataset, covariates = false, kwargs = kwargs))
     end
 
     # Policy aggregations on the synthetic staggered panel: policy A for s01, s02

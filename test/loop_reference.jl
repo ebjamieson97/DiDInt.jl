@@ -61,13 +61,12 @@ function att_st_point_estimates(cells::DataFrame, lookup::Dict, labels::Dict, st
     return out
 end
 
-function point_sub_aggregates(est::DataFrame, agg::AbstractString, weighting::AbstractString,
-                              treated_weight::AbstractString)
+function point_sub_aggregates(est::DataFrame, agg::AbstractString, weighting::AbstractString)
 
     # u-weighted mean ATT and weight in the aggregate (sum of n_t) of every group with at least one
     # ATT(s,t), keyed by the group's key tuple (same weights as sub_aggregate_results)
     group_cols = group_columns(agg)
-    u = treated_unit_weights(est, weighting, treated_weight)
+    u = treated_unit_weights(est, weighting)
     sums = Dict{Tuple, Vector{Float64}}()
     for i in 1:nrow(est)
         key = Tuple(est[i, col] for col in group_cols)
@@ -109,7 +108,7 @@ function point_policy_aggregates(sub::Dict, est::DataFrame, policies::AbstractVe
 end
 
 function state_level_ri_draw(est::DataFrame, result_keys, observed_labels::Dict, agg::AbstractString,
-                             weighting::AbstractString, treated_weight::AbstractString;
+                             weighting::AbstractString;
                              picks = Dict{String, Union{String, Nothing}}())
 
     # State-level RI statistics for one draw (agg = "state" or "sgt"). For
@@ -120,7 +119,7 @@ function state_level_ri_draw(est::DataFrame, result_keys, observed_labels::Dict,
     # treated state => stand-in) fixes the stand-ins instead of drawing them.
     stats = fill(NaN, length(result_keys))
     level2 = zeros(length(result_keys))
-    u = treated_unit_weights(est, weighting, treated_weight)
+    u = treated_unit_weights(est, weighting)
     for (i, key) in enumerate(result_keys)
         s = key[1]
         g = observed_labels[s]

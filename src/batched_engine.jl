@@ -44,7 +44,7 @@ struct EngineData
 end
 
 function build_engine(long_diffs::AbstractDataFrame, cells::DataFrame, states::AbstractVector,
-                      weighting::AbstractString, treated_weight::AbstractString;
+                      weighting::AbstractString;
                       integration::Union{CovariateFit, Nothing} = nothing)
 
     # Precompute the engine's matrices from the long differences of every state in every cell.
@@ -77,7 +77,7 @@ function build_engine(long_diffs::AbstractDataFrame, cells::DataFrame, states::A
     # Control weights v = n under weighting = "diff"/"both", else 1, and the weights u of the
     # ATT(s,t)'s within their sub-aggregates (see treated_unit_weights)
     V = weighting in ["diff", "both"] ? copy(N) : ones(S, K)
-    U = reshape(treated_unit_weights(DataFrame(n = vec(N), n_t = vec(NT)), weighting, treated_weight), S, K)
+    U = reshape(treated_unit_weights(DataFrame(n_t = vec(NT)), weighting), S, K)
     return EngineData(String.(states), cells, period_code.(cells.gvar), period_code.(cells.t),
                       Dlambda, Dint, DGamma, Xb, V, U, NT, valid)
 end

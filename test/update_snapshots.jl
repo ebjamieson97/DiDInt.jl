@@ -18,9 +18,11 @@ function update_snapshots(; only::Union{Nothing, AbstractString} = nothing)
         file_cases = filter(c -> c.file == file, selected)
         isempty(file_cases) && continue
         new_ids = Set(c.id for c in file_cases)
-        # Keep stored rows of cases that are not being regenerated
+        # Keep stored rows of cases that are not being regenerated; rows of cases that are no
+        # longer in snapshot_cases() are dropped
+        current_ids = Set(c.id for c in cases)
         kept = isfile(snapshot_path(file)) && !isnothing(only) ?
-               filter(r -> !(r.case in new_ids), read_snapshot_file(file)) :
+               filter(r -> !(r.case in new_ids) && r.case in current_ids, read_snapshot_file(file)) :
                DataFrame(case = String[], row = Int[], column = String[], value = String[])
         fresh = [flatten_result(c.id, run_snapshot_case(c, datasets)) for c in file_cases]
         combined = vcat(kept, fresh...)

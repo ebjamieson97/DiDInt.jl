@@ -255,7 +255,9 @@ function didint_plot(
 
     master_lambda = DataFrame()
     for c in ccc
-        lambda_df, _ = first_stage(data_copy, c, covariates_to_include, hc, false)
+        lambda_df, _, covariate_fit = first_stage(data_copy, c, covariates_to_include, hc, false)
+        # Under "add" the plotted lambdas can depend on the least-squares solution used
+        c == "add" && warn_additive_identification(covariate_fit)
         master_lambda = [master_lambda;lambda_df]
     end
 

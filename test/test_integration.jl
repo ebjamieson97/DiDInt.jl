@@ -61,7 +61,7 @@ end
     for ccc in ["hom", "state", "time", "int"], upc in [false, true]
         ref = reference[(reference.ccc .== ccc) .& (reference.not_yet_treated .== upc), :]
         level(name) = ref[ref.level .== name, :]
-        estimate(agg) = integration_didint(ccc = ccc, agg = agg, weighting = "both", treated_weight = "treated", use_pre_controls = upc)
+        estimate(agg) = integration_didint(ccc = ccc, agg = agg, weighting = "both", use_pre_controls = upc)
 
         sgt = estimate("sgt")
         ref_st = level("att_st")
@@ -119,7 +119,7 @@ end
         # The batched engine used by the jackknife and RI reproduces the integrated ATT(s,t)'s
         long_diffs = vcat(diff_df, ri_diff_df)
         states = unique(long_diffs.state)
-        engine = DiDInt.build_engine(long_diffs, DiDInt.att_st_cells(integrated), states, "both", "treated"; integration = fit)
+        engine = DiDInt.build_engine(long_diffs, DiDInt.att_st_cells(integrated), states, "both"; integration = fit)
         L, P = DiDInt.assignment_row(states, labels, Dict(s => DiDInt.DEFAULT_POLICY for s in INTEGRATION_TREATED),
                                      Dict(DiDInt.DEFAULT_POLICY => 1))
         sgt_rows = DataFrame(state = integrated.state, gvar = integrated.gvar, t = integrated.t)
@@ -210,7 +210,7 @@ end
     end
 end
 
-@testset "Edge-case SE under int with covariates: unconditional variance, corrected for the plug-in estimates" begin
+@testset "Edge-case SE under int with covariates: variance conditional on the covariates" begin
     # One treated state (s01, treated 2004) and one control (s06)
     panel = INTEGRATION_PANEL[in.(INTEGRATION_PANEL.state, Ref(["s01", "s06"])), :]
     cohorts = Dict("s01" => 2004)
@@ -221,52 +221,81 @@ end
         @test edge.att_sgt ≈ no_edge.att_sgt atol = 1e-10
         for row in eachrow(edge)
             t, r1 = year(row.t), 2003
-            treated_cell = cell_ols(panel, "s01", t; hc_scale = hc)
-            others = [cell_ols(panel, "s01", r1; hc_scale = hc), cell_ols(panel, "s06", t; hc_scale = hc),
-                      cell_ols(panel, "s06", r1; hc_scale = hc)]
-            n = length(treated_cell.y)
-            mean_scale = hc == "hc1" ? n / (n - 1) : 1.0
-            xbar = vec(mean(treated_cell.X, dims = 1))
-            a = vcat(1.0, xbar)
+            cells = [cell_ols(panel, "s01", t; hc_scale = hc), cell_ols(panel, "s01", r1; hc_scale = hc),
+                     cell_ols(panel, "s06", t; hc_scale = hc), cell_ols(panel, "s06", r1; hc_scale = hc)]
+            xbar = cell_xbar(panel, "s01", t)
 
-            # delta = gamma_{s,r1} + gamma_{c,t} - gamma_{c,r1}; z_i = y_i - delta' x_i in the treated cell
-            delta = others[1].beta[2:end] .+ others[2].beta[2:end] .- others[3].beta[2:end]
-            z = treated_cell.y .- treated_cell.X * delta
-            var_zbar = mean_scale * sum((z .- mean(z)) .^ 2) / n^2
-            Sigma = mean_scale .* ((treated_cell.X .- xbar')' * (treated_cell.X .- xbar')) ./ n^2
-            V_delta = sum(cell.V[2:end, 2:end] for cell in others)
-            # The first two terms use delta-hat and xbar in place of their true values, and each
-            # overstates its term by tr(V_delta Sigma) in expectation; the variance itself
-            # includes that trace once, which leaves it subtracted once
-            unconditional = var_zbar + sum(a' * cell.V * a for cell in others) - tr(V_delta * Sigma)
-            @test row.se_att_sgt ≈ sqrt(unconditional) atol = 1e-10
+            # The ATT is the combination of the four cells' fitted values at xbar
+            fitted = [cell.beta[1] + dot(cell.beta[2:end], xbar) for cell in cells]
+            @test row.att_sgt ≈ fitted[1] - fitted[2] - fitted[3] + fitted[4] atol = 1e-8
 
-            # Against the conditional variance (xbar fixed: a' V a over all four cells), the
-            # unconditional one adds the covariate-mean noise dgamma' Sigma dgamma, less the
-            # trace term. Under HC0 this decomposition is exact (the HC1 degrees-of-freedom
-            # factors of a mean and of a regression differ, so it is only approximate there).
-            if hc == "hc0"
-                conditional = a' * treated_cell.V * a + sum(a' * cell.V * a for cell in others)
-                dgamma = treated_cell.beta[2:end] .- delta
-                @test unconditional - conditional ≈ dgamma' * Sigma * dgamma - tr(V_delta * Sigma) atol = 1e-12
-            end
+            # Var(ATT(s,t) | X) = sum over the four cells of
+            #   Var(lambda_k) + 2 xbar' Cov(gamma_k, lambda_k) + xbar' Var(gamma_k) xbar
+            variance = sum(cell.V[1, 1] + 2 * dot(xbar, cell.V[2:end, 1]) + xbar' * cell.V[2:end, 2:end] * xbar for cell in cells)
+            @test row.se_att_sgt ≈ sqrt(variance) rtol = 1e-8
+            # An edge-case SE has no p-value
+            @test ismissing(row.pval_att_sgt) || isnan(row.pval_att_sgt)
         end
     end
 end
 
-@testset "Edge-case SE under int tracks the sampling SD of ATT(s,t) in repeated cross-sections" begin
-    # A short Monte Carlo. Two states (T treated in 2002, C control), two
-    # periods, new individuals in every cell and replicate, cell-specific slopes that do not
-    # cancel (dgamma = 1.8), so the covariate-mean noise matters.
+@testset "Edge-case SE under int without covariates: the sum of the four Var(lambda)" begin
+    # Without covariates the conditional variance reduces to the sum of the variances of the
+    # four cell means, the formula used for every ccc before covariates enter
+    panel = INTEGRATION_PANEL[in.(INTEGRATION_PANEL.state, Ref(["s01", "s06"])), :]
+    cohorts = Dict("s01" => 2004)
+    function mean_variance(s, yr, hc)
+        y = cell_rows(panel, s, yr).y
+        n = length(y)
+        return (hc == "hc1" ? n / (n - 1) : 1.0) * sum((y .- mean(y)) .^ 2) / n^2
+    end
+    for hc in ["hc0", "hc1"]
+        edge = integration_didint(panel; cohorts = cohorts, ccc = "int", agg = "sgt", edgecase = true, hc = hc, covariates = nothing)
+        for row in eachrow(edge)
+            t, r1 = year(row.t), 2003
+            variance = sum(mean_variance(s, yr, hc) for (s, yr) in [("s01", t), ("s01", r1), ("s06", t), ("s06", r1)])
+            @test row.se_att_sgt ≈ sqrt(variance) rtol = 1e-8
+        end
+        # ... and under HC0 it is the same for every ccc, as none of them has covariates to
+        # adjust for. (Under HC1 the degrees-of-freedom factor is that of the regression that
+        # estimates the cells together: one per cell for "int", fewer for the others.)
+        if hc == "hc0"
+            for ccc in ["hom", "state", "time"]
+                other = integration_didint(panel; cohorts = cohorts, ccc = ccc, agg = "sgt", edgecase = true, hc = hc, covariates = nothing)
+                @test other.se_att_sgt ≈ edge.se_att_sgt rtol = 1e-8
+            end
+        end
+    end
+
+    # The function itself: with covariance matrices that only have an intercept entry, the
+    # result is the square root of the sum of the four intercept variances
+    fit = DiDInt.CovariateFit(["x1"])
+    variances = Dict(("T", Date(2002)) => 0.4, ("T", Date(2001)) => 0.3, ("C", Date(2002)) => 0.2, ("C", Date(2001)) => 0.1)
+    for (cell, variance) in variances
+        fit.cell_vcov[cell] = [variance 0.0; 0.0 0.0]
+        fit.xbar[cell] = [5.0]
+    end
+    @test DiDInt.edge_case_se_integrated(fit, "T", "C", Date(2002), Date(2001)) ≈ sqrt(1.0)
+    # A missing cell gives a missing SE
+    delete!(fit.cell_vcov, ("C", Date(2001)))
+    @test ismissing(DiDInt.edge_case_se_integrated(fit, "T", "C", Date(2002), Date(2001)))
+end
+
+@testset "Edge-case SE under int tracks the sampling SD of ATT(s,t) given the covariates" begin
+    # A short Monte Carlo. Two states (T treated in 2002, C control), two periods, and
+    # cell-specific slopes that do not cancel. The covariates are drawn once and held fixed;
+    # only the errors are redrawn, so the sampling SD is the one conditional on the covariates.
     rng = Random.MersenneTwister(20260115)
     cells = [("T", 2001, 0.0, 0.5, 0.0), ("T", 2002, 1.0, 1.5, 0.8), ("C", 2001, 0.3, 1.0, 0.2), ("C", 2002, 0.6, 0.2, 0.5)]
+    design = DataFrame(state = String[], year = Int[], x1 = Float64[], x2 = Float64[], signal = Float64[])
+    for (s, yr, intercept, slope, x_mean) in cells, _ in 1:60
+        x1 = x_mean + randn(rng)
+        x2 = randn(rng)
+        push!(design, (s, yr, x1, x2, intercept + slope * x1 + 0.3 * x2))
+    end
     function draw_panel()
-        panel = DataFrame(state = String[], year = Int[], y = Float64[], x1 = Float64[], x2 = Float64[])
-        for (s, yr, intercept, slope, x_mean) in cells, _ in 1:60
-            x1 = x_mean + randn(rng)
-            x2 = randn(rng)
-            push!(panel, (s, yr, intercept + slope * x1 + 0.3 * x2 + randn(rng), x1, x2))
-        end
+        panel = copy(design)
+        panel.y = panel.signal .+ randn(rng, nrow(panel))
         return panel
     end
     function direct_att(panel)
@@ -278,17 +307,12 @@ end
     atts = [direct_att(draw_panel()) for _ in 1:600]
     sampling_sd = std(atts)
 
-    unconditional_ses = Float64[]; conditional_ses = Float64[]
+    ses = Float64[]
     for _ in 1:15
         panel = draw_panel()
         result = integration_didint(panel; cohorts = Dict("T" => 2002), ccc = "int", agg = "sgt", edgecase = true)
         @test only(result.att_sgt) ≈ direct_att(panel) atol = 1e-8
-        push!(unconditional_ses, only(result.se_att_sgt))
-        a = vcat(1.0, cell_xbar(panel, "T", 2002))
-        push!(conditional_ses, sqrt(sum(a' * cell_ols(panel, s, yr).V * a for (s, yr) in [("T", 2001), ("T", 2002), ("C", 2001), ("C", 2002)])))
+        push!(ses, only(result.se_att_sgt))
     end
-
-    # The package's (unconditional) SE is close to the sampling SD; the conditional SE is too small
-    @test 0.85 < mean(unconditional_ses) / sampling_sd < 1.15
-    @test mean(conditional_ses) / sampling_sd < 0.9
+    @test 0.85 < mean(ses) / sampling_sd < 1.15
 end

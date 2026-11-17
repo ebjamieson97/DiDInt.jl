@@ -165,7 +165,7 @@ function Base.show(io::IO, ::MIME"text/plain", result::DiDIntResult)
         println(io, "  Covariates:       ", join(specs.covariates, ", "))
     end
     println(io, "  Aggregation:      \"", specs.agg, "\" (by ", GROUP_LABELS[specs.agg], ")")
-    println(io, "  Weighting:        \"", specs.weighting, "\", treated_weight = \"", specs.treated_weight, "\"")
+    println(io, "  Weighting:        \"", specs.weighting, "\"")
     println(io, "  Controls:         ", specs.notyet ? "never-treated and not-yet-treated states" : "never-treated states")
     println(io, "  Periods:          ", specs.period, ", from ", specs.start_date, " to ", specs.end_date)
     println(io, "  Standard errors:  ", uppercase(specs.hc), " (se) and jackknife (jknife_se)")

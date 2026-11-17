@@ -81,7 +81,7 @@ end
 end
 
 @testset "Each policy's ATT and the pooled ATT under every policy_weighting" begin
-    # With weighting = "both" and treated_weight = "treated", ATT_p is the
+    # With weighting = "both", ATT_p is the
     # n_t-weighted mean of the policy's ATT(s,t)'s, whatever the policy aggregation
     sgt = policy_didint(agg = "sgt")
     n_t = [count((POLICY_PANEL.state .== sgt.state[i]) .& (POLICY_PANEL.year .== year(sgt.t[i]))) for i in 1:nrow(sgt)]
@@ -173,11 +173,11 @@ end
         long_diffs = vcat(diff_df, ri_diff_df)
         states = unique(long_diffs.state)
         att_st = DiDInt.build_att_st(diff_df, weighting, "hc1", nothing; policies = policies)
-        engine = DiDInt.build_engine(long_diffs, DiDInt.att_st_cells(att_st), states, weighting, "treated")
+        engine = DiDInt.build_engine(long_diffs, DiDInt.att_st_cells(att_st), states, weighting)
         L, P = DiDInt.assignment_row(states, labels, policies, Dict("p1" => 1, "p2" => 2))
         policy = (labels = policies, pooled = true, weighting = policy_weighting)
         for agg in POLICY_AGGS
-            results = DiDInt.sub_aggregate_results(att_st, agg, weighting, "treated", "hc1"; pooled = true)
+            results = DiDInt.sub_aggregate_results(att_st, agg, weighting, "hc1"; pooled = true)
             results = DiDInt.policy_att_results(results, att_st, agg, weighting, "hc1", policy)
             est = DiDInt.engine_estimates(engine, results, agg, weighting, use_pre_controls, reshape(L, 1, :), reshape(P, 1, :);
                                           policy_names = ["p1", "p2"], policy_weighting = policy_weighting)

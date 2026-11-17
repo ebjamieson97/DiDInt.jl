@@ -41,14 +41,14 @@ engine_policy_labels(agg, policies) = DiDInt.is_policy_agg(agg) ? policies : Dic
 # The regression-based second stage for an assignment (treated state => treatment time and
 # policy): rebuilds the long differences and the ATT(s,t) table, then aggregates. This is the
 # path didint() uses for its point estimates.
-function second_stage(stage, times::Dict, policies::Dict, agg, weighting, treated_weight, upc; policy_weighting = "equal")
+function second_stage(stage, times::Dict, policies::Dict, agg, weighting, upc; policy_weighting = "equal")
     treated = sort(collect(keys(times)))
     labels = engine_policy_labels(agg, policies)
     return quietly() do
         diff_df, ri_diff_df = DiDInt.construct_diff_df(stage.lambda_df, treated, [times[s] for s in treated], stage.time_to_index,
                                                         stage.dates, upc, stage.data)
         att_st = DiDInt.build_att_st(diff_df, weighting, "hc1", stage.vcov_lambda; integration = stage.integration, policies = labels)
-        results = DiDInt.sub_aggregate_results(att_st, agg, weighting, treated_weight, "hc1"; pooled = DiDInt.is_policy_agg(agg))
+        results = DiDInt.sub_aggregate_results(att_st, agg, weighting, "hc1"; pooled = DiDInt.is_policy_agg(agg))
         if DiDInt.is_policy_agg(agg)
             results = DiDInt.policy_att_results(results, att_st, agg, weighting, "hc1",
                                                 (labels = labels, pooled = true, weighting = policy_weighting))
@@ -79,17 +79,17 @@ const ENGINE_OBSERVED_TIMES = Dict(zip(ENGINE_TREATED, ENGINE_TIMES))
 @testset "The engine reproduces every observed estimate" begin
     # At the observed assignment the engine gives every
     # sub-aggregate, the aggregate ATT, each policy's ATT and the pooled ATT, for every agg,
-    # weighting, treated_weight, use_pre_controls and ccc
+    # weighting, use_pre_controls and ccc
     for (ccc, covariates) in [("int", false), ("int", true), ("hom", true), ("time", true)]
         stage = engine_first_stage(ccc, covariates)
-        for upc in [false, true], weighting in ["both", "att", "diff", "none"], treated_weight in ["treated", "population"]
+        for upc in [false, true], weighting in ["both", "att", "diff", "none"]
             cases = vcat([(agg, "equal") for agg in ENGINE_AGGS],
                          [(agg, pw) for agg in ENGINE_POLICY_AGGS for pw in ENGINE_POLICY_WEIGHTINGS])
             for (agg, policy_weighting) in cases
-                observed = second_stage(stage, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, agg, weighting, treated_weight, upc;
+                observed = second_stage(stage, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, agg, weighting, upc;
                                         policy_weighting = policy_weighting)
                 engine = DiDInt.build_engine(observed.long_diffs, DiDInt.att_st_cells(observed.att_st), unique(observed.long_diffs.state),
-                                             weighting, treated_weight; integration = stage.integration)
+                                             weighting; integration = stage.integration)
                 est = engine_at(engine, observed.results, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, agg, weighting, upc;
                                 policy_weighting = policy_weighting)
                 suffix = DiDInt.SUB_AGG_SPECS[agg].suffix
@@ -112,11 +112,11 @@ end
     code = Dict("A" => 1, "B" => 2)
     for (ccc, covariates) in [("int", false), ("int", true)]
         stage = engine_first_stage(ccc, covariates)
-        for upc in [false, true], (weighting, treated_weight) in [("both", "treated"), ("both", "population"), ("att", "treated"), ("none", "treated")]
-            observed = second_stage(stage, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, "sgt", weighting, treated_weight, upc)
+        for upc in [false, true], weighting in ["both", "att", "diff", "none"]
+            observed = second_stage(stage, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, "sgt", weighting, upc)
             cells = DiDInt.att_st_cells(observed.att_st)
             states = unique(observed.long_diffs.state)
-            engine = DiDInt.build_engine(observed.long_diffs, cells, states, weighting, treated_weight; integration = stage.integration)
+            engine = DiDInt.build_engine(observed.long_diffs, cells, states, weighting; integration = stage.integration)
             lookup = DiDInt.long_difference_lookup(observed.long_diffs)
             L_observed, P_observed = DiDInt.assignment_row(states, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, code)
             L, P, exact = DiDInt.ri_assignment_draws(L_observed, P_observed, 20, Xoshiro(20260501))
@@ -131,7 +131,7 @@ end
                     suffix = DiDInt.SUB_AGG_SPECS[agg].suffix
 
                     # (a) the regression path on the ATT(s,t) table rebuilt for this assignment
-                    rebuilt = second_stage(stage, times, policies, agg, weighting, treated_weight, upc; policy_weighting = policy_weighting)
+                    rebuilt = second_stage(stage, times, policies, agg, weighting, upc; policy_weighting = policy_weighting)
                     est = engine_at(engine, rebuilt.results, times, policies, agg, weighting, upc; policy_weighting = policy_weighting)
                     @test all(close_enough.(vec(est.sub), Float64.(rebuilt.results[!, suffix])))
                     @test close_enough(est.top[1], top_estimate(rebuilt.results, agg))
@@ -142,7 +142,7 @@ end
                     # (b) the per-draw loop
                     loop = att_st_point_estimates(cells, lookup, times, states, weighting, upc; integration = stage.integration,
                                                   policies = engine_policy_labels(agg, policies))
-                    sub = point_sub_aggregates(loop, agg, weighting, treated_weight)
+                    sub = point_sub_aggregates(loop, agg, weighting)
                     @test all(close_enough(est.sub[1, i], sub[DiDInt.result_key(rebuilt.results, i, agg)].att) for i in 1:nrow(rebuilt.results))
                     if DiDInt.is_policy_agg(agg)
                         att_p, pooled = point_policy_aggregates(sub, loop, names, weighting, policy_weighting)
@@ -250,11 +250,11 @@ end
     # On the design without covariates
     stage = engine_first_stage("int", false)
     for upc in [false, true], weighting in ["both", "none"], agg in ["state", "sgt"]
-        observed = second_stage(stage, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, agg, weighting, "treated", upc)
+        observed = second_stage(stage, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, agg, weighting, upc)
         results = observed.results
         cells = DiDInt.att_st_cells(observed.att_st)
         states = unique(observed.long_diffs.state)
-        engine = DiDInt.build_engine(observed.long_diffs, cells, states, weighting, "treated")
+        engine = DiDInt.build_engine(observed.long_diffs, cells, states, weighting)
         lookup = DiDInt.long_difference_lookup(observed.long_diffs)
         L_observed, P_observed = DiDInt.assignment_row(states, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, Dict("A" => 1, "B" => 1))
         L, _, _ = DiDInt.ri_assignment_draws(L_observed, P_observed, 30, Xoshiro(99))
@@ -273,7 +273,7 @@ end
             times = Dict(states[s] => Date(Dates.UTD(L[b, s])) for s in drawn)
             loop = att_st_point_estimates(cells, lookup, times, states, weighting, upc)
             stand_ins = Dict{String, Union{String, Nothing}}(s => states[picks[b, j]] for (j, s) in enumerate(treated))
-            stats, aggregate = state_level_ri_draw(loop, result_keys, ENGINE_OBSERVED_TIMES, agg, weighting, "treated"; picks = stand_ins)
+            stats, aggregate = state_level_ri_draw(loop, result_keys, ENGINE_OBSERVED_TIMES, agg, weighting; picks = stand_ins)
             @test all(close_enough.(est.sub[b, :], stats))
             @test close_enough(est.top[b], aggregate)
         end
@@ -288,10 +288,10 @@ end
     # s01's sgt statistics in a draw are the ATT(s,t)'s of a single state that the draw treats
     # in 2004, in all of s01's periods (never a mix of the two states treated in 2004)
     stage = engine_first_stage("int", false)
-    observed = second_stage(stage, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, "sgt", "both", "treated", false)
+    observed = second_stage(stage, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, "sgt", "both", false)
     results = observed.results
     states = unique(observed.long_diffs.state)
-    engine = DiDInt.build_engine(observed.long_diffs, DiDInt.att_st_cells(observed.att_st), states, "both", "treated")
+    engine = DiDInt.build_engine(observed.long_diffs, DiDInt.att_st_cells(observed.att_st), states, "both")
     L_observed, P_observed = DiDInt.assignment_row(states, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, Dict("A" => 1, "B" => 1))
     L, P, _ = DiDInt.ri_assignment_draws(L_observed, P_observed, 50, Xoshiro(3))
     est = DiDInt.state_level_ri_estimates(engine, results, "sgt", "both", false, L, ENGINE_OBSERVED_TIMES, Xoshiro(11))
@@ -318,12 +318,12 @@ end
     for (ccc, covariates) in [("int", true), ("state", true), ("int", false)], upc in [false, true], weighting in ["both", "none"]
         stage = engine_first_stage(ccc, covariates)
         for agg in vcat(ENGINE_AGGS, ENGINE_POLICY_AGGS)
-            observed = second_stage(stage, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, agg, weighting, "treated", upc; policy_weighting = "treated_obs")
+            observed = second_stage(stage, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, agg, weighting, upc; policy_weighting = "treated_obs")
             results = observed.results
             cells = DiDInt.att_st_cells(observed.att_st)
             states = unique(observed.diff_df.state)
             n_states = length(states)
-            engine = DiDInt.build_engine(observed.diff_df, cells, states, weighting, "treated"; integration = stage.integration)
+            engine = DiDInt.build_engine(observed.diff_df, cells, states, weighting; integration = stage.integration)
             policy_names = engine_policy_names(agg)
             labels = engine_policy_labels(agg, ENGINE_POLICIES)
             L, P = DiDInt.assignment_row(states, ENGINE_OBSERVED_TIMES, labels, Dict(name => i for (i, name) in enumerate(policy_names)))
@@ -336,7 +336,7 @@ end
                 times = filter(label -> label.first != without, ENGINE_OBSERVED_TIMES)
                 loop = att_st_point_estimates(cells, lookup, times, filter(!=(without), states), weighting, upc;
                                               integration = stage.integration, policies = labels)
-                sub = point_sub_aggregates(loop, agg, weighting, "treated")
+                sub = point_sub_aggregates(loop, agg, weighting)
                 for i in 1:nrow(results)
                     key = DiDInt.result_key(results, i, agg)
                     @test haskey(sub, key) ? close_enough(est.sub[h, i], sub[key].att) : isnan(est.sub[h, i])
@@ -467,9 +467,9 @@ end
     stage = engine_first_stage("int", false)
     default_policies = Dict(s => DiDInt.DEFAULT_POLICY for s in ENGINE_TREATED)
     for agg in ["cohort", "simple"]
-        observed = second_stage(stage, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, agg, "both", "treated", false)
+        observed = second_stage(stage, ENGINE_OBSERVED_TIMES, ENGINE_POLICIES, agg, "both", false)
         states = unique(observed.long_diffs.state)
-        engine = DiDInt.build_engine(observed.long_diffs, DiDInt.att_st_cells(observed.att_st), states, "both", "treated")
+        engine = DiDInt.build_engine(observed.long_diffs, DiDInt.att_st_cells(observed.att_st), states, "both")
         L_observed, P_observed = DiDInt.assignment_row(states, ENGINE_OBSERVED_TIMES, default_policies, Dict(DiDInt.DEFAULT_POLICY => 1))
         L, P, _ = DiDInt.ri_assignment_draws(L_observed, P_observed, 620, Xoshiro(77))
         est = DiDInt.engine_estimates(engine, observed.results, agg, "both", false, L, P)

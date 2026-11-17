@@ -46,7 +46,6 @@
            ccc::AbstractString = "int",
            agg::AbstractString = "cohort",
            weighting::AbstractString = "both",
-           treated_weight::AbstractString = "treated",
            policy_aggregation::Bool = false,
            policy_weighting::AbstractString = "equal",
            ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
@@ -133,22 +132,16 @@ in `treatment_times`, and so on. A single treatment time applies to every treate
     `"policy_calendar"` and `"policy_time"`.
     Every sub-aggregate is a weighted mean of ATT(s,t) estimates, and `agg_att` is a weighted mean of the
     sub-aggregates, so `agg_att` can differ across `agg` options (it does not under `weighting = "att"`
-    or `"both"` with `treated_weight = "treated"`).
+    or `"both"`).
     The policy aggregations form the same sub-aggregates within each policy (`"policy"` has one per
     policy) and report each policy's ATT in `att_p`, on the first row of that policy, instead of `agg_att`.
     Unlike the group effects of Callaway & Sant'Anna (2021), which weight a cohort's post-treatment periods
-    equally, `"cohort"` weights them as `weighting` and `treated_weight` specify.
+    equally, `"cohort"` weights them as `weighting` specifies.
 - `weighting::AbstractString = "both"`
     Specify which weighting method should be used. Observation counts can be used as weights when
     computing the ATT(s,t)'s and sub-aggregates from long differences (`"diff"`), when computing the
     aggregate ATT from the sub-aggregates (`"att"`), at both levels (`"both"`), or not at all (`"none"`).
     Options are: `"both"`, `"att"`, `"diff"`, or `"none"`.
-- `treated_weight::AbstractString = "treated"`
-    How an ATT(s,t) is weighted within its sub-aggregate when `weighting` uses observation counts.
-    `"treated"` weights it by the treated state's observations in period t (under `"att"` and
-    `"both"`), so a sub-aggregate is the effect on the average treated observation; `"population"` weights
-    it by the observations behind its long difference, those of period t and of the period before
-    treatment (under `"diff"` and `"both"`). Options are `"treated"` and `"population"`.
 - `policy_aggregation::Bool = false`
     With a policy aggregation, also report the pooled estimate across policies, `att_pool`, the
     `policy_weighting`-weighted mean of the policies' ATTs, with its own inference columns. Its HC standard
@@ -222,7 +215,7 @@ in `treatment_times`, and so on. A single treatment time applies to every treate
     means. Calculating these `edgecase` standard errors can be computationally expensive, therefore by default this argument is set to `false`, but
     may be toggled on by setting `edgecase = true`.
     Under `ccc = "int"` with covariates the ATT also depends on the treated state's covariate means, and the `edgecase` standard error
-    includes their sampling variance (the unconditional variance). Every `edgecase` standard error assumes that observations in different
+    is conditional on the observed covariates: it treats those means as fixed. Every `edgecase` standard error assumes that observations in different
     state-period cells are independent, as in repeated cross-sections. With panel data, where the same individuals are observed in several
     periods, it omits the covariances between a state's periods, and the `edgecase` standard errors are then generally biased.
     Not available for `ccc = "add"`.
@@ -283,7 +276,6 @@ function didint(outcome::Union{AbstractString, Symbol},
                 ccc::AbstractString = "int",
                 agg::AbstractString = "cohort",
                 weighting::AbstractString = "both",
-                treated_weight::AbstractString = "treated",
                 policy_aggregation::Bool = false,
                 policy_weighting::AbstractString = "equal",
                 ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
@@ -341,7 +333,6 @@ function didint(outcome::Union{AbstractString, Symbol},
     agg = check_option(agg, "agg", ["cohort", "state", "simple", "sgt", "time", "calendar",
                                     "policy", "policy_gt", "policy_cohort", "policy_calendar", "policy_time"])
     weighting = check_option(weighting, "weighting", ["both", "none", "att", "diff"])
-    treated_weight = check_option(treated_weight, "treated_weight", ["treated", "population"])
 
     # Pooling across policies only exists for the policy aggregations; with any other agg,
     # policy_aggregation has nothing to pool and is ignored
@@ -468,8 +459,14 @@ function didint(outcome::Union{AbstractString, Symbol},
     policy = (labels = Dict(s => (is_policy_agg(agg) ? state_policies[s] : DEFAULT_POLICY) for s in treated_states),
               pooled = policy_aggregation, weighting = policy_weighting)
 
+    # Warn where the data leave an ATT(s,t) undetermined: under "int", the ATT(s,t)'s that
+    # depend on covariates dropped from a cell's regression; under "add", rank deficiency
+    # beyond the split of the slopes between states and periods
+    isnothing(integration) || warn_dropped_covariates_int(integration, diff_df)
+    ccc == "add" && warn_additive_identification(covariate_fit, diff_df, weighting)
+
     att_st = build_att_st(diff_df, weighting, hc, vcov_lambda; integration = integration, policies = policy.labels)
-    results = sub_aggregate_results(att_st, agg, weighting, treated_weight, hc; pooled = policy.pooled)
+    results = sub_aggregate_results(att_st, agg, weighting, hc; pooled = policy.pooled)
     if is_policy_agg(agg)
         # Each policy's ATT and, with policy_aggregation, the pooled ATT across policies
         results = policy_att_results(results, att_st, agg, weighting, hc, policy)
@@ -482,11 +479,11 @@ function didint(outcome::Union{AbstractString, Symbol},
     # on each deletion of a state and on each permutation of the treatment assignment.
     #--------------------------------------------------------------------------------------
 
-    results = jackknife_procedure(results, att_st, diff_df, agg, weighting, treated_weight, use_pre_controls,
+    results = jackknife_procedure(results, att_st, diff_df, agg, weighting, use_pre_controls,
                                   truejack, data_copy, ccc, covariates_to_include, treated_states, treatment_times,
                                   time_to_index, match_to_these_dates; integration = integration, policy = policy)
     if randomize
-        results = randomization_inference(results, att_st, vcat(diff_df, ri_diff_df), agg, weighting, treated_weight,
+        results = randomization_inference(results, att_st, vcat(diff_df, ri_diff_df), agg, weighting,
                                           use_pre_controls, treated_states, treatment_times, nperm, ri_kernel_cutoff, seed;
                                           integration = integration, policy = policy)
     end
@@ -511,7 +508,7 @@ function didint(outcome::Union{AbstractString, Symbol},
         return wrapper_check(results, wrapper)
     end
     specs = (outcome = outcome, covariates = isnothing(covariates) ? String[] : String.(covariates),
-             ccc = ccc, agg = agg, weighting = weighting, treated_weight = treated_weight,
+             ccc = ccc, agg = agg, weighting = weighting,
              notyet = use_pre_controls, hc = hc, truejack = truejack, edgecase = edgecase,
              policy_aggregation = policy_aggregation, policy_weighting = policy_weighting,
              nperm = randomize ? Int(results.nperm[1]) : missing, ri_kernel_cutoff = ri_kernel_cutoff, seed = seed,
@@ -792,6 +789,149 @@ function slope_change_term(fit::CovariateFit, source_state, t, r1, target_state)
     return dot(fit.slopes[(source_state, t)] .- fit.slopes[(source_state, r1)], fit.xbar[(target_state, t)])
 end
 
+function dropped_covariate_effects(fit::CovariateFit, diff_df::DataFrame)
+
+    # ccc = "int": the ATT(s,t)'s that depend on which covariates a cell's regression drops.
+    # A cell k that drops covariates (they do not vary there, or are collinear with covariates
+    # listed before them) has slopes that its data do not determine: any multiple of a vector
+    # n in the null space of its centered covariates can be added to them without changing its
+    # fit. Its fitted value at covariate values x, ybar_k + gamma_k' (x - xbar_k), is the same
+    # for all of those slopes if and only if n' (x - xbar_k) = 0 for every such n.
+    # In ATT(s,t) the cells (s,r1), (c,t) and (c,r1) of the treated state s and of each of its
+    # controls c are evaluated at x = xbar_{s,t} (Karim & Webb 2025, eqs. 46-47). The treated
+    # cell (s,t) is evaluated at its own means and is never affected.
+    # The condition is tested with a relative tolerance: |n' (xbar_{s,t} - xbar_k)| must not
+    # exceed IDENTIFICATION_RTOL times sum_i |n_i| scale_i, where scale_i is the root mean
+    # square of covariate i over the data.
+    # Returns one entry per (ATT(s,t), cell) pair that fails it, with the covariates dropped in
+    # that cell that are responsible.
+    effects = NamedTuple{(:state, :t, :cell, :covariates), Tuple{String, Date, Tuple{String, Date}, Vector{String}}}[]
+    isempty(fit.null_space) && return effects
+
+    # For every cell that drops covariates and every vector n of its basis: n' xbar_k, the
+    # tolerance, and the dropped covariate that the vector belongs to (its last non-zero entry)
+    checks = Dict(cell => (basis = basis, own = basis' * fit.xbar[cell],
+                           tolerance = IDENTIFICATION_RTOL .* (abs.(basis)' * fit.covariate_scale),
+                           dropped = [fit.covariates[findlast(!iszero, n)] for n in eachcol(basis)])
+                  for (cell, basis) in fit.null_space)
+
+    # Add an entry if the fitted value of `cell` at the covariate means `target` of ATT(s,t)
+    # depends on the cell's dropped covariates
+    function check!(s, t, target, cell)
+        check = get(checks, cell, nothing)
+        isnothing(check) && return nothing
+        fails = [abs(dot(view(check.basis, :, j), target) - check.own[j]) > check.tolerance[j] for j in eachindex(check.own)]
+        any(fails) && push!(effects, (state = s, t = t, cell = cell, covariates = check.dropped[fails]))
+        return nothing
+    end
+
+    control_states = Dict{Tuple{Date, Date}, Vector{String}}()
+    for row in findall(diff_df.treat .== 0)
+        push!(get!(control_states, (diff_df.t[row], diff_df.r1[row]), String[]), diff_df.state[row])
+    end
+    for row in findall(diff_df.treat .== 1)
+        s, t, r1 = diff_df.state[row], diff_df.t[row], diff_df.r1[row]
+        target = fit.xbar[(s, t)]
+        check!(s, t, target, (s, r1))
+        for c in get(control_states, (t, r1), String[])
+            check!(s, t, target, (c, t))
+            check!(s, t, target, (c, r1))
+        end
+    end
+    return effects
+end
+
+function warn_dropped_covariates_int(fit::CovariateFit, diff_df::DataFrame)
+
+    # One warning that lists the ATT(s,t)'s found by dropped_covariate_effects, with the cell
+    # and the covariates responsible. Nothing is said about covariates that are dropped
+    # without affecting any ATT(s,t).
+    effects = dropped_covariate_effects(fit, diff_df)
+    isempty(effects) && return nothing
+    describe(e) = "ATT($(e.state), $(e.t)): $(join(e.covariates, ", ")) in state $(e.cell[1]), period $(e.cell[2])"
+    shown = join(describe.(first(effects, 5)), "; ")
+    more = length(effects) > 5 ? "; and $(length(effects) - 5) more" : ""
+    n_att = length(unique((e.state, e.t) for e in effects))
+    @warn "Under ccc = \"int\", $n_att ATT(s,t) estimate" * (n_att == 1 ? " depends" : "s depend") *
+          " on covariates that were dropped from the regression of a state-period cell (they do not vary there, or " *
+          "are collinear with covariates listed before them). A dropped covariate's coefficient is set to zero in " *
+          "that cell, but the cell is evaluated at the covariate means of the treated state, where other " *
+          "coefficients that fit the cell's data equally well give a different estimate: " * shown * more *
+          ". Which of several collinear covariates is dropped is decided by the order of 'covariates'."
+    return nothing
+end
+
+function additive_att_shifts(shift::AbstractDict, diff_df::DataFrame, weighting::AbstractString)
+
+    # The change in every ATT(s,t) when each cell's lambda changes by shift[cell] (ccc = "add",
+    # where ATT(s,t) only depends on the lambdas): the change in the treated state's long
+    # difference minus the weighted mean of the changes in its controls' long differences,
+    # with the weights that build_att_st uses. Returns one value per treated long difference
+    # that has a control.
+    long_difference_shift(row) = shift[(diff_df.state[row], diff_df.t[row])] - shift[(diff_df.state[row], diff_df.r1[row])]
+    control_rows = Dict{Tuple{Date, Date}, Vector{Int}}()
+    for row in findall(diff_df.treat .== 0)
+        push!(get!(control_rows, (diff_df.t[row], diff_df.r1[row]), Int[]), row)
+    end
+    changes = Float64[]
+    for row in findall(diff_df.treat .== 1)
+        controls = get(control_rows, (diff_df.t[row], diff_df.r1[row]), Int[])
+        isempty(controls) && continue
+        v = weighting in ["diff", "both"] ? Float64.(diff_df.n[controls]) : ones(length(controls))
+        push!(changes, long_difference_shift(row) - sum(v .* long_difference_shift.(controls)) / sum(v))
+    end
+    return changes
+end
+
+function warn_additive_identification(fit::CovariateFit, diff_df::Union{DataFrame, Nothing} = nothing,
+                                      weighting::AbstractString = "both")
+
+    # ccc = "add": one warning if the first-stage regression leaves the lambdas undetermined
+    # beyond the split of the slopes between states and periods (see additive_lambda_shifts!),
+    # saying whether the ATTs are affected.
+    # For every direction in which the lambdas can move, the ATT(s,t)'s are recomputed with the
+    # lambdas moved along it. Under "add" the ATT(s,t)'s are linear in the lambdas, so the
+    # change is the ATT(s,t) of the shifts themselves. An ATT(s,t) counts as changed when it
+    # moves by more than IDENTIFICATION_RTOL times the largest shift of a lambda. If none
+    # changes, every least-squares solution gives the same ATTs (for example a covariate that
+    # is constant within the cells of a state and over time: it shifts every lambda of that
+    # state by the same amount, which cancels in its long differences).
+    # Without `diff_df` (didint_plot, which shows the lambdas themselves) the warning only says
+    # that the lambdas are not uniquely determined.
+    isempty(fit.lambda_shifts) && return nothing
+    opening = "Under ccc = \"add\" the covariate slopes are less well determined than usual: the first-stage regression " *
+              "has rank $(fit.additive_rank[1]) where $(fit.additive_rank[2]) is expected. The covariate-adjusted means " *
+              "(the lambdas) are therefore not uniquely determined: they depend on which of the equally good " *
+              "least-squares solutions is used. "
+    involved(shifts) = join(unique(vcat([s.covariates for s in shifts]...)), ", ")
+    causes = " Likely causes: a covariate that does not vary within any state-period cell of some state or of some " *
+             "period, or covariates that are collinear within cells."
+    if isnothing(diff_df)
+        @warn opening * "Covariates involved: " * involved(fit.lambda_shifts) * "." * causes
+        return nothing
+    end
+
+    affecting = eltype(fit.lambda_shifts)[]
+    changed = falses(count(diff_df.treat .== 1))
+    for s in fit.lambda_shifts
+        changes = additive_att_shifts(s.shift, diff_df, weighting)
+        moved = abs.(changes) .> IDENTIFICATION_RTOL * maximum(abs, values(s.shift))
+        if any(moved)
+            push!(affecting, s)
+            changed[1:length(moved)] .|= moved
+        end
+    end
+    n_changed = count(changed)
+    if n_changed == 0
+        @warn opening * "The ATT estimates are not affected: every solution gives the same ATTs. Covariates involved: " *
+              involved(fit.lambda_shifts) * "."
+    else
+        @warn opening * "The ATT estimates are affected: $n_changed ATT(s,t) estimate" * (n_changed == 1 ? " depends" : "s depend") *
+              " on the solution used. Covariates involved: " * involved(affecting) * "." * causes
+    end
+    return nothing
+end
+
 function build_att_st(diff_df::DataFrame, weighting::AbstractString, hc::AbstractString, vcov_lambda;
                       integration::Union{CovariateFit, Nothing} = nothing,
                       policies::Union{AbstractDict, Nothing} = nothing)
@@ -841,7 +981,7 @@ function build_att_st(diff_df::DataFrame, weighting::AbstractString, hc::Abstrac
         elseif isnothing(integration)
             att_st.se[i] = edge_case_se(temp.lambda_idx, vcov_lambda)
         else
-            att_st.se[i] = edge_case_se_integrated(integration, treated.state[i], controls.state[1], treated.t[i], treated.r1[i], hc)
+            att_st.se[i] = edge_case_se_integrated(integration, treated.state[i], controls.state[1], treated.t[i], treated.r1[i])
         end
         att_st.pval[i] = result_dict["pval_att"]
     end
@@ -852,28 +992,23 @@ function build_att_st(diff_df::DataFrame, weighting::AbstractString, hc::Abstrac
     return att_st
 end
 
-function treated_unit_weights(att_st::AbstractDataFrame, weighting::AbstractString, treated_weight::AbstractString)
+function treated_unit_weights(att_st::AbstractDataFrame, weighting::AbstractString)
 
-    # Weight u of each ATT(s,t) within its sub-aggregate (the first of the two weighting levels):
-    #   weighting   treated_weight = "population"   treated_weight = "treated"
-    #   "none"      1                               1
-    #   "diff"      n = n_{s,t} + n_{s,r1}          1
-    #   "att"       1                               n_t = n_{s,t}
-    #   "both"      n                               n_t
-    # "treated" makes a sub-aggregate the effect on the average treated observation (the
-    # weights pi_{s|g,t} of Austin, Strumpf, Karim & Webb 2026, Section 3.1); "population"
-    # weights an ATT(s,t) like a control long difference, by the observations behind it.
-    if weighting == "none"
-        return ones(nrow(att_st))
-    elseif treated_weight == "population"
-        return weighting in ["diff", "both"] ? Float64.(att_st.n) : ones(nrow(att_st))
-    else
-        return weighting in ["att", "both"] ? Float64.(att_st.n_t) : ones(nrow(att_st))
-    end
+    # Weight u_{s,t} of each ATT(s,t) within its sub-aggregate: n_{s,t}, the treated state's
+    # observations in period t, under weighting = "att" or "both", and 1 otherwise. With these
+    # weights a sub-aggregate is the effect on the average treated observation of its group
+    # (the weights pi_{s|g,t} of Austin, Strumpf, Karim & Webb 2026, Section 3.1).
+    # The three averages and what `weighting` weights in each:
+    #   weighting   control c in an ATT(s,t)   ATT(s,t) in a sub-aggregate   sub-aggregate j in the aggregate
+    #   "both"      n_{c,t} + n_{c,r1}         n_{s,t}                       N_j = sum of its n_{s,t}
+    #   "att"       1                          n_{s,t}                       N_j
+    #   "diff"      n_{c,t} + n_{c,r1}         1                             1
+    #   "none"      1                          1                             1
+    return weighting in ["att", "both"] ? Float64.(att_st.n_t) : ones(nrow(att_st))
 end
 
 function sub_aggregate_results(att_st::DataFrame, agg::AbstractString, weighting::AbstractString,
-                               treated_weight::AbstractString, hc::AbstractString; pooled::Bool = false)
+                               hc::AbstractString; pooled::Bool = false)
 
     # Each sub-aggregate is the u-weighted mean of the ATT(s,t)'s in its group (for the policy
     # aggregations, the same groups within each policy).
@@ -885,7 +1020,7 @@ function sub_aggregate_results(att_st::DataFrame, agg::AbstractString, weighting
     # weighting = "att"/"both".
     spec = SUB_AGG_SPECS[agg]
     group_cols = group_columns(agg)
-    u = treated_unit_weights(att_st, weighting, treated_weight)
+    u = treated_unit_weights(att_st, weighting)
 
     # Groups in output order: by key, except states, which use custom_sort_order
     groups = unique(att_st[:, group_cols])
@@ -1150,50 +1285,30 @@ function edge_case_se(lambda_indices, vcov_lambda)
 
 end
 
-function edge_case_se_integrated(fit::CovariateFit, treated, control, t, r1, hc::AbstractString)
+function edge_case_se_integrated(fit::CovariateFit, treated, control, t, r1)
 
     # Edge-case SE of an integrated ATT(s,t) with a single control under ccc = "int" with
     # covariates, where the covariate terms of the long differences (Karim & Webb 2025,
-    # eqs. 46-47) do not cancel. An OLS fit with an intercept passes through the means, so
-    # lambda_{s,t} + gamma_{s,t}' xbar_{s,t} = ybar_{s,t} and
-    #   ATT(s,t) = (ybar_{s,t} - delta' xbar_{s,t}) - (lambda_{s,r1} + lambda_{c,t} - lambda_{c,r1}),
-    #   delta = gamma_{s,r1} + gamma_{c,t} - gamma_{c,r1}.
-    # delta' xbar_{s,t} multiplies slopes estimated from three cells by a covariate mean estimated
-    # from the treated cell. xbar_{s,t} is treated as random (it estimates the mean mu of the
-    # distribution that eqs. 46-47 integrate over). With the four cells independent, the
-    # variance of ATT(s,t) is
-    #   Var(ybar_{s,t} - delta' xbar_{s,t}) + sum over the 3 other cells k of a_mu' V_k a_mu
-    #     + tr(V_delta Sigma),
-    # with delta at its true value, a_mu = (1, mu), V_k the covariance of cell k's (lambda,
-    # gamma), V_delta the sum of the slope blocks of the three V_k, and Sigma the covariance of
-    # xbar_{s,t}. The trace term is the variance of the product of the two estimation errors.
-    # The first two terms have to be estimated with delta-hat in place of delta and xbar_{s,t}
-    # in place of mu:
-    #   var_zbar, the HC variance of the mean of z_i = y_i - delta-hat' x_i over cell (s,t),
-    #   var_other_cells, the sum of a' V_k a with a = (1, xbar_{s,t}).
-    # Each of these overstates its term by tr(V_delta Sigma) in expectation: the error in
-    # delta-hat adds e_delta' Sigma e_delta to the first, and the error in xbar_{s,t} adds
-    # e_x' V_delta e_x to the second. The estimate is therefore
-    #   var_zbar + var_other_cells - tr(V_delta Sigma):
-    # the two estimated terms hold the trace term twice and the variance itself needs it once,
-    # so it is subtracted once.
-    other_cells = [(treated, r1), (control, t), (control, r1)]
-    if !haskey(fit.cell_obs, (treated, t)) || !all(haskey(fit.cell_vcov, cell) for cell in other_cells)
-        return missing
-    end
-
-    delta = fit.slopes[(treated, r1)] .+ fit.slopes[(control, t)] .- fit.slopes[(control, r1)]
-    y, X = fit.cell_obs[(treated, t)]
-    z = y .- X * delta
-    var_zbar = hc_mean_covariance(reshape(z, :, 1), hc)[1, 1]
+    # eqs. 46-47) do not cancel. With xbar = xbar_{s,t}, the covariate means of the treated
+    # cell, ATT(s,t) combines the fitted values of four cells' regressions at xbar:
+    #   ATT(s,t) = (lambda_{s,t} + gamma_{s,t}' xbar) - (lambda_{s,r1} + gamma_{s,r1}' xbar)
+    #            - (lambda_{c,t} + gamma_{c,t}' xbar) + (lambda_{c,r1} + gamma_{c,r1}' xbar).
+    # The variance is taken conditional on the observed covariates, so xbar is fixed. The four
+    # regressions use separate observations and are independent, so the variances of the four
+    # fitted values add up:
+    #   Var(ATT(s,t) | X) = sum over the 4 cells k of
+    #                       Var(lambda_k) + 2 xbar' Cov(gamma_k, lambda_k) + xbar' Var(gamma_k) xbar
+    #                     = sum over k of a' V_k a,   a = (1, xbar),
+    # with V_k the HC covariance of cell k's (lambda, gamma). The sampling variability of
+    # xbar_{s,t} itself is not included. Without covariates this is the sum of the four
+    # Var(lambda_k), which is what edge_case_se computes.
+    # Like every edge-case SE it assumes that the cells are independent, which holds for
+    # repeated cross-sections but not for panel data.
+    cells = [(treated, t), (treated, r1), (control, t), (control, r1)]
+    all(haskey(fit.cell_vcov, cell) for cell in cells) || return missing
 
     a = vcat(1.0, fit.xbar[(treated, t)])
-    var_other_cells = sum(a' * fit.cell_vcov[cell] * a for cell in other_cells)
-
-    V_delta = sum(fit.cell_vcov[cell][2:end, 2:end] for cell in other_cells)
-    Sigma = hc_mean_covariance(X, hc)
-
-    variance = var_zbar + var_other_cells - tr(V_delta * Sigma)
+    variance = sum(a' * fit.cell_vcov[cell] * a for cell in cells)
     return isfinite(variance) && variance > 0 ? sqrt(variance) : missing
 end
 
@@ -1202,7 +1317,7 @@ end
 ###########################################################################################
 
 function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::DataFrame, agg::AbstractString,
-                             weighting::AbstractString, treated_weight::AbstractString, use_pre_controls::Bool,
+                             weighting::AbstractString, use_pre_controls::Bool,
                              truejack::Bool, data_copy, ccc, covariates_to_include, treated_states, treatment_times,
                              time_to_index, match_to_these_dates;
                              integration::Union{CovariateFit, Nothing} = nothing,
@@ -1238,7 +1353,7 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
         # Fast jackknife: every row of the assignment matrix is the observed assignment, and
         # row h switches state h off as a treated state and as a control. The weights
         # renormalize automatically.
-        engine = build_engine(diff_df, cells, all_states, weighting, treated_weight; integration = integration)
+        engine = build_engine(diff_df, cells, all_states, weighting; integration = integration)
         L_observed, P_observed = assignment_row(all_states, observed_labels, policy.labels, policy_code)
         est = engine_estimates(engine, results, agg, weighting, use_pre_controls,
                                repeat(L_observed', n_states), repeat(P_observed', n_states);
@@ -1258,7 +1373,7 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
             diff_h = construct_diff_df(lambda_h, treated_states, treatment_times, time_to_index, match_to_these_dates,
                                        use_pre_controls, data_copy; jackknife = true, without = without)
             remaining = filter(!=(without), all_states)
-            engine_h = build_engine(diff_h, cells, remaining, weighting, treated_weight;
+            engine_h = build_engine(diff_h, cells, remaining, weighting;
                                     integration = isnothing(integration) ? nothing : fit_h)
             L_h, P_h = assignment_row(remaining, observed_labels, policy.labels, policy_code)
             est = engine_estimates(engine_h, results, agg, weighting, use_pre_controls, reshape(L_h, 1, :), reshape(P_h, 1, :);
@@ -1351,7 +1466,7 @@ end
 const RI_BATCH_SIZE = 500
 
 function randomization_inference(results::DataFrame, att_st::DataFrame, long_diffs::DataFrame, agg::AbstractString,
-                                 weighting::AbstractString, treated_weight::AbstractString, use_pre_controls::Bool,
+                                 weighting::AbstractString, use_pre_controls::Bool,
                                  treated_states, treatment_times, nperm::Int, ri_kernel_cutoff::Int, seed::Number;
                                  integration::Union{CovariateFit, Nothing} = nothing,
                                  policy = default_policy_options(treated_states))
@@ -1366,7 +1481,7 @@ function randomization_inference(results::DataFrame, att_st::DataFrame, long_dif
 
     # PART ONE: THE ALTERNATIVE ASSIGNMENTS OF THE (TREATMENT TIME, POLICY) LABELS
     # All of them if there are at most `nperm`, otherwise `nperm` distinct random ones
-    engine = build_engine(long_diffs, att_st_cells(att_st), unique(long_diffs.state), weighting, treated_weight;
+    engine = build_engine(long_diffs, att_st_cells(att_st), unique(long_diffs.state), weighting;
                           integration = integration)
     original_treated = unique(long_diffs[long_diffs.treat .== 1, [:state, :treated_time]])
     policy_names, policy_code = policy_coding(results, agg, policy.labels)

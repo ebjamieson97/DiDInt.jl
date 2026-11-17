@@ -50,12 +50,12 @@ const COMMON_COHORTS = Dict("s1" => 2004, "s2" => 2004, "s3" => 2004)
         diff_df, ri_diff_df = run_construct_diff_df(use_pre_controls)
         long_diffs = vcat(diff_df, ri_diff_df)
         states = unique(long_diffs.state)
-        for weighting in ["both", "att", "diff", "none"], treated_weight in ["treated", "population"]
+        for weighting in ["both", "att", "diff", "none"]
             att_st = DiDInt.build_att_st(diff_df, weighting, "hc1", nothing)
-            engine = DiDInt.build_engine(long_diffs, DiDInt.att_st_cells(att_st), states, weighting, treated_weight)
+            engine = DiDInt.build_engine(long_diffs, DiDInt.att_st_cells(att_st), states, weighting)
             L, P = DiDInt.assignment_row(states, labels, policies, Dict(DiDInt.DEFAULT_POLICY => 1))
             for agg in SECOND_STAGE_AGGS
-                results = DiDInt.aggregate_att(DiDInt.sub_aggregate_results(att_st, agg, weighting, treated_weight, "hc1"),
+                results = DiDInt.aggregate_att(DiDInt.sub_aggregate_results(att_st, agg, weighting, "hc1"),
                                                agg, weighting, "hc1")
                 est = DiDInt.engine_estimates(engine, results, agg, weighting, use_pre_controls, reshape(L, 1, :), reshape(P, 1, :))
                 suffix = DiDInt.SUB_AGG_SPECS[agg].suffix
@@ -77,34 +77,37 @@ end
     end
 end
 
-@testset "treated_weight: treated = sum n_t ATT(s,t) / sum n_t, population = sum n ATT(s,t) / sum n" begin
-    # One cohort, two treated states with different n_{s,r1}/n_{s,t}
+@testset "Weight of an ATT(s,t) within its sub-aggregate: n_{s,t} under att/both, 1 under diff/none" begin
+    # One cohort, two treated states with different numbers of observations per period
     cohorts = Dict("s1" => 2004, "s2" => 2004)
     data = small_panel(cohorts = cohorts, n_states = 5, effect = 1.0, noise = 0.3)
     cell_n(s, yr) = count((data.state .== s) .& (data.year .== yr))
-    sgt = quiet_didint(data, cohorts; agg = "sgt")
-    n_t = [cell_n(sgt.state[i], year(sgt.t[i])) for i in 1:nrow(sgt)]
-    n = n_t .+ [cell_n(sgt.state[i], 2003) for i in 1:nrow(sgt)]
-    @test n_t[sgt.state .== "s1"] ./ n[sgt.state .== "s1"] != n_t[sgt.state .== "s2"] ./ n[sgt.state .== "s2"]
-    for tw in ["treated", "population"]
-        u = tw == "treated" ? n_t : n
-        cohort = quiet_didint(data, cohorts; agg = "cohort", treated_weight = tw)
+    for weighting in ["both", "att", "diff", "none"]
+        sgt = quiet_didint(data, cohorts; agg = "sgt", weighting = weighting)
+        n_t = [cell_n(sgt.state[i], year(sgt.t[i])) for i in 1:nrow(sgt)]
+        @test length(unique(n_t)) > 1
+        u = weighting in ["both", "att"] ? Float64.(n_t) : ones(nrow(sgt))
+        @test DiDInt.treated_unit_weights(DataFrame(n_t = n_t), weighting) == u
+
+        # Every sub-aggregate is the u-weighted mean of its ATT(s,t)'s
+        cohort = quiet_didint(data, cohorts; agg = "cohort", weighting = weighting)
         @test cohort.att_cohort[1] ≈ sum(u .* sgt.att_sgt) / sum(u)
-        simple = quiet_didint(data, cohorts; agg = "simple", treated_weight = tw)
+        simple = quiet_didint(data, cohorts; agg = "simple", weighting = weighting)
         for i in 1:nrow(simple)
             in_cell = sgt.t .== simple.time[i]
             @test simple.att_gt[i] ≈ sum(u[in_cell] .* sgt.att_sgt[in_cell]) / sum(u[in_cell])
         end
+        by_state = quiet_didint(data, cohorts; agg = "state", weighting = weighting)
+        for i in 1:nrow(by_state)
+            of_state = sgt.state .== by_state.state[i]
+            @test by_state.att_s[i] ≈ sum(u[of_state] .* sgt.att_sgt[of_state]) / sum(u[of_state])
+        end
     end
-    # With one treated state per cell the two agree for ATT(g,t). (Across periods they still
-    # differ, e.g. for agg = "cohort", because n_{s,r1}/n_{s,t} changes with t.)
-    one = Dict("s1" => 2004)
-    data_one = filter(r -> r.state != "s2", data)
-    @test quiet_didint(data_one, one; agg = "simple", treated_weight = "treated").att_gt ≈
-          quiet_didint(data_one, one; agg = "simple", treated_weight = "population").att_gt
+    # The removed argument is rejected
+    @test_throws MethodError quiet_didint(data, cohorts; agg = "cohort", treated_weight = "treated")
 end
 
-@testset "Consistency: under att/both with treated_weight = treated, agg_att is the same for every agg" begin
+@testset "Consistency: under att/both, agg_att is the same for every agg" begin
     # DID-INT eq. 49 with the eq. 84 weights
     data = small_panel(cohorts = STAG_COHORTS, effect = 1.0, noise = 0.3)
     for weighting in ["att", "both"], upc in [false, true]

@@ -1,9 +1,10 @@
 # Tests of how collinear covariates are handled in the first stage.
 # Under ccc = "hom", "state", "time" and "int", a covariate that is a linear combination of
-# covariates listed before it is dropped wherever the slopes are estimated, with a warning,
-# and the regular and the edge-case procedure use the same covariates. Under ccc = "add" no
-# covariate is dropped, and a warning is given if the design has more rank deficiency than
-# the split of the slopes between states and periods.
+# covariates listed before it is dropped wherever the slopes are estimated, and the regular
+# and the edge-case procedure use the same covariates. Under "hom", "state" and "time" a
+# warning names the dropped covariates. Under "int" a warning is given only for the ATT(s,t)'s
+# that depend on a dropped covariate. Under ccc = "add" no covariate is dropped, and a warning
+# is given if the lambdas are not uniquely determined, saying whether the ATTs are affected.
 # The panel is INTEGRATION_PANEL (see test_integration.jl): 12 states observed 2001-2008.
 
 using Dates
@@ -18,6 +19,8 @@ function warnings_of(f)
 end
 dropped_warnings(f) = filter(w -> occursin("were dropped", w), warnings_of(f))
 rank_warnings(f) = filter(w -> occursin("has rank", w), warnings_of(f))
+atts_affected(warning) = occursin("ATT estimates are affected", warning)
+atts_unaffected(warning) = occursin("ATT estimates are not affected", warning)
 
 # 2 states x 2 periods with 20 observations per cell, state A treated in 2002, and
 # x2 = 2 x1 + c_{s,t} with c = (0, 1, 3, -2): after demeaning within cells x2 is exactly
@@ -53,6 +56,21 @@ function first_stage_of(panel, ccc, covariates; edgecase = false, treated_states
                                            treatment_times = Date.(treatment_times), match_to_these_dates = dates,
                                            treated_states = treated_states, use_pre_controls = false)
     return sort(lambda_df, [:state, :time]), fit
+end
+
+# Under ccc = "int": the ATT(s,t)'s that depend on a covariate dropped from a cell's regression,
+# as tuples (treated state, year of t, state of the cell, year of the cell, covariates)
+function dropped_effects(panel, covariates; treated_states = INTEGRATION_TREATED, treatment_times = INPUT_TIMES)
+    data = DataFrame(state_71X9yTx = String.(panel.state), time_71X9yTx = string.(Date.(panel.year)),
+                     time_dmG5fpM = Date.(panel.year), outcome_71X9yTx = Float64.(panel.y))
+    for cov in covariates
+        data[!, cov] = Float64.(panel[!, cov])
+    end
+    dates = Date.(sort(unique(panel.year)))
+    time_to_index = Dict(d => i for (i, d) in enumerate(dates))
+    lambda_df, _, fit = DiDInt.first_stage(data, "int", covariates, "hc1", false)
+    diff_df, _ = DiDInt.construct_diff_df(lambda_df, treated_states, Date.(treatment_times), time_to_index, dates, false, data)
+    return [(e.state, year(e.t), e.cell[1], year(e.cell[2]), e.covariates) for e in DiDInt.dropped_covariate_effects(fit, diff_df)]
 end
 
 @testset "2 x 2 example: a covariate collinear with another up to cell-specific constants" begin
@@ -114,9 +132,16 @@ end
         @test result.agg_att[1] ≈ agg_att rtol = 1e-9
         @test result.att_cohort ≈ att_cohort rtol = 1e-9
         @test result.se_agg_att[1] ≈ se_agg_att rtol = 1e-9
-        # No covariate is dropped, and "add" finds no rank deficiency beyond the expected one
-        warnings = warnings_of(call)
-        @test !any(w -> occursin("were dropped", w) || occursin("has rank", w), warnings)
+        # No covariate is dropped as collinear, and "add" finds no rank deficiency beyond the
+        # expected one. Under "int" one cell cannot use x2, which is binary and takes a single
+        # value there, and the ATT(s,t)'s that use that cell are reported.
+        warnings = filter(w -> occursin("were dropped", w) || occursin("has rank", w), warnings_of(call))
+        if ccc == "int"
+            @test length(warnings) == 1
+            @test occursin("x2 in state s12, period 2006-01-01", warnings[1]) && !occursin("x1", warnings[1])
+        else
+            @test isempty(warnings)
+        end
 
         # A covariate may have any name, also one that looks like an internal column
         renamed = rename(INTEGRATION_PANEL, :x2 => :x1_demeaned)
@@ -156,9 +181,17 @@ end
     @test all(slopes == unchanged_fit.slopes[key] for (key, slopes) in fit.slopes if key != cell)
     _, fit_reversed = quiet_call(() -> first_stage_of(large, "int", ["x2", "x1"]))
     @test fit_reversed.slopes[cell][1] != 0 && fit_reversed.slopes[cell][2] == 0
-    warnings = dropped_warnings(() -> first_stage_of(large, "int", ["x1", "x2"]))
-    @test length(warnings) == 1
-    @test occursin("x2 (state s06 in period 2005-01-01)", warnings[1])
+    # The first stage itself does not warn. The ATT(s,t)'s that depend on the dropped covariate
+    # are those that use the cell: s06 is a control, in period 2005 for the 2004 cohort and in
+    # the base period 2005 of the 2006 cohort
+    @test isempty(warnings_of(() -> first_stage_of(large, "int", ["x1", "x2"])))
+    in_cell_effects(effects) = filter(e -> (e[3], e[4]) == ("s06", 2005), effects)
+    effects = in_cell_effects(dropped_effects(large, ["x1", "x2"]))
+    @test Set((e[1], e[2]) for e in effects) ==
+          Set(vcat([(s, 2005) for s in ["s01", "s02"]], [(s, yr) for s in ["s03", "s04"] for yr in 2006:2008]))
+    @test all(e -> e[5] == ["x2"], effects)
+    @test all(e -> e[5] == ["x1"], in_cell_effects(dropped_effects(large, ["x2", "x1"])))
+    @test isempty(in_cell_effects(dropped_effects(INTEGRATION_PANEL, ["x1", "x2"])))
     # Rescaling x2 changes nothing
     rescaled = copy(large)
     rescaled.x2 = 1000 .* rescaled.x2
@@ -179,7 +212,7 @@ end
                covariates = ["cat"], ref = Dict("cat" => "u"), nperm = 9, seed = 1234)
     end
     @test length(warnings) == 1
-    @test occursin("cat_w (state s06 in period 2005-01-01)", warnings[1]) && !occursin("cat_v", warnings[1])
+    @test occursin("cat_w in state s06, period 2005-01-01", warnings[1]) && !occursin("cat_v", warnings[1])
 
     # A cell with fewer observations than covariates plus one keeps at most (observations - 1)
     # covariates, the ones listed first
@@ -190,21 +223,29 @@ end
     @test fit.slopes[cell][1] != 0 && fit.slopes[cell][2:3] == [0, 0]
 end
 
-@testset "Covariates without within-cell variation are dropped without a warning" begin
+@testset "Covariates without within-cell variation are dropped" begin
     # A covariate measured at the state-period level, and one that only varies within the
     # cells of some states: neither is collinear with another covariate
     panel = copy(INTEGRATION_PANEL)
     cells = Dict(cell => i for (i, cell) in enumerate(unique(zip(panel.state, panel.year))))
     panel.unemp = [round(3 + 6 * abs(sin(12.9898 * cells[cell])), digits = 1) for cell in zip(panel.state, panel.year)]
     for ccc in ["hom", "state", "time", "int"]
-        call() = didint("y", "state", "year", panel; treated_states = INTEGRATION_TREATED, treatment_times = INPUT_TIMES, ccc = ccc,
-                        covariates = ["x1", "unemp", "x2"], nperm = 9, seed = 1234)
-        @test isempty(dropped_warnings(call))
         # unemp has slope 0 everywhere, and the other slopes are those without it
         _, fit = quiet_call(() -> first_stage_of(panel, ccc, ["x1", "unemp", "x2"]))
         _, without_fit = quiet_call(() -> first_stage_of(panel, ccc, ["x1", "x2"]))
         @test all(slopes[2] == 0 && slopes[[1, 3]] ≈ without_fit.slopes[key] for (key, slopes) in fit.slopes)
     end
+    # Under "hom", "state" and "time" the cell dummies absorb it: no warning
+    for ccc in ["hom", "state", "time"]
+        call() = didint("y", "state", "year", panel; treated_states = INTEGRATION_TREATED, treatment_times = INPUT_TIMES, ccc = ccc,
+                        covariates = ["x1", "unemp", "x2"], nperm = 9, seed = 1234)
+        @test isempty(dropped_warnings(call))
+    end
+    # Under "int" every cell other than the treated one is evaluated at the treated cell's
+    # covariate means, where unemp takes another value: the ATT(s,t)'s depend on it
+    effects = dropped_effects(panel, ["x1", "unemp", "x2"])
+    @test any(e -> "unemp" in e[5], effects)
+    @test !any(e -> "x1" in e[5], effects)
 
     # The pruning rule itself: a column of zeros is neither kept nor reported as collinear
     X = hcat([1.0, -1.0, 2.0, -2.0], zeros(4), [2.0, -2.0, 4.0, -4.0], [1.0, 1.0, -1.0, -1.0])
@@ -216,31 +257,210 @@ end
     @test DiDInt.prune_covariate_columns(hcat(X[:, 1], X[:, 1] .+ 1e-9 .* X[:, 4])) == ([1], [2])
 end
 
+@testset "ccc = int: a warning only when a dropped covariate changes an ATT(s,t)" begin
+    # A cell's slopes are evaluated at the covariate means of the treated cell. A covariate
+    # dropped from the cell's regression matters only if those means lie outside what the
+    # cell's own data determine. x1 varies in every cell; z is added to it.
+    int_warnings(panel, covariates) = filter(w -> occursin("ccc = \"int\"", w), warnings_of() do
+        didint("y", "state", "year", panel; treated_states = INTEGRATION_TREATED, treatment_times = INPUT_TIMES, ccc = "int",
+               covariates = covariates, nperm = 9, seed = 1234)
+    end)
+    n_att = nrow(input_didint(; ccc = "int", agg = "sgt", covariates = ["x1"]))
+    state_number(s) = parse(Int, s[2:end])
+
+    # No covariate is dropped: no warning
+    @test isempty(dropped_effects(INTEGRATION_PANEL, ["x1"]))
+    @test isempty(int_warnings(INTEGRATION_PANEL, ["x1"]))
+
+    # A covariate that is constant in every cell and equal to the treated cell's mean everywhere:
+    # dropped in every cell, but no ATT(s,t) depends on it
+    same = copy(INTEGRATION_PANEL)
+    same.z .= 4.0
+    @test isempty(dropped_effects(same, ["x1", "z"]))
+    @test isempty(int_warnings(same, ["x1", "z"]))
+    @test input_didint(same; ccc = "int", agg = "sgt", covariates = ["x1", "z"]).att_sgt ≈
+          input_didint(; ccc = "int", agg = "sgt", covariates = ["x1"]).att_sgt rtol = 1e-10 atol = 1e-12
+
+    # ... and one that takes a different value in every cell: every ATT(s,t) depends on it
+    differ = copy(INTEGRATION_PANEL)
+    differ.z = Float64.(differ.year .- 2000) .+ state_number.(differ.state)
+    effects = dropped_effects(differ, ["x1", "z"])
+    @test length(unique((e[1], e[2]) for e in effects)) == n_att
+    @test all(e -> e[5] == ["z"], effects)
+    # the treated cell itself is evaluated at its own means and is never listed
+    @test !any(e -> (e[1], e[2]) == (e[3], e[4]), effects)
+    warnings = int_warnings(differ, ["x1", "z"])
+    @test length(warnings) == 1
+    @test occursin("$n_att ATT(s,t) estimates depend", warnings[1])
+    @test occursin("z in state", warnings[1]) && !occursin("x1", warnings[1])
+
+    # A covariate that only depends on the period: the cells of period t share the treated
+    # cell's value, the cells of the base period do not
+    by_period = copy(INTEGRATION_PANEL)
+    by_period.z = Float64.(by_period.year)
+    effects = dropped_effects(by_period, ["x1", "z"])
+    @test !isempty(effects)
+    @test all(e -> e[4] != e[2], effects)
+
+    # Collinear covariates whose relation also holds at the treated cell's means: no warning,
+    # whatever the units and however large the constant
+    for (slope, constant) in [(2.0, 3.0), (2000.0, 3.0), (2.0, 1e6)]
+        holds = copy(INTEGRATION_PANEL)
+        holds.z = slope .* holds.x1 .+ constant
+        @test isempty(dropped_effects(holds, ["x1", "z"]))
+        @test isempty(int_warnings(holds, ["x1", "z"]))
+    end
+
+    # Collinear within every cell, but with a constant that differs from cell to cell: the
+    # relation does not hold at the treated cell's means, and the covariate listed last is named
+    breaks = copy(INTEGRATION_PANEL)
+    breaks.z = 2 .* breaks.x1 .+ [sin(yr + 3 * state_number(s)) for (s, yr) in zip(breaks.state, breaks.year)]
+    effects = dropped_effects(breaks, ["x1", "z"])
+    @test length(unique((e[1], e[2]) for e in effects)) == n_att
+    @test all(e -> e[5] == ["z"], effects)
+    @test all(e -> e[5] == ["x1"], dropped_effects(breaks, ["z", "x1"]))
+    @test length(int_warnings(breaks, ["x1", "z"])) == 1
+
+    # The basis of what a cell leaves undetermined: a unit vector for a column of zeros, and
+    # the coefficients of the linear combination for a collinear column
+    X = hcat([1.0, -1.0, 2.0, -2.0], zeros(4), [2.0, -2.0, 4.0, -4.0], [1.0, 1.0, -1.0, -1.0])
+    kept, _ = DiDInt.prune_covariate_columns(X)
+    basis = DiDInt.null_space_basis(X, kept)
+    @test basis ≈ [0.0 -2.0; 1.0 0.0; 0.0 1.0; 0.0 0.0] atol = 1e-12
+    @test maximum(abs, X * basis) < 1e-12
+end
+
 @testset "ccc = add: rank deficiency beyond the split between states and periods" begin
     add_call(panel, covariates) = () -> didint("y", "state", "year", panel; treated_states = INTEGRATION_TREATED, treatment_times = INPUT_TIMES,
                                                ccc = "add", covariates = covariates, nperm = 9, seed = 1234)
+    add_att(panel, covariates) = input_didint(panel; ccc = "add", agg = "sgt", covariates = covariates).att_sgt
+    # A covariate that varies within every cell and is not related to x1
+    noise = [2 * sin(12.9898 * i) for i in 1:nrow(INTEGRATION_PANEL)]
+    with_z(z) = (panel = copy(INTEGRATION_PANEL); panel.z = Float64.(z); panel)
+
+    # The ATT(s,t)'s of another least-squares solution of the first stage: the package's
+    # solution with `move[state]` added to the slopes of that state. The move must leave every
+    # fitted value unchanged (checked here), so both solutions fit equally well.
+    function att_of_moved_solution(panel, covariates, move = Dict{String, Vector{Float64}}())
+        data = DataFrame(state_71X9yTx = String.(panel.state), time_71X9yTx = string.(Date.(panel.year)),
+                         time_dmG5fpM = Date.(panel.year), outcome_71X9yTx = Float64.(panel.y))
+        for cov in covariates
+            data[!, cov] = Float64.(panel[!, cov])
+        end
+        demeaned = DiDInt.with_demeaned_columns(data, covariates)
+        additive = DiDInt.estimate_additive_slopes(demeaned, DiDInt.demeaned_name.(covariates); null_space = false)
+        moved(state) = get(move, state, zeros(length(covariates)))
+        X = Matrix{Float64}(demeaned[:, DiDInt.demeaned_name.(covariates)])
+        @test maximum(abs(dot(moved(data.state_71X9yTx[i]), X[i, :])) for i in 1:nrow(data)) < 1e-8
+        lambdas = combine(groupby(data, [:state_71X9yTx, :time_71X9yTx, :time_dmG5fpM])) do cell
+            state = cell.state_71X9yTx[1]
+            slopes = additive.gamma_states[:, additive.state_idx[state]] .+ moved(state) .+
+                     additive.gamma_times[:, additive.time_idx[cell.time_71X9yTx[1]]]
+            DataFrame(lambda = mean(cell.outcome_71X9yTx) - dot(slopes, [mean(cell[!, cov]) for cov in covariates]))
+        end
+        lambda_df = DataFrame(state = lambdas.state_71X9yTx, time = lambdas.time_dmG5fpM, lambda = lambdas.lambda,
+                              lambda_index = 1:nrow(lambdas))
+        dates = sort(unique(data.time_dmG5fpM))
+        diff_df, _ = DiDInt.construct_diff_df(lambda_df, INTEGRATION_TREATED, Date.(INPUT_TIMES),
+                                              Dict(d => i for (i, d) in enumerate(dates)), dates, false, data)
+        return Float64.(DiDInt.build_att_st(diff_df, "both", "hc1", nothing).att)
+    end
+    # Without a move it is the package's estimate
+    @test att_of_moved_solution(INTEGRATION_PANEL, ["x1", "x2"]) ≈ add_att(INTEGRATION_PANEL, ["x1", "x2"]) rtol = 1e-8 atol = 1e-10
 
     # Well-behaved covariates: no warning (the estimates are checked against version 0.10.0 above)
     @test isempty(rank_warnings(add_call(INTEGRATION_PANEL, ["x1", "x2"])))
+    @test isempty(rank_warnings(add_call(with_z(noise), ["x1", "z"])))
 
-    # A covariate that only varies within the cells of one treated state: the period slopes
-    # and the slopes of the other states are not all determined
-    one_state = copy(INTEGRATION_PANEL)
-    one_state.z = [state == "s01" ? x1 : 0.0 for (state, x1) in zip(one_state.state, one_state.x1)]
-    warnings = rank_warnings(add_call(one_state, ["x1", "z"]))
+    # A covariate that is constant within the cells of one state and over time. That state's
+    # slope is not determined, and any value of it shifts all of the state's lambdas by the
+    # same amount, which cancels in its long differences: the lambdas are not unique, the ATTs
+    # are. This holds for a treated state and for a control state.
+    for state in ["s01", "s07"]
+        flat = with_z([s == state ? 5.0 : z for (s, z) in zip(INTEGRATION_PANEL.state, noise)])
+        warnings = rank_warnings(add_call(flat, ["x1", "z"]))
+        @test length(warnings) == 1
+        @test occursin("ccc = \"add\"", warnings[1]) && occursin("not uniquely determined", warnings[1])
+        @test atts_unaffected(warnings[1]) && !atts_affected(warnings[1])
+        @test occursin("Covariates involved: z.", warnings[1])
+        @test isempty(dropped_warnings(add_call(flat, ["x1", "z"])))
+        # another solution, with any slope of z in that state, gives the same ATTs
+        @test att_of_moved_solution(flat, ["x1", "z"], Dict(state => [0.0, 1.0])) ≈ add_att(flat, ["x1", "z"]) rtol = 1e-8 atol = 1e-10
+    end
+
+    # A covariate that is constant within each cell of one state but changes over time: the
+    # lambdas of that state shift by different amounts, and the ATTs depend on the solution.
+    # For a control state, every ATT(s,t) that uses it is affected.
+    moving = with_z([s == "s07" ? Float64(yr - 2000)^2 : z for (s, yr, z) in zip(INTEGRATION_PANEL.state, INTEGRATION_PANEL.year, noise)])
+    warnings = rank_warnings(add_call(moving, ["x1", "z"]))
     @test length(warnings) == 1
-    @test occursin("ccc = \"add\"", warnings[1])
-    @test isempty(dropped_warnings(add_call(one_state, ["x1", "z"])))
+    @test atts_affected(warnings[1]) && !atts_unaffected(warnings[1])
+    @test occursin("Covariates involved: z.", warnings[1])
+    @test maximum(abs, att_of_moved_solution(moving, ["x1", "z"], Dict("s07" => [0.0, 1.0])) .- add_att(moving, ["x1", "z"])) > 1e-3
 
-    # Covariates that are collinear within cells
-    collinear = copy(INTEGRATION_PANEL)
-    collinear.z = 2 .* collinear.x1 .+ [sin(year + length(state)) for (state, year) in zip(collinear.state, collinear.year)]
-    @test length(rank_warnings(add_call(collinear, ["x1", "z"]))) == 1
+    # A covariate without any within-cell variation that differs across periods
+    cell_level = with_z(Float64.(INTEGRATION_PANEL.year))
+    warnings = rank_warnings(add_call(cell_level, ["x1", "z"]))
+    @test length(warnings) == 1 && atts_affected(warnings[1])
+    # ... and one that is the same in every cell: it shifts the lambdas by amounts that are
+    # additive in state and period, so the ATTs are unaffected
+    constant = with_z(fill(4.0, nrow(INTEGRATION_PANEL)))
+    warnings = rank_warnings(add_call(constant, ["x1", "z"]))
+    @test length(warnings) == 1 && atts_unaffected(warnings[1])
+    @test add_att(constant, ["x1", "z"]) ≈ add_att(INTEGRATION_PANEL, ["x1"]) rtol = 1e-8 atol = 1e-10
 
-    # A covariate without any within-cell variation costs no rank: no warning
-    cell_level = copy(INTEGRATION_PANEL)
-    cell_level.z = [Float64(year) for year in cell_level.year]
-    @test isempty(rank_warnings(add_call(cell_level, ["x1", "z"])))
+    # Covariates that are collinear within cells: unaffected if the relation is the same
+    # everywhere, affected if its constant differs from cell to cell
+    same_relation = with_z(2 .* INTEGRATION_PANEL.x1 .+ 3)
+    warnings = rank_warnings(add_call(same_relation, ["x1", "z"]))
+    @test length(warnings) == 1 && atts_unaffected(warnings[1])
+    @test occursin("Covariates involved: x1, z.", warnings[1])
+    # moving a state's slopes along the collinear direction: z = 2 x1 + 3, so (-2, 1) fits equally well
+    @test att_of_moved_solution(same_relation, ["x1", "z"], Dict("s07" => [-2.0, 1.0])) ≈ add_att(same_relation, ["x1", "z"]) rtol = 1e-8 atol = 1e-10
+    cell_constants = with_z(2 .* INTEGRATION_PANEL.x1 .+ [sin(yr + 3 * parse(Int, s[2:end])) for (s, yr) in zip(INTEGRATION_PANEL.state, INTEGRATION_PANEL.year)])
+    warnings = rank_warnings(add_call(cell_constants, ["x1", "z"]))
+    @test length(warnings) == 1 && atts_affected(warnings[1])
+    @test maximum(abs, att_of_moved_solution(cell_constants, ["x1", "z"], Dict("s07" => [-2.0, 1.0])) .- add_att(cell_constants, ["x1", "z"])) > 1e-3
+
+    # The warning is given once, and not again by the true jackknife's re-estimations
+    truejack_call() = didint("y", "state", "year", cell_level; treated_states = INTEGRATION_TREATED, treatment_times = INPUT_TIMES,
+                             ccc = "add", covariates = ["x1", "z"], truejack = true, nperm = 9, seed = 1234)
+    @test length(rank_warnings(truejack_call)) == 1
+
+    # didint_plot() shows the lambdas themselves and says when they are not uniquely determined
+    plot_call(panel) = () -> didint_plot("y", "state", "year", panel; treated_states = INTEGRATION_TREATED, treatment_times = INPUT_TIMES,
+                                         ccc = "add", covariates = ["x1", "z"])
+    @test isempty(rank_warnings(plot_call(with_z(noise))))
+    warnings = rank_warnings(plot_call(cell_level))
+    @test length(warnings) == 1 && occursin("not uniquely determined", warnings[1])
+
+    # The change in the ATT(s,t)'s when the lambdas move: a shift that is the same in every
+    # period of a state cancels, and a shift of a control's lambda in period t moves the ATTs
+    # of that period by its share of the control weights
+    lambda_df, fit = quiet_call(() -> first_stage_of(INTEGRATION_PANEL, "add", ["x1"]; treated_states = INTEGRATION_TREATED,
+                                                     treatment_times = INPUT_TIMES))
+    data = DataFrame(state_71X9yTx = String.(INTEGRATION_PANEL.state), time_dmG5fpM = Date.(INTEGRATION_PANEL.year))
+    dates = Date.(sort(unique(INTEGRATION_PANEL.year)))
+    diff_df, _ = DiDInt.construct_diff_df(lambda_df, INTEGRATION_TREATED, Date.(INPUT_TIMES), Dict(d => i for (i, d) in enumerate(dates)),
+                                          dates, false, data)
+    cells = collect(zip(lambda_df.state, lambda_df.time))
+    by_state = Dict(cell => (cell[1] == "s07" ? 3.0 : cell[1] == "s01" ? -2.0 : 0.0) for cell in cells)
+    @test maximum(abs, DiDInt.additive_att_shifts(by_state, diff_df, "both")) < 1e-12
+    one_cell = Dict(cell => (cell == ("s07", Date(2006)) ? 1.0 : 0.0) for cell in cells)
+    changes = DiDInt.additive_att_shifts(one_cell, diff_df, "none")
+    treated_rows = diff_df[diff_df.treat .== 1, :]
+    n_controls = length(setdiff(unique(INTEGRATION_PANEL.state), INTEGRATION_TREATED))
+    # s07 is a control: period 2006 is t for the ATT(s,2006)'s and the base period of the 2007 cohort
+    expected = [row.t == Date(2006) ? -1 / n_controls : row.r1 == Date(2006) ? 1 / n_controls : 0.0 for row in eachrow(treated_rows)]
+    @test changes ≈ expected atol = 1e-12
+
+    # The null space read from the sparse QR decomposition: Z N = 0, with as many columns as
+    # the design lacks in rank
+    Z = DiDInt.sparse([1.0 2.0 0.0 1.0; 2.0 4.0 0.0 0.5; 3.0 6.0 0.0 -1.0; 1.0 2.0 0.0 2.0])
+    Zqr = qr(Z)
+    N = DiDInt.sparse_qr_null_space(Zqr, 4)
+    @test size(N) == (4, 2) && rank(N) == 2
+    @test maximum(abs, Z * N) < 1e-12
 
     # The expected rank allows for a panel that falls apart into groups of states observed in
     # disjoint sets of periods: one rank less per covariate and group
@@ -249,6 +469,8 @@ end
     @test DiDInt.count_panel_components(["A", "B", "C"], ["1", "2", "3"]) == 3
     split_panel = filter(r -> (r.state <= "s06") == (r.year <= 2004), INTEGRATION_PANEL)
     @test isempty(rank_warnings(() -> first_stage_of(split_panel, "add", ["x1", "x2"])))
+    _, split_fit = quiet_call(() -> first_stage_of(split_panel, "add", ["x1", "x2"]))
+    @test isempty(split_fit.lambda_shifts)
 end
 
 @testset "The true jackknife re-estimates with its own pruning, without repeating warnings" begin
