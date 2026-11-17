@@ -540,15 +540,21 @@ For homogeneous, region-varying, and time-varying DID-INT, the covariate term of
 \widehat{\mathrm{ATT}}(s,t) = \left(\overline{Y}_{s,t} - \hat{\delta}'\,\overline{X}_{s,t}\right) - \left(\hat{\lambda}_{s,r} + \hat{\lambda}_{c,t} - \hat{\lambda}_{c,r}\right), \qquad \hat{\delta} = \hat{\gamma}_{s,r} + \hat{\gamma}_{c,t} - \hat{\gamma}_{c,r}
 ```
 
-The term $\hat{\delta}'\,\overline{X}_{s,t}$ is a product of two estimates: covariate coefficients estimated from three cells, and covariate means estimated from the treated state's cell in period $t$. **DiDInt.jl** treats $\overline{X}_{s,t}$ as an estimate (of the mean of the covariate distribution that the long differences are integrated over) rather than as fixed, and computes:
+The term $\hat{\delta}'\,\overline{X}_{s,t}$ is a product of two estimates: covariate coefficients estimated from three cells, and covariate means estimated from the treated state's cell in period $t$. **DiDInt.jl** treats $\overline{X}_{s,t}$ as an estimate (of the mean of the covariate distribution that the long differences are integrated over) rather than as fixed. The variance of $\widehat{\mathrm{ATT}}(s,t)$ is then
 
 ```math
-\mathrm{Var}(\widehat{\mathrm{ATT}}(s,t)) = \mathrm{Var}(\overline{Z}_{s,t}) + \sum_{k \in \mathcal{K}} a' V_k\, a + \mathrm{tr}\!\left(V_{\delta}\, \Sigma\right)
+\mathrm{Var}(\widehat{\mathrm{ATT}}(s,t)) = \mathrm{Var}\!\left(\overline{Y}_{s,t} - \delta'\,\overline{X}_{s,t}\right) + \sum_{k \in \mathcal{K}} a_{\mu}' V_k\, a_{\mu} + \mathrm{tr}\!\left(V_{\delta}\, \Sigma\right)
 ```
 
-The rest of this section first shows where the three terms come from and then defines each of them.
+and **DiDInt.jl** estimates it by
 
-**Where the formula comes from.** Four cells are involved: the treated state's cell in period $t$, which is $(s,t)$, and the three other cells, collected in the set
+```math
+\widehat{\mathrm{Var}}(\widehat{\mathrm{ATT}}(s,t)) = \widehat{\mathrm{Var}}(\overline{Z}_{s,t}) + \sum_{k \in \mathcal{K}} a' \widehat{V}_k\, a - \mathrm{tr}\!\left(\widehat{V}_{\delta}\, \widehat{\Sigma}\right)
+```
+
+The last term is added in the variance and subtracted in its estimate. The rest of this section shows where the variance comes from, defines its terms, and then explains why estimating the first two terms turns the sign of the third.
+
+**Where the variance comes from.** Four cells are involved: the treated state's cell in period $t$, which is $(s,t)$, and the three other cells, collected in the set
 
 ```math
 \mathcal{K} = \{(s,r),\ (c,t),\ (c,r)\}
@@ -573,15 +579,15 @@ Substituting this into the expression for $\widehat{\mathrm{ATT}}(s,t)$ and coll
 2. Part (ii) carries the estimation error of the regressions of the three other cells. The error $e_{\delta}$ is made up of the errors in $\hat{\gamma}_{s,r}$, $\hat{\gamma}_{c,t}$ and $\hat{\gamma}_{c,r}$, so part (ii) is, up to a constant, a combination of three quantities, one per cell: the cell's estimated intercept plus its estimated covariate coefficients multiplied by $\mu$. That is each cell's regression line evaluated at the covariate means of the treated cell.
 3. Part (iii) is the product of the two errors, the one in $\hat{\delta}$ and the one in $\overline{X}_{s,t}$.
 
-The four cells are estimated by separate regressions on separate sets of observations, so their estimation errors are independent of one another (see [Independence Across Cells](@ref) for when this holds). Part (i) only involves cell $(s,t)$, and part (ii) only involves the three other cells, each through its own regression, so all of these errors are independent. The product in part (iii) has mean zero and is uncorrelated with the other two parts, because each of its two factors has mean zero and is independent of the other. The variance of $\widehat{\mathrm{ATT}}(s,t)$ is therefore the plain sum of the variances of the parts, with no covariance terms, which gives the three terms of the formula.
+The four cells are estimated by separate regressions on separate sets of observations, so their estimation errors are independent of one another (see [Independence Across Cells](@ref) for when this holds). Part (i) only involves cell $(s,t)$, and part (ii) only involves the three other cells, each through its own regression, so all of these errors are independent. The product in part (iii) has mean zero and is uncorrelated with the other two parts, because each of its two factors has mean zero and is independent of the other. The variance of $\widehat{\mathrm{ATT}}(s,t)$ is therefore the plain sum of the variances of the three parts, with no covariance terms, which gives the three terms of the variance.
 
-**The terms of the formula.** In the order in which they appear:
+**The terms of the variance.** In the order in which they appear:
 
-1. The first term, ``\mathrm{Var}(\overline{Z}_{s,t})``, is the variance of part (i): the sampling variation of the treated cell. Here ``\overline{Z}_{s,t}`` is the mean of ``Z_i = Y_i - \hat{\delta}' X_i`` over the observations ``i`` of cell ``(s,t)``, and ``\mathrm{Var}(\overline{Z}_{s,t})`` is the HCCME variance of that mean. Since ``\overline{Z}_{s,t} = \overline{Y}_{s,t} - \hat{\delta}'\,\overline{X}_{s,t}``, it accounts for the sampling variation in ``\overline{Y}_{s,t}`` and in ``\overline{X}_{s,t}``, and for their covariance. In this term ``\hat{\delta}`` is treated as fixed, because its estimation error is handled by the other two terms.
+1. The first term, ``\mathrm{Var}(\overline{Y}_{s,t} - \delta'\,\overline{X}_{s,t})``, is the variance of part (i): the sampling variation of the treated cell. It accounts for the sampling variation in ``\overline{Y}_{s,t}`` and in ``\overline{X}_{s,t}``, and for their covariance. Equivalently, it is the variance of the mean of ``Y_i - \delta' X_i`` over the observations ``i`` of cell ``(s,t)``.
 
-2. The second term, the sum of ``a' V_k\, a`` over the three cells ``k`` in ``\mathcal{K}``, is the variance of part (ii): the uncertainty in what each of the three other cells contributes to the counterfactual. Let ``\hat{\theta}_k = (\hat{\lambda}_k, \hat{\gamma}_k)`` collect the intercept and the covariate coefficients from the regression of cell ``k``, let ``V_k`` be their HCCME covariance matrix, and let ``a = (1, \overline{X}_{s,t})``, a one followed by the covariate means of the treated cell. Then ``\hat{\lambda}_k + \hat{\gamma}_k'\,\overline{X}_{s,t} = a' \hat{\theta}_k`` is the fitted value of the regression of cell ``k`` at the covariate means of the treated cell, and ``a' V_k\, a`` is the variance of that fitted value. The three cells enter ``\widehat{\mathrm{ATT}}(s,t)`` with different signs (plus or minus), but the signs do not matter for the variance, because the cells are independent: the variances simply add up.
+2. The second term, the sum of ``a_{\mu}' V_k\, a_{\mu}`` over the three cells ``k`` in ``\mathcal{K}``, is the variance of part (ii): the uncertainty in what each of the three other cells contributes to the counterfactual. Let ``\hat{\theta}_k = (\hat{\lambda}_k, \hat{\gamma}_k)`` collect the intercept and the covariate coefficients from the regression of cell ``k``, let ``V_k`` be their covariance matrix, and let ``a_{\mu} = (1, \mu)``, a one followed by the covariate means of the treated cell. Then ``\hat{\lambda}_k + \hat{\gamma}_k'\,\mu = a_{\mu}' \hat{\theta}_k`` is the fitted value of the regression of cell ``k`` at the covariate means of the treated cell, and ``a_{\mu}' V_k\, a_{\mu}`` is the variance of that fitted value. The three cells enter ``\widehat{\mathrm{ATT}}(s,t)`` with different signs (plus or minus), but the signs do not matter for the variance, because the cells are independent: the variances simply add up.
 
-3. The third term, ``\mathrm{tr}(V_{\delta}\, \Sigma)``, is the variance of part (iii): the product of the estimation errors in ``\hat{\delta}`` and in ``\overline{X}_{s,t}``. With ``K`` covariates, both matrices are ``K \times K``. The first, ``V_{\delta} = V_{\gamma,(s,r)} + V_{\gamma,(c,t)} + V_{\gamma,(c,r)}``, is the covariance matrix of ``\hat{\delta}``: the sum of the covariate-coefficient blocks of the three matrices ``V_k`` (each ``V_k`` without the row and column of its intercept). The second, ``\Sigma``, is the HCCME covariance matrix of the *mean* ``\overline{X}_{s,t}``, not of the covariates ``X_i`` of individual observations. Finally, ``\mathrm{tr}(A)`` denotes the trace of a square matrix ``A``, the sum of its diagonal entries. With a single covariate all of these are numbers, and the term is just ``\mathrm{Var}(\hat{\delta}) \cdot \mathrm{Var}(\overline{X}_{s,t})``.
+3. The third term, ``\mathrm{tr}(V_{\delta}\, \Sigma)``, is the variance of part (iii): the product of the estimation errors in ``\hat{\delta}`` and in ``\overline{X}_{s,t}``. With ``K`` covariates, both matrices are ``K \times K``. The first, ``V_{\delta} = V_{\gamma,(s,r)} + V_{\gamma,(c,t)} + V_{\gamma,(c,r)}``, is the covariance matrix of ``\hat{\delta}``: the sum of the covariate-coefficient blocks of the three matrices ``V_k`` (each ``V_k`` without the row and column of its intercept). The second, ``\Sigma``, is the covariance matrix of the *mean* ``\overline{X}_{s,t}``, not of the covariates ``X_i`` of individual observations. Finally, ``\mathrm{tr}(A)`` denotes the trace of a square matrix ``A``, the sum of its diagonal entries. With a single covariate all of these are numbers, and the term is just ``\mathrm{Var}(\hat{\delta}) \cdot \mathrm{Var}(\overline{X}_{s,t})``.
 
 The trace appears because the errors $e_{\delta}$ and $e_{X}$ are independent and both have mean zero, so that
 
@@ -589,7 +595,44 @@ The trace appears because the errors $e_{\delta}$ and $e_{X}$ are independent an
 \mathrm{Var}\!\left(e_{\delta}'\,e_{X}\right) = \mathbb{E}\!\left[e_{\delta}'\,e_{X}\,e_{X}'\,e_{\delta}\right] = \mathbb{E}\!\left[e_{\delta}'\,\Sigma\,e_{\delta}\right] = \mathrm{tr}\!\left(V_{\delta}\,\Sigma\right)
 ```
 
-How much the third term matters depends on the number of observations per cell. Both $\mathrm{Var}(\hat{\delta})$ and $\mathrm{Var}(\overline{X}_{s,t})$ shrink roughly in proportion to $1/n$ as the cells grow, as do the first two terms of the formula, so their product shrinks roughly like $1/n^2$. The third term is therefore negligible next to the other two when the cells are large, and leaving it out would understate the variance noticeably only when the cells are small.
+**Estimating the variance.** The covariance matrices are estimated by the chosen HCCME: $\widehat{V}_k$ from the regression of cell $k$, $\widehat{V}_{\delta}$ as the sum of their covariate-coefficient blocks, and $\widehat{\Sigma}$ as the HCCME covariance matrix of the mean $\overline{X}_{s,t}$. The true values $\delta$ and $\mu$ in the first two terms are unknown as well, and the estimates $\hat{\delta}$ and $\overline{X}_{s,t}$ are used in their place:
+
+- the first term is computed as ``\widehat{\mathrm{Var}}(\overline{Z}_{s,t})``, the HCCME variance of the mean of ``Z_i = Y_i - \hat{\delta}' X_i`` over the observations ``i`` of cell ``(s,t)``;
+- the second term is computed as the sum of ``a' \widehat{V}_k\, a`` with ``a = (1, \overline{X}_{s,t})``.
+
+Replacing a true value by an estimate adds the estimate's own error to each of these two terms, and in both cases the amount added is, on average, the third term.
+
+*First term.* Since $\hat{\delta} = \delta + e_{\delta}$, the computed variable is $Z_i = (Y_i - \delta' X_i) - e_{\delta}' X_i$. For a given $\hat{\delta}$, the variance of its mean is
+
+```math
+\mathrm{Var}\!\left(\overline{Z}_{s,t} \mid \hat{\delta}\right) = \mathrm{Var}\!\left(\overline{Y}_{s,t} - \delta'\,\overline{X}_{s,t}\right) - 2\, e_{\delta}'\, \mathrm{Cov}\!\left(\overline{X}_{s,t},\ \overline{Y}_{s,t} - \delta'\,\overline{X}_{s,t}\right) + e_{\delta}'\,\Sigma\,e_{\delta}
+```
+
+Averaging over the error $e_{\delta}$, which has mean zero and covariance matrix $V_{\delta}$, removes the middle term and turns the last one into the trace:
+
+```math
+\mathbb{E}\!\left[\widehat{\mathrm{Var}}(\overline{Z}_{s,t})\right] = \mathrm{Var}\!\left(\overline{Y}_{s,t} - \delta'\,\overline{X}_{s,t}\right) + \mathrm{tr}\!\left(V_{\delta}\,\Sigma\right)
+```
+
+*Second term.* Since $\overline{X}_{s,t} = \mu + e_{X}$, the vector $a$ is $a_{\mu}$ with $e_{X}$ added to its covariate entries. Writing $V_{\gamma,k}$ for the covariate-coefficient block of $V_k$ and $V_{\lambda\gamma,k}$ for the covariances between the intercept and the covariate coefficients,
+
+```math
+a' V_k\, a = a_{\mu}' V_k\, a_{\mu} + 2\left(V_{\lambda\gamma,k} + \mu' V_{\gamma,k}\right) e_{X} + e_{X}'\, V_{\gamma,k}\, e_{X}
+```
+
+Averaging over the error $e_{X}$, which has mean zero and covariance matrix $\Sigma$, again removes the middle term and turns the last one into a trace. Summing over the three cells,
+
+```math
+\mathbb{E}\!\left[\sum_{k \in \mathcal{K}} a' V_k\, a\right] = \sum_{k \in \mathcal{K}} a_{\mu}' V_k\, a_{\mu} + \mathrm{tr}\!\left(V_{\delta}\,\Sigma\right)
+```
+
+*Putting the terms together.* The two computed terms therefore contain, on average, the first two terms of the variance plus the trace term twice. The variance contains the trace term once. Subtracting it once from the two computed terms leaves exactly the variance, which is the estimate given at the start of this section:
+
+```math
+\widehat{\mathrm{Var}}(\overline{Z}_{s,t}) + \sum_{k \in \mathcal{K}} a' \widehat{V}_k\, a - \mathrm{tr}\!\left(\widehat{V}_{\delta}\, \widehat{\Sigma}\right)
+```
+
+Adding the trace term to the two computed terms instead, or leaving it out, would overstate the variance on average. By how much depends on the number of observations per cell. Both $\mathrm{Var}(\hat{\delta})$ and $\mathrm{Var}(\overline{X}_{s,t})$ shrink roughly in proportion to $1/n$ as the cells grow, as do the first two terms, so the trace term shrinks roughly like $1/n^2$: it is negligible next to the other two terms when the cells are large, and it matters when they are small.
 
 A covariate that is dropped from the regression of one of the cells has a coefficient of zero there, and zero rows and columns in the $V_k$ of that cell.
 

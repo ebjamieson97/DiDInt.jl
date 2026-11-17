@@ -210,7 +210,7 @@ end
     end
 end
 
-@testset "Edge-case SE under int with covariates: unconditional variance with the trace term" begin
+@testset "Edge-case SE under int with covariates: unconditional variance, corrected for the plug-in estimates" begin
     # One treated state (s01, treated 2004) and one control (s06)
     panel = INTEGRATION_PANEL[in.(INTEGRATION_PANEL.state, Ref(["s01", "s06"])), :]
     cohorts = Dict("s01" => 2004)
@@ -235,18 +235,20 @@ end
             var_zbar = mean_scale * sum((z .- mean(z)) .^ 2) / n^2
             Sigma = mean_scale .* ((treated_cell.X .- xbar')' * (treated_cell.X .- xbar')) ./ n^2
             V_delta = sum(cell.V[2:end, 2:end] for cell in others)
-            unconditional = var_zbar + sum(a' * cell.V * a for cell in others) + tr(V_delta * Sigma)
+            # The first two terms use delta-hat and xbar in place of their true values, and each
+            # overstates its term by tr(V_delta Sigma) in expectation; the variance itself
+            # includes that trace once, which leaves it subtracted once
+            unconditional = var_zbar + sum(a' * cell.V * a for cell in others) - tr(V_delta * Sigma)
             @test row.se_att_sgt ≈ sqrt(unconditional) atol = 1e-10
 
             # Against the conditional variance (xbar fixed: a' V a over all four cells), the
-            # unconditional one adds the covariate-mean noise dgamma' Sigma dgamma and the trace
-            # term. Under HC0 this decomposition is exact (the HC1 degrees-of-freedom factors of
-            # a mean and of a regression differ, so it is only approximate there).
+            # unconditional one adds the covariate-mean noise dgamma' Sigma dgamma, less the
+            # trace term. Under HC0 this decomposition is exact (the HC1 degrees-of-freedom
+            # factors of a mean and of a regression differ, so it is only approximate there).
             if hc == "hc0"
                 conditional = a' * treated_cell.V * a + sum(a' * cell.V * a for cell in others)
                 dgamma = treated_cell.beta[2:end] .- delta
-                @test unconditional > conditional
-                @test unconditional - conditional ≈ dgamma' * Sigma * dgamma + tr(V_delta * Sigma) atol = 1e-12
+                @test unconditional - conditional ≈ dgamma' * Sigma * dgamma - tr(V_delta * Sigma) atol = 1e-12
             end
         end
     end

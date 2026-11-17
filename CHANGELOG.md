@@ -51,6 +51,19 @@
   within any cell of some state or period), as the ATTs may then depend on the
   least-squares solution used.
 
+### Edge case standard errors under `ccc = "int"` with covariates
+
+- **Bug fix: these standard errors were slightly too large.** The variance of the
+  ATT of a treated state in a period with a single control state has three terms, the third
+  being a trace term for the product of two estimation errors. The first two terms are
+  computed with estimates in place of unknown true values, which already makes each of
+  them too large by that trace term on average. 0.10.0 added the trace term on top; it is
+  now subtracted, which gives an estimate that is right on average. The difference is of
+  the order of a few percent of the variance in cells with around ten observations and
+  negligible in large cells. Only standard errors computed with `edgecase = true` under
+  `ccc = "int"` with covariates change; no ATT changes. The Details page has the full
+  derivation.
+
 ### Jackknife warnings
 
 - When removing a state leaves a sub-aggregate ATT (or a policy) without any treated

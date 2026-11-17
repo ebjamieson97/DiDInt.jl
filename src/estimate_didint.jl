@@ -1159,14 +1159,24 @@ function edge_case_se_integrated(fit::CovariateFit, treated, control, t, r1, hc:
     #   ATT(s,t) = (ybar_{s,t} - delta' xbar_{s,t}) - (lambda_{s,r1} + lambda_{c,t} - lambda_{c,r1}),
     #   delta = gamma_{s,r1} + gamma_{c,t} - gamma_{c,r1}.
     # delta' xbar_{s,t} multiplies slopes estimated from three cells by a covariate mean estimated
-    # from the treated cell. xbar_{s,t} is treated as random (it estimates the mean of the
-    # distribution that eqs. 46-47 integrate over), which gives the unconditional variance
-    #   Var(zbar_{s,t}) + sum over the 3 other cells k of a' V_k a + tr(V_delta Sigma),
-    # with z_i = y_i - delta' x_i over the observations of cell (s,t), a = (1, xbar_{s,t}), V_k the
-    # HC covariance of cell k's (lambda, gamma), V_delta the sum of the slope blocks of the three
-    # V_k, and Sigma the HC covariance of xbar_{s,t}. The trace term is the variance of the
-    # product of the two estimation errors; with it the formula is the variance when the four
-    # cells are independent, with estimated inputs.
+    # from the treated cell. xbar_{s,t} is treated as random (it estimates the mean mu of the
+    # distribution that eqs. 46-47 integrate over). With the four cells independent, the
+    # variance of ATT(s,t) is
+    #   Var(ybar_{s,t} - delta' xbar_{s,t}) + sum over the 3 other cells k of a_mu' V_k a_mu
+    #     + tr(V_delta Sigma),
+    # with delta at its true value, a_mu = (1, mu), V_k the covariance of cell k's (lambda,
+    # gamma), V_delta the sum of the slope blocks of the three V_k, and Sigma the covariance of
+    # xbar_{s,t}. The trace term is the variance of the product of the two estimation errors.
+    # The first two terms have to be estimated with delta-hat in place of delta and xbar_{s,t}
+    # in place of mu:
+    #   var_zbar, the HC variance of the mean of z_i = y_i - delta-hat' x_i over cell (s,t),
+    #   var_other_cells, the sum of a' V_k a with a = (1, xbar_{s,t}).
+    # Each of these overstates its term by tr(V_delta Sigma) in expectation: the error in
+    # delta-hat adds e_delta' Sigma e_delta to the first, and the error in xbar_{s,t} adds
+    # e_x' V_delta e_x to the second. The estimate is therefore
+    #   var_zbar + var_other_cells - tr(V_delta Sigma):
+    # the two estimated terms hold the trace term twice and the variance itself needs it once,
+    # so it is subtracted once.
     other_cells = [(treated, r1), (control, t), (control, r1)]
     if !haskey(fit.cell_obs, (treated, t)) || !all(haskey(fit.cell_vcov, cell) for cell in other_cells)
         return missing
@@ -1183,7 +1193,7 @@ function edge_case_se_integrated(fit::CovariateFit, treated, control, t, r1, hc:
     V_delta = sum(fit.cell_vcov[cell][2:end, 2:end] for cell in other_cells)
     Sigma = hc_mean_covariance(X, hc)
 
-    variance = var_zbar + var_other_cells + tr(V_delta * Sigma)
+    variance = var_zbar + var_other_cells - tr(V_delta * Sigma)
     return isfinite(variance) && variance > 0 ? sqrt(variance) : missing
 end
 
