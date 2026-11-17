@@ -589,7 +589,7 @@ The trace appears because the errors $e_{\delta}$ and $e_{X}$ are independent an
 \mathrm{Var}\!\left(e_{\delta}'\,e_{X}\right) = \mathbb{E}\!\left[e_{\delta}'\,e_{X}\,e_{X}'\,e_{\delta}\right] = \mathbb{E}\!\left[e_{\delta}'\,\Sigma\,e_{\delta}\right] = \mathrm{tr}\!\left(V_{\delta}\,\Sigma\right)
 ```
 
-How much the third term matters depends on the number of observations per cell. Both $\mathrm{Var}(\hat{\delta})$ and $\mathrm{Var}(\overline{X}_{s,t})$ shrink roughly in proportion to $1/n$ as the cells grow, as do the first two terms of the formula, so their product shrinks roughly like $1/n^2$. With about 100 observations per cell, the third term is therefore roughly 100 times smaller than the other terms. With about 5 observations per cell, it is only about 5 times smaller and can matter.
+How much the third term matters depends on the number of observations per cell. Both $\mathrm{Var}(\hat{\delta})$ and $\mathrm{Var}(\overline{X}_{s,t})$ shrink roughly in proportion to $1/n$ as the cells grow, as do the first two terms of the formula, so their product shrinks roughly like $1/n^2$. The third term is therefore negligible next to the other two when the cells are large, and leaving it out would understate the variance noticeably only when the cells are small.
 
 A covariate that is dropped from the regression of one of the cells has a coefficient of zero there, and zero rows and columns in the $V_k$ of that cell.
 

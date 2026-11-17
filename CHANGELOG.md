@@ -23,16 +23,28 @@
   that do not vary within any state-period cell of that part of the data are still dropped
   silently, as they cannot affect the estimates.
 - **Changes to estimates.** Estimates change only where covariates are collinear:
-  - under `"hom"`, `"state"` and `"time"`, which previously used a least-squares solution
-    that spread the coefficient across the collinear covariates;
-  - under `"int"`, in cells where the previous rule dropped a different one of the
-    collinear covariates.
+  - Under `"hom"`, `"state"` and `"time"`, no covariate was dropped in 0.10.0. Collinear
+    covariates have infinitely many coefficient vectors that fit equally well, and
+    0.10.0 used the one with the smallest sum of squared coefficients (the minimum-norm
+    least-squares solution). For example, with `x2 = 2 * x1` and a combined effect of 5
+    per unit of `x1`, it gave `x1` a coefficient of 1 and `x2` a coefficient of 2. That
+    choice changes when a covariate is rescaled (dollars to thousands of dollars), and so
+    did the ATTs. 0.10.1 drops `x2` and gives `x1` a coefficient of 5, whatever the units.
+  - Under `"int"`, 0.10.0 already dropped collinear covariates within a cell, but chose
+    which one by a column-pivoted QR decomposition, which favours the covariates with the
+    most variation and therefore also depended on units. Estimates change in cells where
+    it dropped a covariate other than the one listed last.
 
   Estimates without collinear covariates, and all estimates under `"add"`, are unchanged.
-- **Edge case standard errors** (`edgecase = true`) are now computed with the same
-  covariates as the estimates. Standard errors that were `missing` because a regression
-  was rank deficient are now reported, and the edge case procedure always returns the
-  same ATTs as the regular procedure.
+- **`edgecase = true` no longer changes any ATT.** With `edgecase = true`, the cells
+  involved in an edge case are estimated by a separate regression that also yields the
+  covariance matrix needed for the standard error. In 0.10.0 that regression handled
+  collinear covariates differently from the regression used for all other cells, so with
+  collinear covariates the ATTs could depend on whether `edgecase` was on. Both now use
+  the same covariates, determined once, and return identical ATTs.
+- **Fewer missing edge case standard errors.** An edge case standard error was `missing`
+  in 0.10.0 when collinear covariates made that separate regression rank deficient. It is
+  now computed.
 - **`ccc = "add"` warns about unusual rank deficiency.** Its first-stage regression is
   always rank deficient in a way that does not affect the estimates. A warning is now
   given when it is rank deficient beyond that (for example, a covariate that does not vary
