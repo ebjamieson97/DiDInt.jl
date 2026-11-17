@@ -1,0 +1,14 @@
+/* Make the levels of headings easy to tell apart: a section (h2) is clearly larger than its
+   subsections (h3), which are larger than theirs (h4). The default theme sizes them at
+   1.75em, 1.5em and 1.25em, which look alike. */
+.content h2 {
+    font-size: 1.75em !important;
+    padding-bottom: 0.2em;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.35);
+}
+.content h3 {
+    font-size: 1.3em !important;
+}
+.content h4 {
+    font-size: 1.1em !important;
+}
