@@ -7,6 +7,9 @@ using Random
 # didint() returns a DiDIntResult; most tests check the columns of its wide table of results
 didint_table(args...; kwargs...) = DataFrame(DiDInt.didint(args...; kwargs...))
 
+# didint_plot() returns a DiDIntPlot; most tests check its table of plot data
+plot_table(args...; kwargs...) = DiDInt.didint_plot(args...; kwargs...).data
+
 # Regenerate the snapshot files instead of testing (see test/update_snapshots.jl)
 if "--update-snapshots" in ARGS
     include("update_snapshots.jl")
@@ -97,6 +100,9 @@ const TEST_DATA_EC_STAG = filter(r -> r.state ∈ [_t1, _t2, EC_CONTROL], TEST_D
     end
     @testset "didint_plot(): parallel trends data" begin
         include("test_plot_integrated.jl")
+    end
+    @testset "DiDIntPlot and its plots" begin
+        include("test_plots.jl")
     end
     @testset "Batched engine, RI draws and p-values" begin
         include("test_engine.jl")

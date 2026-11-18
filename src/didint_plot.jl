@@ -1,5 +1,6 @@
 ###########################################################################################
-# didint_plot.jl: data for parallel trends and event study plots                          #
+# didint_plot.jl: data for parallel trends and event study plots (drawn as src/plots.jl   #
+# describes)                                                                              #
 #                                                                                         #
 #   Section 1: didint_plot(), the main function                                           #
 #   Section 2: Parallel trends data (conditional and integrated)                          #
@@ -35,8 +36,9 @@
                 hc::Union{AbstractString, Number} = "hc1"
                )
 
-The `didint_plot()` function produces a dataset in a long format that can easily be used for plotting parallel
-trends or event study plots.
+The `didint_plot()` function prepares the data for parallel trends plots and event study plots. It returns them as a
+[`DiDIntPlot`](@ref): the data are in a long format in its `data` field, and `plot` draws them once a Makie backend
+such as CairoMakie is loaded.
 
 # Details
 `didint_plot()` prepares the data for three kinds of plots:
@@ -75,6 +77,10 @@ in `treatment_times`, and so on.
     Name of the column which indicates time of first treatment for each state.
 - `treatment_times::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Date, Nothing} = nothing`
     A vector (or single entry) denoting the associated treatment times of the 'treated_states'.
+- `treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing`
+    A vector of strings or numbers (or a single one) noting the treated state(s), matching the type of the `state` column.
+    Needed for the event study and for the integrated parallel trends data. For the conditional parallel trends data
+    it is optional; with it, the plots tell the treated states from the control states.
 
 ## Model Specifications
 - `ccc::Union{AbstractString, Vector{<:AbstractString}} = "all"`
@@ -90,10 +96,11 @@ in `treatment_times`, and so on.
     A dictionary specifying which category in a categorical variable should be used
     as the reference (baseline) category.
 
-## Integrated Parallel Trends Plot
+## Control States
 - `notyet::Bool = false`
-    For the integrated parallel trends data (`ccc = "int"`): the comparison states of a treated state are the
-    never-treated states and, with `notyet = true`, also the states not yet treated in the period in question.
+    The comparison states of a treated state are the never-treated states and, with `notyet = true`, also the
+    states not yet treated in the period in question. This applies to the integrated parallel trends data
+    (`ccc = "int"`) and to the plots that compare a treated state with its control states.
 
 ## Event Study Plot
 - `event::Bool = false`
@@ -102,8 +109,6 @@ in `treatment_times`, and so on.
     Whether to use weighted means when computing event study estimates. If `true`, estimates are computed
     as weighted averages of state-level means for each period relative to treatment, weighted by the states'
     numbers of observations; if `false`, uses simple unweighted averages.
-- `treated_states::Union{T, Vector{T}} where T <: Union{AbstractString, Number, Nothing} = nothing`
-    A vector of strings or numbers (or a single one) noting the treated state(s), matching the type of the `state` column.
 - `ci::Number = 0.95`
     Define the size of confidence bands for the event study plot.
 - `hc::Union{AbstractString, Number} = "hc1"`
@@ -128,7 +133,9 @@ in `treatment_times`, and so on.
     grid construction if activated.
 
 # Returns
-With `event = false`, a DataFrame in which the `ccc` column tells the two kinds of rows apart:
+A [`DiDIntPlot`](@ref), which is drawn with `plot` and holds the plot data as a DataFrame in its `data` field.
+
+With `event = false`, the `ccc` column of the DataFrame tells the two kinds of rows apart:
 
 - Conditional parallel trends (every `ccc` option except `"int"`): one row per state, period and `ccc` option, with
   the state's mean outcome in that period, residualized by the covariates as the `ccc` option specifies (`lambda`),
@@ -143,7 +150,7 @@ Both have the period number (`period`). `lambda` is missing in the integrated ro
 `treated_state_covars` in the conditional rows. When there are conditional rows, extra rows with only `treat_period`
 filled give the periods in which treatments start.
 
-With `event = true`, a DataFrame with one row per `ccc` option and period relative to treatment (`time_since_treatment`):
+With `event = true`, the DataFrame has one row per `ccc` option and period relative to treatment (`time_since_treatment`):
 the mean of the treated states' `lambda` values (`y`), its standard error (`se`), the bounds of its confidence interval
 (`ci_lower`, `ci_upper`) and the number of treated states behind it (`ngroup`).
 
@@ -226,10 +233,13 @@ function didint_plot(
     covariates = isnothing(covariates) ? covariates : string.(covariates)
 
     # Treated states and their treatment times, from gvar or from treated_states and treatment_times.
-    # The event study and the integrated parallel trends data need to know which states are treated.
+    # The event study and the integrated parallel trends data need to know which states are treated;
+    # the conditional parallel trends data do not, but their plots mark the treated states when
+    # they are given.
     needs_treated_states = event || integrated
     treated_states, treatment_times = gvar_or_treatment_times(gvar, treatment_times, treated_states, data, state;
                                                               event = needs_treated_states, check = "didint_plot")
+    has_treated_states = !isnothing(treated_states)
 
     start_date = start_end_date_checks(start_date, "start_date", date_format)
     end_date = start_end_date_checks(end_date, "end_date", date_format)
@@ -248,12 +258,11 @@ function didint_plot(
     # Treated states (when given) and treatment times as vectors of the same length
     treated_states, treatment_times = check_treated_states(treated_states, treatment_times)
 
-    # The treated states are only needed for the event study and the integrated parallel trends data
     data_copy.state_71X9yTx = data_copy[!, state]
     if event == true && (ci < 0 || ci >= 1)
         error("'ci' must be between 0 and 1")
     end
-    if needs_treated_states
+    if has_treated_states
         # The state column and treated_states must both be numbers or both be strings
         validate_state_types(treated_states, data_copy, state)
     end
@@ -262,7 +271,7 @@ function didint_plot(
     data_copy = check_missing_vals(data_copy, state, time, covariates)
 
     # Check that the treated states exist
-    if needs_treated_states
+    if has_treated_states
         treated_states, treatment_times = validate_treated_states(treated_states, treatment_times, data_copy)
     end
 
@@ -270,9 +279,10 @@ function didint_plot(
     data_copy, treatment_times, start_date, end_date, all_times, freq = validate_and_convert_dates(data_copy, time, treatment_times, date_format,
                                                                                                    freq, start_date, end_date)
 
-    # A state treated at or before the first date is not counted as a treated state below. In the
-    # integrated parallel trends data it is not a comparison state either, as it is treated throughout.
-    always_treated = integrated ? string.(treated_states[treatment_times .<= start_date]) : String[]
+    # A state treated at or before the first date is not counted as a treated state below. It is
+    # not a comparison state either (in the integrated parallel trends data and in the plots), as
+    # it is treated throughout.
+    always_treated = has_treated_states ? string.(treated_states[treatment_times .<= start_date]) : String[]
 
     # Build the period grid and match every date and treatment time to a period on it
     data_copy, treatment_times, treated_states, _, time_to_index, period = perform_date_matching(data_copy, all_times, freq, freq_multiplier, start_date,
@@ -328,26 +338,49 @@ function didint_plot(
     # plots (conditional and integrated)
     #--------------------------------------------------------------------------------------
 
-    if event == true
-        # Number the periods from 0
-        master_lambda.period = [time_to_index[date] for date in master_lambda.time] .- 1
-        master_lambda = select(master_lambda, Not(:lambda_index))
-        plot_data = event_study_data(master_lambda, data_copy, treated_states, treatment_times, time_to_index, weights, ci, hc)
-    else
-        if isnothing(date_format) || date_format == "yyyy"
-            date_format = assume_date_format(period)
-        end
-        # Number of observations of every state in every period
-        cell_counts = combine(groupby(data_copy, [:state_71X9yTx, :time_dmG5fpM]), nrow => :n)
-        n_obs = Dict(zip(zip(String.(cell_counts.state_71X9yTx), cell_counts.time_dmG5fpM), cell_counts.n))
+    if isnothing(date_format) || date_format == "yyyy"
+        date_format = assume_date_format(period)
+    end
+    # Number of observations of every state in every period
+    cell_counts = combine(groupby(data_copy, [:state_71X9yTx, :time_dmG5fpM]), nrow => :n)
+    n_obs = Dict(zip(zip(String.(cell_counts.state_71X9yTx), cell_counts.time_dmG5fpM), cell_counts.n))
 
+    if event == true
+        event_lambdas = event_study_lambdas(master_lambda, n_obs, treated_states, treatment_times, time_to_index)
+        plot_data = event_study_data(event_lambdas, weights, ci, hc)
+    else
+        event_lambdas = DataFrame()
         conditional = conditional_trends_data(master_lambda, n_obs, time_to_index)
         integrated_rows = integrated ? integrated_trends_data(int_lambda, int_fit, n_obs, treated_states, treatment_times,
                                                               always_treated, time_to_index, notyet) : nothing
         plot_data = parallel_trends_data(conditional, integrated_rows, treatment_times, time_to_index, start_date, date_format)
     end
     plot_data.period_length .= string(period)
-    return wrapper_check(plot_data, wrapper)
+
+    # The Stata and R wrappers receive the table itself
+    if wrapper in ("stata", "r")
+        return wrapper_check(plot_data, wrapper)
+    end
+
+    #--------------------------------------------------------------------------------------
+    # Step 5: Return the data as a DiDIntPlot, with what its plots need to know
+    #--------------------------------------------------------------------------------------
+
+    # Treatment periods, numbered from 0 like the `period` column: those of the treated states
+    # when the states are known, otherwise the distinct ones
+    treatment_periods = [time_to_index[date] for date in treatment_times] .- 1
+    if !has_treated_states
+        keep = unique(i -> treatment_periods[i], sortperm(treatment_periods))
+        treatment_times, treatment_periods = treatment_times[keep], treatment_periods[keep]
+    end
+    specs = (outcome = outcome, event = event, ccc = ccc, covariates = isnothing(covariates) ? String[] : String.(covariates),
+             treated_states = has_treated_states ? String.(treated_states) : String[],
+             treatment_times = String[parse_date_to_string_didint(date, date_format) for date in treatment_times],
+             treatment_periods = treatment_periods, always_treated = String.(always_treated),
+             notyet = notyet, weights = weights, ci = Float64(ci), hc = event ? hc : nothing,
+             period = string(period), start_date = parse_date_to_string_didint(start_date, date_format),
+             end_date = parse_date_to_string_didint(end_date, date_format))
+    return DiDIntPlot(plot_data, event_lambdas, specs)
 end
 
 
@@ -456,99 +489,55 @@ end
 # Section 3: Event study data                                                             #
 ###########################################################################################
 
-function event_study_data(master_lambda, data_copy, treated_states, treatment_times, time_to_index, weights, ci, hc)
+function event_study_lambdas(master_lambda, n_obs, treated_states, treatment_times, time_to_index)
 
-    # For each ccc option and each period relative to treatment: the (weighted) mean of the
-    # treated states' lambdas, with its HC standard error and confidence interval from the
-    # regression of those lambdas on a constant
+    # The lambda of every treated state and period under every ccc option, with the period
+    # relative to the state's treatment (`time_since_treatment`) and the number of observations
+    # of the state in that period (`n`). The event study averages these.
+    treatment_period = Dict(zip(String.(treated_states), [time_to_index[date] for date in treatment_times]))
+    states = String.(master_lambda.state)
+    return DataFrame(ccc = String.(master_lambda.ccc), state = states,
+                     time_since_treatment = [time_to_index[t] - treatment_period[s] for (s, t) in zip(states, master_lambda.time)],
+                     lambda = master_lambda.lambda,
+                     n = [n_obs[(s, t)] for (s, t) in zip(states, master_lambda.time)])
+end
 
-    # Period relative to treatment of every lambda
-    state_to_treatment_time = Dict(zip(treated_states, treatment_times))
-    master_lambda.treat_period = [haskey(state_to_treatment_time, row.state) ?
-                                   time_to_index[state_to_treatment_time[row.state]] :
-                                   missing
-                                   for row in eachrow(master_lambda)] .- 1
-    master_lambda.time_since_treatment = master_lambda.period - master_lambda.treat_period
+function event_study_data(event_lambdas, weights, ci, hc)
 
-    if weights == true
-        # Weight of a state among the states observed at the same period relative to
-        # treatment: its share of their observations
-        data_copy.period = [time_to_index[date] for date in data_copy.time_dmG5fpM] .- 1
-        data_copy.treat_period = [haskey(state_to_treatment_time, state) ?
-                                   time_to_index[state_to_treatment_time[state]] :
-                                   missing
-                                   for state in data_copy.state_71X9yTx] .- 1
-        data_copy.time_since_treatment = data_copy.period - data_copy.treat_period
+    # For each ccc option and each period relative to treatment: the mean of the treated
+    # states' lambdas (`y`), with its HC standard error and confidence interval from the
+    # regression of those lambdas on a constant, and the number of states behind it (`ngroup`).
+    # With `weights`, a state is weighted by its share of the observations of the states
+    # observed at the same period relative to treatment; otherwise the states count equally.
+    # Rows are sorted by ccc option and period.
+    rows = NamedTuple{(:ccc, :time_since_treatment, :y, :se, :ci_lower, :ci_upper, :ngroup),
+                      Tuple{String, Int, Float64, Union{Float64, Missing}, Union{Float64, Missing}, Union{Float64, Missing}, Int}}[]
+    for group in groupby(event_lambdas, [:ccc, :time_since_treatment])
+        ngroup = nrow(group)
+        weight = weights ? group.n ./ sum(group.n) : fill(1 / ngroup, ngroup)
+        y = sum(weight .* group.lambda)
+        se, ci_lower, ci_upper = missing, missing, missing
 
-        counts_df = combine(groupby(data_copy, [:state_71X9yTx, :time_since_treatment]), nrow => :count)
-        time_totals = combine(groupby(counts_df, :time_since_treatment), :count => sum => :total_count)
-        counts_df = leftjoin(counts_df, time_totals, on = :time_since_treatment)
-        counts_df.weight = counts_df.count ./ counts_df.total_count
-        master_lambda = leftjoin(master_lambda,
-                                 select(counts_df, :state_71X9yTx => :state, :time_since_treatment, :weight),
-                                 on = [:state, :time_since_treatment])
-    elseif weights == false
-        # Equal weights
-        count_df = combine(groupby(master_lambda, [:time_since_treatment, :ccc]), nrow => :count_obs)
-        master_lambda = leftjoin(master_lambda, count_df, on = [:time_since_treatment, :ccc])
-        master_lambda.weight = 1 ./ master_lambda.count_obs
-    end
-
-    # Weighted least squares on a constant, as least squares on rows scaled by the square root
-    # of their weights
-    master_lambda.weighted_y = master_lambda.weight .* master_lambda.lambda
-    master_lambda.intercept = sqrt.(master_lambda.weight)
-    master_lambda.y = master_lambda.lambda .* master_lambda.intercept
-    master_lambda.se = Vector{Union{Float64, Missing}}(missing, nrow(master_lambda))
-    master_lambda.ci_upper = Vector{Union{Float64, Missing}}(missing, nrow(master_lambda))
-    master_lambda.ci_lower = Vector{Union{Float64, Missing}}(missing, nrow(master_lambda))
-    master_lambda.fitted_y = Vector{Union{Float64, Missing}}(missing, nrow(master_lambda))
-    master_lambda.ngroup = Vector{Union{Int, Missing}}(missing, nrow(master_lambda))
-
-    # One regression per ccc option and period relative to treatment; a standard error needs
-    # at least two states
-    unique_groups = unique(master_lambda[!, [:ccc, :time_since_treatment]])
-    for row in eachrow(unique_groups)
-        mask = (master_lambda.ccc .== row.ccc) .& (master_lambda.time_since_treatment .== row.time_since_treatment)
-        group_data = master_lambda[mask, :]
-        ngroup = nrow(group_data)
-        master_lambda[mask, :ngroup] .= ngroup
-
+        # Weighted least squares on a constant, as least squares on rows scaled by the square
+        # root of their weights; a standard error needs at least two states
         if ngroup >= 2
-
-            X = reshape(group_data.intercept, :, 1)
-            Y = convert(Vector{Float64}, group_data.y)
+            X = reshape(sqrt.(weight), :, 1)
+            Y = convert(Vector{Float64}, group.lambda .* sqrt.(weight))
             beta_hat = safe_solve(X, Y)
-
             if !ismissing(beta_hat)
                 resid = Y - X * beta_hat
-                beta_hat_cov = compute_hc_covariance(X, resid, hc)
-                beta_hat_var = diag(beta_hat_cov)
-                beta_hat_se = sqrt(beta_hat_var[1])
-                dof = length(Y) - 1
-                t_crit = quantile(TDist(dof), 1 - ((1 - ci) / 2))
-                beta_hat = first(beta_hat)
-                master_lambda[mask, :fitted_y] .= beta_hat
-                master_lambda[mask, :se] .= beta_hat_se
-                master_lambda[mask, :ci_lower] .= beta_hat - t_crit * beta_hat_se
-                master_lambda[mask, :ci_upper] .= beta_hat + t_crit * beta_hat_se
-            else
-                master_lambda[mask, :fitted_y] .= missing
-                master_lambda[mask, :se] .= missing
-                master_lambda[mask, :ci_lower] .= missing
-                master_lambda[mask, :ci_upper] .= missing
+                se = sqrt(diag(compute_hc_covariance(X, resid, hc))[1])
+                t_crit = quantile(TDist(ngroup - 1), 1 - ((1 - ci) / 2))
+                ci_lower = first(beta_hat) - t_crit * se
+                ci_upper = first(beta_hat) + t_crit * se
             end
-
         end
+        push!(rows, (ccc = first(group.ccc), time_since_treatment = first(group.time_since_treatment), y = y, se = se,
+                     ci_lower = ci_lower, ci_upper = ci_upper, ngroup = ngroup))
     end
-
-    # One row per ccc option and period relative to treatment: the weighted mean, with the
-    # standard error and confidence interval of its group, sorted by ccc option and period
-    event_data = combine(groupby(master_lambda, [:ccc, :time_since_treatment]),
-                         :weighted_y => sum => :y,
-                         :se => first => :se,
-                         :ci_lower => first => :ci_lower,
-                         :ci_upper => first => :ci_upper,
-                         :ngroup => first => :ngroup)
-    return sort!(event_data, [:ccc, :time_since_treatment])
+    event_data = sort!(DataFrame(rows), [:ccc, :time_since_treatment])
+    for column in (:se, :ci_lower, :ci_upper)
+        any(ismissing, event_data[!, column]) || disallowmissing!(event_data, column)
+    end
+    return event_data
 end

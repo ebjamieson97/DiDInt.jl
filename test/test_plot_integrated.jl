@@ -9,7 +9,7 @@ using Statistics
 # The panel is INTEGRATION_PANEL (see test_integration.jl): 12 states observed 2001-2008, with
 # s01, s02 treated in 2004, s03, s04 in 2006 and s05 in 2007.
 @testset "Integrated parallel trends data (ccc = int)" begin
-    plot_data(; kwargs...) = DiDInt.didint_plot("y", "state", "year", INTEGRATION_PANEL; treated_states = INTEGRATION_TREATED,
+    plot_data(; kwargs...) = plot_table("y", "state", "year", INTEGRATION_PANEL; treated_states = INTEGRATION_TREATED,
                                                 treatment_times = INPUT_TIMES, covariates = INTEGRATION_COVARIATES,
                                                 ccc = "int", kwargs...)
     never_treated = setdiff(sort(unique(INTEGRATION_PANEL.state)), INTEGRATION_TREATED)
@@ -77,22 +77,22 @@ using Statistics
     # gvar gives the treated states as well
     treated_gvar = copy(INTEGRATION_PANEL)
     treated_gvar.gvar = [get(treatment_year, s, 0) for s in treated_gvar.state]
-    @test isequal(DiDInt.didint_plot("y", "state", "year", treated_gvar; gvar = "gvar", covariates = INTEGRATION_COVARIATES, ccc = "int"),
+    @test isequal(plot_table("y", "state", "year", treated_gvar; gvar = "gvar", covariates = INTEGRATION_COVARIATES, ccc = "int"),
                   integrated)
 
     # Without the treated states: an error if "int" is asked for by name; with the default
     # ccc = "all" it is left out, with a warning
-    @test_throws r"need the treated states" DiDInt.didint_plot("y", "state", "year", INTEGRATION_PANEL; treatment_times = INPUT_TIMES,
+    @test_throws r"need the treated states" plot_table("y", "state", "year", INTEGRATION_PANEL; treatment_times = INPUT_TIMES,
                                                               ccc = ["hom", "int"])
-    @test_logs (:warn, r"\"int\" is left out") match_mode = :any DiDInt.didint_plot("y", "state", "year", INTEGRATION_PANEL;
+    @test_logs (:warn, r"\"int\" is left out") match_mode = :any plot_table("y", "state", "year", INTEGRATION_PANEL;
                                                                                     treatment_times = INPUT_TIMES)
-    without_treated = quiet_call(() -> DiDInt.didint_plot("y", "state", "year", INTEGRATION_PANEL; treatment_times = INPUT_TIMES))
+    without_treated = quiet_call(() -> plot_table("y", "state", "year", INTEGRATION_PANEL; treatment_times = INPUT_TIMES))
     @test sort(unique(skipmissing(without_treated.ccc))) == ["add", "hom", "none", "state", "time"]
 
     # A state that is not observed in a period has no change into or out of that period, and a
     # treated state that is not observed in a period has no rows for it
     gap = filter(r -> !(r.state == "s07" && r.year == 2004) && !(r.state == "s01" && r.year == 2006), INTEGRATION_PANEL)
-    with_gap = DiDInt.didint_plot("y", "state", "year", gap; treated_states = INTEGRATION_TREATED, treatment_times = INPUT_TIMES,
+    with_gap = plot_table("y", "state", "year", gap; treated_states = INTEGRATION_TREATED, treatment_times = INPUT_TIMES,
                                   covariates = INTEGRATION_COVARIATES, ccc = "int")
     s07 = with_gap[(with_gap.treated_state_covars .== "s02") .& (with_gap.state .== "s07"), :]
     @test sort(s07.time) == string.([2002, 2003, 2006, 2007, 2008])
@@ -103,7 +103,7 @@ using Statistics
 
     # A state treated at or before the first date is neither a treated state nor a comparison state
     early = quiet_call() do
-        DiDInt.didint_plot("y", "state", "year", INTEGRATION_PANEL; treated_states = vcat(INTEGRATION_TREATED, "s06"),
+        plot_table("y", "state", "year", INTEGRATION_PANEL; treated_states = vcat(INTEGRATION_TREATED, "s06"),
                            treatment_times = vcat(INPUT_TIMES, 2001), covariates = INTEGRATION_COVARIATES, ccc = "int")
     end
     @test !("s06" in early.state) && !("s06" in early.treated_state_covars)
@@ -111,7 +111,7 @@ using Statistics
 end
 
 @testset "Conditional and integrated parallel trends data together" begin
-    plot_data(; kwargs...) = DiDInt.didint_plot("y", "state", "year", INTEGRATION_PANEL; treated_states = INTEGRATION_TREATED,
+    plot_data(; kwargs...) = plot_table("y", "state", "year", INTEGRATION_PANEL; treated_states = INTEGRATION_TREATED,
                                                 treatment_times = INPUT_TIMES, covariates = INTEGRATION_COVARIATES, kwargs...)
     all_data = plot_data()
     integrated = plot_data(ccc = "int")
@@ -140,7 +140,7 @@ end
     @test !any(ismissing, integrated.ccc)
 
     # The conditional data do not need the treated states
-    @test isequal(DiDInt.didint_plot("y", "state", "year", INTEGRATION_PANEL; treatment_times = INPUT_TIMES,
+    @test isequal(plot_table("y", "state", "year", INTEGRATION_PANEL; treatment_times = INPUT_TIMES,
                                      covariates = INTEGRATION_COVARIATES, ccc = ["hom", "time", "state", "add", "none"]), conditional)
 
     # The event study still uses the lambdas of "int"

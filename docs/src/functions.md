@@ -24,10 +24,18 @@ stderror(::DiDIntResult)
 coefnames(::DiDIntResult)
 ```
 
-## `didint_plot()` - Prepare Data for Visualization
+## `didint_plot()` - Parallel Trends and Event Study Plots
 
-The `didint_plot()` function produces a dataset in a long format that can easily be used for plotting parallel trends or event study plots.
+The `didint_plot()` function prepares the data for parallel trends plots and event study plots.
 
 ```@docs
 didint_plot
+```
+
+## `DiDIntPlot` - Plot Data and Plots
+
+`didint_plot()` returns its data as a `DiDIntPlot`, which prints a summary when displayed, stores the plot data as a table, and is drawn with `plot` once a [Makie](https://docs.makie.org) backend such as CairoMakie is loaded.
+
+```@docs
+DiDIntPlot
 ```

@@ -19,8 +19,9 @@ include("common_computation.jl")
 include("estimate_didint.jl")
 include("batched_engine.jl")
 include("results.jl")
+include("plots.jl")
 include("didint_plot.jl")
 
-export didint, didint_plot, DiDIntResult, coef, coefnames, stderror
+export didint, didint_plot, DiDIntResult, DiDIntPlot, coef, coefnames, stderror
 
 end

@@ -242,7 +242,7 @@ end
 
 @testset "didint_plot() accepts the argument shapes that didint() accepts" begin
     plot(; kwargs...) = quiet_call() do
-        DiDInt.didint_plot("y", "state", "year", INTEGRATION_PANEL; kwargs...)
+        plot_table("y", "state", "year", INTEGRATION_PANEL; kwargs...)
     end
     covariates = ["x1", "x2"]
     for event in [false, true]
@@ -266,7 +266,7 @@ end
     # The caller's data is left as it was
     data = copy(INTEGRATION_PANEL)
     plot_data = quiet_call() do
-        DiDInt.didint_plot("y", "state", "year", data; treated_states = ["s01", "s02"], treatment_times = 2004, covariates = covariates, event = true)
+        plot_table("y", "state", "year", data; treated_states = ["s01", "s02"], treatment_times = 2004, covariates = covariates, event = true)
     end
     result = input_didint(data; covariates = covariates)
     @test isequal(data, INTEGRATION_PANEL) && names(data) == names(INTEGRATION_PANEL)

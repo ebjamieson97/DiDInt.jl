@@ -546,7 +546,7 @@ with the variances and covariances estimated from each cell's regression. This t
 
 ## Plotting with `didint_plot()`
 
-`didint_plot()` prepares the data for three kinds of plots. All are visual aids built from the first-stage estimates of Step 1 of the [Five Step Estimation Procedure](@ref); none reproduces the ATT estimates of `didint()`.
+`didint_plot()` prepares the data for three kinds of plots, which `plot` draws (see [Drawing the Plots](@ref)). All are visual aids built from the first-stage estimates of Step 1 of the [Five Step Estimation Procedure](@ref); none reproduces the ATT estimates of `didint()`.
 
 ### Conditional Parallel Trends
 
@@ -579,6 +579,30 @@ With `event = true`, the $\hat{\lambda}_{s,t}$ values of the treated states are 
 ```
 
 where $g_s$ is the treatment time of state $s$ and the sums run over the treated states observed $e$ periods from treatment (`weights = false` uses equal weights). The standard error and confidence interval of each average come from the weighted regression of those $\hat{\lambda}_{s,t}$ values on a constant. The plot shows the average covariate-adjusted outcome of the treated states around treatment. It contains no comparison states, so it describes the path of the treated states and does not estimate dynamic treatment effects, which `didint()` reports with `agg = "time"`.
+
+### Drawing the Plots
+
+`didint_plot()` returns a `DiDIntPlot`, and `plot` draws it once a [Makie](https://docs.makie.org) backend such as CairoMakie is loaded. The `plot_type` argument chooses among `"event"`, `"conditional"` and `"integrated"`, and `treated_states` selects the treated states to show. A dotted vertical line marks the first treated period.
+
+The event study plot has one panel per `ccc` option, with $\overline{\lambda}_{e}$ and its confidence interval. Intervals are drawn where at least `groupmin` (by default 3) treated states are behind the average.
+
+The conditional parallel trends plot has one panel per `ccc` option, with the $\hat{\lambda}_{s,t}$ series of every state: the treated states in colour, the never-treated states in grey.
+
+With `facet = "state"` it instead has one panel per treated state $s$, under a single `ccc` option, which compares the series of $s$ with the average of its control states (or, with `controls = "separate"`, with each of them). The control states $C_{s,t}$ are the never-treated states and, if `didint_plot()` was called with `notyet = true`, the states not yet treated in period $t$. Because `didint()` compares the *change* of a treated state with the average of its controls' changes, the line of the average control state is built from changes. It starts at the average of the controls' $\hat{\lambda}$ in the first period, and then
+
+```math
+\overline{\lambda}^{C}_{s,t} = \overline{\lambda}^{C}_{s,t-1} + \sum_{c \in C_{s,t}} w_{c,t} \left(\hat{\lambda}_{c,t} - \hat{\lambda}_{c,t-1}\right), \qquad w_{c,t} = \frac{n_{c,t} + n_{c,t-1}}{\sum_{c' \in C_{s,t}} \left(n_{c',t} + n_{c',t-1}\right)}
+```
+
+with $w_{c,t} = 1 / |C_{s,t}|$ under `weights = false`. With the same control states and weights in every period this is the average of the controls' $\hat{\lambda}_{c,t}$. Unlike an average of those levels, it does not jump when a not-yet-treated state leaves the controls or when the numbers of observations change, and it moves in parallel with the treated state's series under the same conditions as the individual control series do.
+
+The integrated parallel trends plot has one panel per treated state $s$, which compares $\widehat{\delta}_{s \to s,t}$ with the average over its control states,
+
+```math
+\overline{\delta}_{s,t} = \sum_{c \in C_{s,t}} w_{c,t}\, \widehat{\delta}_{c \to s,t}
+```
+
+with the same weights $w_{c,t}$ (or, with `controls = "separate"`, with each $\widehat{\delta}_{c \to s,t}$). In the first treated period, $t = g_s$, the gap between the two lines is the estimate of `didint()` for that state and period: $\widehat{\delta}_{s \to s,g_s} - \overline{\delta}_{s,g_s} = \widehat{ATT}(s, g_s)$ under `ccc = "int"`, with `weights = true` corresponding to `weighting = "both"` or `"diff"` and `weights = false` to `"att"` or `"none"`. The gaps in the periods before it are what integrated parallel trends requires to be zero in expectation.
 
 ## Fast Computation of Randomization Inference and Jackknife
 

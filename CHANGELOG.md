@@ -53,6 +53,24 @@
 - New `notyet` argument: with `notyet = true` the comparison states of the integrated data
   also include the states not yet treated in the period in question.
 - The event study data (`event = true`) are unchanged.
+- `didint_plot()` now returns a `DiDIntPlot` instead of a DataFrame. Its `data` field is
+  the DataFrame that was returned before (also given by `DataFrame(x)`), and displaying it
+  prints a summary. With `wrapper = "stata"` or `"r"` the DataFrame itself is still returned.
+- New: a `DiDIntPlot` can be drawn with `plot` once a [Makie](https://docs.makie.org)
+  backend such as CairoMakie is loaded (Makie is an optional dependency, loaded as a
+  package extension). `plot_type` chooses among three plots:
+  - `"event"`: the event study, one panel per `ccc` option;
+  - `"conditional"`: the conditional parallel trends, one panel per `ccc` option with a
+    line for every state or, with `facet = "state"`, one panel per treated state that
+    compares it with its control states under one `ccc` option;
+  - `"integrated"`: the integrated parallel trends, one panel per treated state.
+
+  In the panels of a treated state, the control states are drawn as their average,
+  weighted by their numbers of observations (`weights = false` weights them equally), or
+  each on its own with `controls = "separate"`. `treated_states` and `ccc` select what is
+  shown, and `window` limits the periods.
+- When `treated_states` (or `gvar`) is given, it is now checked in the same way whichever
+  `ccc` options are asked for, as the plots use it to mark the treated states.
 
 ### Warnings about collinear covariates and rank deficiency
 
@@ -91,6 +109,8 @@
   aggregate ATT across aggregation options now uses the default weighting.
 - The Details page describes the three kinds of plot data of `didint_plot()` with their
   formulas, and the Examples page shows the integrated parallel trends data.
+- The Examples page and the README show each kind of plot, and the Details page describes
+  what the plots draw.
 
 ## 0.10.1
 

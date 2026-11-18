@@ -8,7 +8,7 @@ Integrated difference-in-differences!
 
 **DiDInt.jl** introduces two functions:
 - `didint()`, which is used for estimating the average effect of treatment on the treated (ATT) while accounting for various violations of the common causal covariates (CCC) assumption
-- `didint_plot()` which produces datasets that can easily be used to make parallel trends plots that help determine which CCC violation should be accounted for when using `didint()`. `didint_plot` can also produce datasets that can easily be used to make event study plots.
+- `didint_plot()`, which prepares and draws parallel trends plots that help determine which CCC violation should be accounted for when using `didint()`, as well as event study plots. The plots are drawn with [Makie](https://docs.makie.org); the data behind them are returned as well, for use with any other plotting package.
 
 To learn more about the common causal covariates assumption and integrated difference-in-differences please see [Karim & Webb (2025)](https://arxiv.org/abs/2412.14447).
 
@@ -93,9 +93,9 @@ DataFrame(result)
 
 Other aggregations are available through the `agg` argument (`"cohort"`, `"simple"`, `"state"`, `"sgt"`, `"time"`, `"calendar"`), as are separate ATTs by policy when treated states adopt different policies (`"policy"`, `"policy_gt"`, `"policy_cohort"`, `"policy_calendar"`, `"policy_time"`). See the [documentation page](https://ebjamieson97.github.io/DiDInt.jl/) for details.
 
-## `didint_plot()` - Prepare Data for Visualization
+## `didint_plot()` - Parallel Trends and Event Study Plots
 
-The `didint_plot()` function produces a dataset in a long format that can easily be used for plotting parallel trends or event study plots.
+The `didint_plot()` function prepares the data for parallel trends plots and event study plots. It returns a `DiDIntPlot`, which holds the data in a long format (in its `data` field) and can be drawn with `plot` (see [Plots](#plots) below).
 
 ```julia
 
@@ -107,7 +107,7 @@ plot_parallel = didint_plot("coll", "state", "year", test_data,
 
 # For every ccc option except "int": the covariate-adjusted mean outcome (lambda) of every
 # state and period (conditional parallel trends)
-plot_parallel[1:4, :]
+plot_parallel.data[1:4, :]
 # 4×11 DataFrame
 #  Row │ state    time     lambda    delta     n       treated_state_covars  ccc      period  start_date  treat_period  period_length
 #      │ String?  String?  Float64?  Float64?  Int64?  String?               String?  Int64?  String?     Int64?        String
@@ -120,7 +120,7 @@ plot_parallel[1:4, :]
 # For ccc = "int": for each treated state (treated_state_covars), the change since the previous
 # period in the predicted outcome (delta) of that state and of its comparison states, all
 # evaluated at that treated state's covariate means (integrated parallel trends)
-filter(row -> isequal(row.ccc, "int"), plot_parallel)[1:4, :]
+filter(row -> isequal(row.ccc, "int"), plot_parallel.data)[1:4, :]
 # 4×11 DataFrame
 #  Row │ state    time     lambda    delta       n       treated_state_covars  ccc      period  start_date  treat_period  period_length
 #      │ String?  String?  Float64?  Float64?    Int64?  String?               String?  Int64?  String?     Int64?        String
@@ -136,7 +136,7 @@ plot_event = didint_plot("coll", "state", "year", test_data,
                                treatment_times = treated_times, 
                                treated_states = treated_states,
                                event = true, covariates = ["asian", "black", "male"])
-plot_event[1:4, :]
+plot_event.data[1:4, :]
 # 4×8 DataFrame
 #  Row │ ccc     time_since_treatment  y         se         ci_lower   ci_upper  ngroup  period_length
 #      │ String  Int64                 Float64   Float64?   Float64?   Float64?  Int64   String
@@ -145,6 +145,40 @@ plot_event[1:4, :]
 #    2 │ hom                      -10  0.447675  0.0554866   0.208936  0.686415       3  1 year
 #    3 │ hom                       -9  0.470806  0.0223596   0.408725  0.532886       5  1 year
 #    4 │ hom                       -8  0.452972  0.0248907   0.392067  0.513878       7  1 year
+```
+
+## Plots
+
+`plot` draws a `DiDIntPlot` once a [Makie](https://docs.makie.org) backend, such as CairoMakie, is loaded. It returns a Makie `Figure`.
+
+```julia
+using CairoMakie
+
+# Event study: the mean of the treated states by period relative to treatment
+plot(plot_event)
+```
+
+![Event study plot](docs/src/assets/readme_event.png)
+
+```julia
+# Conditional parallel trends: every state, under each ccc option
+plot(plot_parallel)
+```
+
+![Conditional parallel trends plot](docs/src/assets/readme_conditional.png)
+
+```julia
+# Integrated parallel trends (ccc = "int"): each treated state next to the average of its control states
+plot(plot_parallel; plot_type = "integrated")
+```
+
+![Integrated parallel trends plot](docs/src/assets/readme_integrated.png)
+
+Arguments of `plot` select the treated states (`treated_states`) and the `ccc` options (`ccc`) to show, compare each treated state with its control states under one `ccc` option (`facet = "state"`), draw each control state instead of their average (`controls = "separate"`), and weight the control states equally (`weights = false`). See the [examples](https://ebjamieson97.github.io/DiDInt.jl/stable/examples/) for more.
+
+```julia
+figure = plot(plot_parallel; facet = "state", ccc = "state", treated_states = ["71", "58"])
+save("trends.png", figure)
 ```
 
 ## Citations
