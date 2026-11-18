@@ -184,7 +184,7 @@ A weighted subaggregate ATT counts in proportion to $N_j = \sum_{(s,t) \in j} n_
 
 #### Aggregate ATT Equivalency
 
-With `weighting = "both"` or `"att"`, the aggregate ATT does not depend on the grouping: since each subaggregate ATT is $\sum_{(s,t) \in j} n_{s,t}\, \widehat{\mathrm{ATT}}(s,t) / N_j$, its weighted mean is $\sum n_{s,t}\, \widehat{\mathrm{ATT}}(s,t) / \sum n_{s,t}$ over all $\widehat{\mathrm{ATT}}(s,t)$ values, whichever `agg` is chosen. Standard errors and p-values can still differ, since they are computed from different subaggregates. See [this example](@ref "The Aggregate ATT Across Aggregation Options").
+With `weighting = "both"` or `"att"`, the aggregate ATT does not depend on the grouping: since each subaggregate ATT is $\sum_{(s,t) \in j} n_{s,t}\, \widehat{\mathrm{ATT}}(s,t) / N_j$, its weighted mean is $\sum n_{s,t}\, \widehat{\mathrm{ATT}}(s,t) / \sum n_{s,t}$ over all $\widehat{\mathrm{ATT}}(s,t)$ values, whichever `agg` is chosen. The HC standard error and p-value can still differ, since they are computed from different subaggregates; the jackknife standard error and p-value cannot, and neither can the randomization inference p-value except under `"state"` and `"sgt"`. See [this example](@ref "The Aggregate ATT Across Aggregation Options").
 
 ## Policies
 

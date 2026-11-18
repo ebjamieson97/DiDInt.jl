@@ -292,15 +292,26 @@ results = [didint(
     nperm      = 399
 ) for agg in aggs]
 
+# The aggregate ATT and its inference, one row per agg option
+aggregate(result) = result.agg[1, :]
 DataFrame(
-    agg     = aggs,
-    agg_att = [coef(result)[1] for result in results],
-    se      = [stderror(result)[1] for result in results]
+    agg         = aggs,
+    agg_att     = [aggregate(result).att for result in results],
+    se          = [aggregate(result).se for result in results],
+    pval        = [aggregate(result).pval for result in results],
+    jknife_se   = [aggregate(result).jknife_se for result in results],
+    jknife_pval = [aggregate(result).jknife_pval for result in results],
+    ri_pval     = [aggregate(result).ri_pval for result in results]
 )
 ```
 
-The aggregate ATT (`agg_att`) is identical in every row. Its standard error differs, as it
-is computed from the sub-aggregate ATTs of each option.
+The aggregate ATT (`agg_att`) is identical in every row. Its HC standard error and p-value
+(`se`, `pval`) differ, as they are computed from the spread of the sub-aggregate ATTs of
+each option. The jackknife standard error and p-value do not differ: each removal of a state
+recomputes the same aggregate ATT, whatever the grouping. Neither does the randomization
+inference p-value, except under `"state"` and `"sgt"`, whose randomization inference draws
+an additional stand-in state for each treated state (see the
+[Randomization Inference](@ref) section).
 
 ---
 
