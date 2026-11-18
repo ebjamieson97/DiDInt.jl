@@ -17,7 +17,7 @@ function warnings_of(f)
     Base.CoreLogging.with_logger(f, logger)
     return String[string(record.message) for record in logger.logs]
 end
-dropped_warnings(f) = filter(w -> occursin("were dropped", w), warnings_of(f))
+dropped_warnings(f) = filter(w -> occursin("were dropped", w) || occursin("ccc = \"int\"", w), warnings_of(f))
 rank_warnings(f) = filter(w -> occursin("has rank", w), warnings_of(f))
 atts_affected(warning) = occursin("ATT estimates are affected", warning)
 
@@ -134,12 +134,13 @@ end
         # No covariate is dropped as collinear, and "add" finds no rank deficiency beyond the
         # expected one. Under "int" one cell cannot use x2, which is binary and takes a single
         # value there, and the ATT(s,t)'s that use that cell are reported.
-        warnings = filter(w -> occursin("were dropped", w) || occursin("has rank", w), warnings_of(call))
+        warnings = filter(w -> occursin("were dropped", w) || occursin("ccc = \"int\"", w) || occursin("has rank", w), warnings_of(call))
         if ccc == "int"
             @test length(warnings) == 1
             # x2 does not vary in that cell: only that reason is given, without the sentence on order
-            @test occursin("6 ATT(s,t) estimates depend", warnings[1])
-            @test occursin("because they do not vary within those cells: x2.", warnings[1]) && !occursin("x1", warnings[1])
+            @test occursin("6 ATT(s,t) estimates rest on the assumption", warnings[1])
+            @test occursin("certain state-period cells: x2.", warnings[1]) && !occursin("x1", warnings[1])
+            @test occursin("These covariates do not vary within those cells, so", warnings[1])
             @test !occursin("collinear", warnings[1]) && !occursin("order", warnings[1])
         else
             @test isempty(warnings)
@@ -214,7 +215,8 @@ end
                covariates = ["cat"], ref = Dict("cat" => "u"), nperm = 9, seed = 1234)
     end
     @test length(warnings) == 1
-    @test occursin("because they are collinear with other covariates: cat_w.", warnings[1]) && !occursin("cat_v", warnings[1])
+    @test occursin("cells: cat_w.", warnings[1]) && !occursin("cat_v", warnings[1])
+    @test occursin("are collinear with other covariates within those cells, so", warnings[1])
     @test occursin("order in which they are entered in 'covariates'", warnings[1])
 
     # A cell with fewer observations than covariates plus one keeps at most (observations - 1)
@@ -294,8 +296,8 @@ end
     @test !any(e -> (e[1], e[2]) == (e[3], e[4]), effects)
     warnings = int_warnings(differ, ["x1", "z"])
     @test length(warnings) == 1
-    @test occursin("$n_att ATT(s,t) estimates depend", warnings[1])
-    @test occursin("because they do not vary within those cells: z.", warnings[1]) && !occursin("x1", warnings[1])
+    @test occursin("$n_att ATT(s,t) estimates rest on the assumption", warnings[1])
+    @test occursin("cells: z.", warnings[1]) && occursin("do not vary within those cells, so", warnings[1]) && !occursin("x1", warnings[1])
 
     # A covariate that only depends on the period: the cells of period t share the treated
     # cell's value, the cells of the base period do not
@@ -324,14 +326,15 @@ end
     @test all(e -> e[5] == ["x1"], dropped_effects(breaks, ["z", "x1"]))
     warnings = int_warnings(breaks, ["x1", "z"])
     @test length(warnings) == 1
-    @test occursin("$n_att ATT(s,t) estimates depend", warnings[1])
-    @test occursin("because they are collinear with other covariates: z.", warnings[1])
+    @test occursin("$n_att ATT(s,t) estimates rest on the assumption", warnings[1])
+    @test occursin("cells: z.", warnings[1]) && occursin("are collinear with other covariates within those cells", warnings[1])
     @test occursin("order in which they are entered in 'covariates'", warnings[1])
     # With both reasons (x2 does not vary in one cell of the panel), both are given and the
     # covariates are listed in the order of 'covariates'
     warnings = int_warnings(breaks, ["x1", "x2", "z"])
     @test length(warnings) == 1
-    @test occursin("because they do not vary within those cells or are collinear with other covariates: x2, z.", warnings[1])
+    @test occursin("cells: x2, z.", warnings[1])
+    @test occursin("do not vary within those cells or are collinear with other covariates there", warnings[1])
     @test occursin("order in which they are entered in 'covariates'", warnings[1])
 
     # The basis of what a cell leaves undetermined: a unit vector for a column of zeros, and

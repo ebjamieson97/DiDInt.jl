@@ -864,15 +864,14 @@ function warn_dropped_covariates_int(fit::CovariateFit, diff_df::DataFrame)
     covariate_list = join(fit.covariates[sort([findfirst(==(c), fit.covariates) for c in responsible])], ", ")
     any_constant = any(!c for e in effects for c in e.collinear)
     any_collinear = any(c for e in effects for c in e.collinear)
-    reason = any_constant && any_collinear ? "because they do not vary within those cells or are collinear with other covariates" :
-             any_constant ? "because they do not vary within those cells" : "because they are collinear with other covariates"
+    reason = any_constant && any_collinear ? "do not vary within those cells or are collinear with other covariates there" :
+             any_constant ? "do not vary within those cells" : "are collinear with other covariates within those cells"
     order = any_collinear ? " Which of the collinear covariates is dropped depends on the order in which they are " *
                             "entered in 'covariates'." : ""
-    @warn "Under ccc = \"int\", $n_att ATT(s,t) estimate" * (n_att == 1 ? " depends" : "s depend") *
-          " on covariates that were dropped from the regression of some state-period cells " * reason * ": " *
-          covariate_list * ". Their coefficients are set to zero in those cells, but the cells are evaluated at " *
-          "the covariate means of the treated state, where other coefficients that fit the cells' data equally " *
-          "well would give different estimates." * order
+    @warn "Under ccc = \"int\", $n_att ATT(s,t) estimate" * (n_att == 1 ? " rests" : "s rest") *
+          " on the assumption that some covariates have no effect in certain state-period cells: " * covariate_list *
+          ". These covariates " * reason * ", so their effects there cannot be estimated, yet the cells are " *
+          "evaluated at the treated state's covariate means, where the covariates take other values." * order
     return nothing
 end
 
