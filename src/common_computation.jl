@@ -632,9 +632,10 @@ function warn_collinear_covariates(covariates, collinear_blocks, ccc)
             push!(descriptions, "$cov ($shown$more)")
         end
     end
-    @warn "Under ccc = \"$ccc\", covariates that are collinear with covariates listed before them were dropped" *
+    @warn "Under ccc = \"$ccc\", collinear covariates were dropped" *
           (ccc == "hom" ? "" : " where their slopes are estimated") * ": " * join(descriptions, "; ") *
-          ". The estimates depend on which of the collinear covariates is dropped, which is decided by the order of 'covariates'."
+          ". Which of the collinear covariates is dropped depends on the order in which they are entered in " *
+          "'covariates', and the estimates can depend on that choice."
     return nothing
 end
 

@@ -96,7 +96,7 @@ end
         end
         @test length(warnings) == 1
         @test occursin("x2", warnings[1]) && !occursin("x1", warnings[1])
-        @test occursin("order of 'covariates'", warnings[1])
+        @test occursin("order in which they are entered in 'covariates'", warnings[1])
 
         # The edge-case procedure uses the same covariates: same lambdas and ATT, and its
         # standard error is computed, equal to the one with x1 alone
@@ -137,7 +137,10 @@ end
         warnings = filter(w -> occursin("were dropped", w) || occursin("has rank", w), warnings_of(call))
         if ccc == "int"
             @test length(warnings) == 1
-            @test occursin("x2 in state s12, period 2006-01-01", warnings[1]) && !occursin("x1", warnings[1])
+            # x2 does not vary in that cell: only that reason is given, without the sentence on order
+            @test occursin("6 ATT(s,t) estimates depend", warnings[1])
+            @test occursin("because they do not vary within those cells: x2.", warnings[1]) && !occursin("x1", warnings[1])
+            @test !occursin("collinear", warnings[1]) && !occursin("order", warnings[1])
         else
             @test isempty(warnings)
         end
@@ -211,7 +214,8 @@ end
                covariates = ["cat"], ref = Dict("cat" => "u"), nperm = 9, seed = 1234)
     end
     @test length(warnings) == 1
-    @test occursin("cat_w in state s06, period 2005-01-01", warnings[1]) && !occursin("cat_v", warnings[1])
+    @test occursin("because they are collinear with other covariates: cat_w.", warnings[1]) && !occursin("cat_v", warnings[1])
+    @test occursin("order in which they are entered in 'covariates'", warnings[1])
 
     # A cell with fewer observations than covariates plus one keeps at most (observations - 1)
     # covariates, the ones listed first
@@ -291,7 +295,7 @@ end
     warnings = int_warnings(differ, ["x1", "z"])
     @test length(warnings) == 1
     @test occursin("$n_att ATT(s,t) estimates depend", warnings[1])
-    @test occursin("z in state", warnings[1]) && !occursin("x1", warnings[1])
+    @test occursin("because they do not vary within those cells: z.", warnings[1]) && !occursin("x1", warnings[1])
 
     # A covariate that only depends on the period: the cells of period t share the treated
     # cell's value, the cells of the base period do not
@@ -318,7 +322,17 @@ end
     @test length(unique((e[1], e[2]) for e in effects)) == n_att
     @test all(e -> e[5] == ["z"], effects)
     @test all(e -> e[5] == ["x1"], dropped_effects(breaks, ["z", "x1"]))
-    @test length(int_warnings(breaks, ["x1", "z"])) == 1
+    warnings = int_warnings(breaks, ["x1", "z"])
+    @test length(warnings) == 1
+    @test occursin("$n_att ATT(s,t) estimates depend", warnings[1])
+    @test occursin("because they are collinear with other covariates: z.", warnings[1])
+    @test occursin("order in which they are entered in 'covariates'", warnings[1])
+    # With both reasons (x2 does not vary in one cell of the panel), both are given and the
+    # covariates are listed in the order of 'covariates'
+    warnings = int_warnings(breaks, ["x1", "x2", "z"])
+    @test length(warnings) == 1
+    @test occursin("because they do not vary within those cells or are collinear with other covariates: x2, z.", warnings[1])
+    @test occursin("order in which they are entered in 'covariates'", warnings[1])
 
     # The basis of what a cell leaves undetermined: a unit vector for a column of zeros, and
     # the coefficients of the linear combination for a collinear column

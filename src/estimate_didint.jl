@@ -808,15 +808,20 @@ function dropped_covariate_effects(fit::CovariateFit, diff_df::DataFrame)
     # exceed IDENTIFICATION_RTOL times sum_i |n_i| scale_i, where scale_i is the root mean
     # square of covariate i over the data.
     # Returns one entry per (ATT(s,t), cell) pair that fails it, with the covariates dropped in
-    # that cell that are responsible.
-    effects = NamedTuple{(:state, :t, :cell, :covariates), Tuple{String, Date, Tuple{String, Date}, Vector{String}}}[]
+    # that cell that are responsible, and for each whether it was dropped for being collinear
+    # with covariates entered before it (true) or for not varying in the cell (false).
+    effects = NamedTuple{(:state, :t, :cell, :covariates, :collinear),
+                         Tuple{String, Date, Tuple{String, Date}, Vector{String}, Vector{Bool}}}[]
     isempty(fit.null_space) && return effects
 
     # For every cell that drops covariates and every vector n of its basis: n' xbar_k, the
-    # tolerance, and the dropped covariate that the vector belongs to (its last non-zero entry)
+    # tolerance, the dropped covariate that the vector belongs to (its last non-zero entry), and
+    # whether it is collinear with others (n has other non-zero entries; a covariate that does
+    # not vary in the cell has the unit vector, see null_space_basis)
     checks = Dict(cell => (basis = basis, own = basis' * fit.xbar[cell],
                            tolerance = IDENTIFICATION_RTOL .* (abs.(basis)' * fit.covariate_scale),
-                           dropped = [fit.covariates[findlast(!iszero, n)] for n in eachcol(basis)])
+                           dropped = [fit.covariates[findlast(!iszero, n)] for n in eachcol(basis)],
+                           collinear = [count(!iszero, n) > 1 for n in eachcol(basis)])
                   for (cell, basis) in fit.null_space)
 
     # Add an entry if the fitted value of `cell` at the covariate means `target` of ATT(s,t)
@@ -825,7 +830,8 @@ function dropped_covariate_effects(fit::CovariateFit, diff_df::DataFrame)
         check = get(checks, cell, nothing)
         isnothing(check) && return nothing
         fails = [abs(dot(view(check.basis, :, j), target) - check.own[j]) > check.tolerance[j] for j in eachindex(check.own)]
-        any(fails) && push!(effects, (state = s, t = t, cell = cell, covariates = check.dropped[fails]))
+        any(fails) && push!(effects, (state = s, t = t, cell = cell, covariates = check.dropped[fails],
+                                      collinear = check.collinear[fails]))
         return nothing
     end
 
@@ -847,21 +853,26 @@ end
 
 function warn_dropped_covariates_int(fit::CovariateFit, diff_df::DataFrame)
 
-    # One warning that lists the ATT(s,t)'s found by dropped_covariate_effects, with the cell
-    # and the covariates responsible. Nothing is said about covariates that are dropped
-    # without affecting any ATT(s,t).
+    # One warning with the number of ATT(s,t)'s found by dropped_covariate_effects and the
+    # covariates responsible. The reasons given for dropping them are only those that occur:
+    # not varying within a cell, or being collinear with covariates entered before them.
+    # Nothing is said about covariates that are dropped without affecting any ATT(s,t).
     effects = dropped_covariate_effects(fit, diff_df)
     isempty(effects) && return nothing
-    describe(e) = "ATT($(e.state), $(e.t)): $(join(e.covariates, ", ")) in state $(e.cell[1]), period $(e.cell[2])"
-    shown = join(describe.(first(effects, 5)), "; ")
-    more = length(effects) > 5 ? "; and $(length(effects) - 5) more" : ""
     n_att = length(unique((e.state, e.t) for e in effects))
+    responsible = unique(vcat([e.covariates for e in effects]...))
+    covariate_list = join(fit.covariates[sort([findfirst(==(c), fit.covariates) for c in responsible])], ", ")
+    any_constant = any(!c for e in effects for c in e.collinear)
+    any_collinear = any(c for e in effects for c in e.collinear)
+    reason = any_constant && any_collinear ? "because they do not vary within those cells or are collinear with other covariates" :
+             any_constant ? "because they do not vary within those cells" : "because they are collinear with other covariates"
+    order = any_collinear ? " Which of the collinear covariates is dropped depends on the order in which they are " *
+                            "entered in 'covariates'." : ""
     @warn "Under ccc = \"int\", $n_att ATT(s,t) estimate" * (n_att == 1 ? " depends" : "s depend") *
-          " on covariates that were dropped from the regression of a state-period cell (they do not vary there, or " *
-          "are collinear with covariates listed before them). A dropped covariate's coefficient is set to zero in " *
-          "that cell, but the cell is evaluated at the covariate means of the treated state, where other " *
-          "coefficients that fit the cell's data equally well give a different estimate: " * shown * more *
-          ". Which of several collinear covariates is dropped is decided by the order of 'covariates'."
+          " on covariates that were dropped from the regression of some state-period cells " * reason * ": " *
+          covariate_list * ". Their coefficients are set to zero in those cells, but the cells are evaluated at " *
+          "the covariate means of the treated state, where other coefficients that fit the cells' data equally " *
+          "well would give different estimates." * order
     return nothing
 end
 

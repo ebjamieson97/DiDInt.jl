@@ -24,8 +24,8 @@
 
 ### Warnings about collinear covariates and rank deficiency
 
-- Under `ccc = "int"`, a warning is now given only for the ATTs that depend on a dropped
-  covariate, naming the ATT, the cell and the covariate. A cell's coefficients are
+- Under `ccc = "int"`, a warning is now given only when ATTs depend on a dropped
+  covariate. It gives the number of ATTs affected and the covariates responsible. A cell's coefficients are
   evaluated at the covariate means of the treated state, and a covariate dropped from the
   cell's regression (because it does not vary in the cell, or is collinear with
   covariates listed before it) matters only when the cell's data cannot determine its
@@ -36,7 +36,8 @@
   first stage is used. Every direction in which the solution is undetermined is checked.
   In 0.10.1 the warning was given whenever the rank was below the expected rank, also
   when no ATT was affected.
-- Under `"hom"`, `"state"` and `"time"` the warning is unchanged.
+- Under `"hom"`, `"state"` and `"time"` the warning is reworded; it is given in the same
+  cases as before.
 
 ### Bug fixes
 
