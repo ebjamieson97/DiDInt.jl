@@ -2,84 +2,124 @@
 
 ## 0.11.0
 
-### Naming
-
-- The model with state-specific covariate coefficients is now called region-varying
-  DID-INT (previously state-varying), and the model with coefficients specific to each
-  state and period two-way DID-INT. The printed summary uses these names. The `ccc`
-  values (`"state"`, `"int"`) and every other argument and column name are unchanged.
-- DID-INT is spelled out as "integrated difference-in-differences" throughout.
-
 ### Weighting options
 
-- The `treated_weight` argument, added in 0.10.0, is removed. The ATT of a treated state
-  in a period is weighted within its sub-aggregate ATT by that state's number of
-  observations in that period under `weighting = "both"` and `"att"`, and equally under
-  `"diff"` and `"none"`. This is what the default `treated_weight = "treated"` did, so
-  results obtained with the default are unchanged; `treated_weight = "population"` is no
-  longer available.
+- The `treated_weight` argument is removed. The ATT of a treated state in a period is
+  weighted within its sub-aggregate ATT by that state's number of observations in that
+  period under `weighting = "both"` and `"att"`, and equally under `"diff"` and `"none"`.
+  This is what the default `treated_weight = "treated"` did, so results obtained with the
+  default are unchanged; `treated_weight = "population"` is no longer available.
 - Each value of `weighting` now has one meaning: `"diff"` weights the long differences of
   the control states, `"att"` weights the ATTs (within each sub-aggregate ATT and within
   the aggregate ATT), `"both"` does both and `"none"` neither.
 
+### Edge case standard errors under `ccc = "int"`
+
+- With covariates, these standard errors are now conditional on the observed covariates:
+  the variance of the ATT is the sum, over the four state-period cells involved, of the
+  variance of each cell's fitted value at the covariate means of the treated state, with
+  those means treated as fixed. 0.10.1 also included the sampling variability of the
+  covariate means. Only standard errors computed with `edgecase = true` under
+  `ccc = "int"` with covariates change; no ATT changes.
+
+### Warnings about collinear covariates and rank deficiency
+
+- Under `ccc = "int"`, a warning is now given only for the ATTs that depend on a dropped
+  covariate, naming the ATT, the cell and the covariate. A cell's coefficients are
+  evaluated at the covariate means of the treated state, and a covariate dropped from the
+  cell's regression (because it does not vary in the cell, or is collinear with
+  covariates listed before it) matters only when the cell's data cannot determine its
+  fitted value at those means. In 0.10.1 every covariate dropped as collinear was
+  reported, whether or not it affected an ATT.
+- Under `ccc = "add"`, the warning about rank deficiency beyond the split between states
+  and periods is given only when an ATT depends on which least-squares solution of the
+  first stage is used. Every direction in which the solution is undetermined is checked.
+  In 0.10.1 the warning was given whenever the rank was below the expected rank, also
+  when no ATT was affected.
+- Under `"hom"`, `"state"` and `"time"` the warning is unchanged.
+
+### Bug fixes
+
+- Under `ccc = "add"`, which columns of the first-stage regression count as linearly
+  dependent is now decided by the same relative tolerance as the collinearity rule of
+  the other options, after scaling every column to unit length. With a covariate that has
+  a very large mean and is collinear with another, the rounding error left by demeaning
+  could count as a covariate of its own, and the estimates then changed with the order
+  of the rows of the data (and could differ between platforms). Estimates are otherwise
+  unchanged.
+
+### Documentation
+
+- The estimation procedure is described in five steps: the average of the ATTs within
+  each sub-aggregate ATT and the average of the sub-aggregate ATTs are now separate steps.
+- Shorter, rewritten sections on weighting, rank deficiency, the edge case standard
+  errors of two-way DID-INT with covariates, how alternative assignments are drawn, and
+  how randomization inference and the jackknife are computed quickly. The example of the
+  aggregate ATT across aggregation options now uses the default weighting.
+
+## 0.10.1
+
+### Naming
+
+- The model with state-specific covariate coefficients is now called **region-varying
+  DID-INT** (previously state-varying), and the model with coefficients specific to each
+  state and period **two-way DID-INT**. The printed summary uses these names. The `ccc`
+  values (`"state"`, `"int"`) and every other argument and column name are unchanged.
+- DID-INT is spelled out as "integrated difference-in-differences" throughout.
+
 ### Collinear covariates
 
-- Collinear covariates are dropped in the order of `covariates` under `ccc = "hom"`,
+- **Collinear covariates are dropped in the order of `covariates`** under `ccc = "hom"`,
   `"state"`, `"time"` and `"int"`: a covariate is dropped where it is a linear combination
   of the covariates listed before it, in the part of the data over which its coefficient
   is estimated (all data, a state, a period, or a state-period cell). The rule uses a
   relative tolerance and no column pivoting, so the estimates no longer depend on the
   units in which covariates are measured, and they can be changed only by reordering
   `covariates`.
-- Changes to estimates. Estimates change only where covariates are collinear:
+- **A warning names the covariates that were dropped** as collinear and where. Covariates
+  that do not vary within any state-period cell of that part of the data are still dropped
+  silently, as they cannot affect the estimates.
+- **Changes to estimates.** Estimates change only where covariates are collinear:
   - Under `"hom"`, `"state"` and `"time"`, no covariate was dropped in 0.10.0. Collinear
     covariates have infinitely many coefficient vectors that fit equally well, and
     0.10.0 used the one with the smallest sum of squared coefficients (the minimum-norm
     least-squares solution). For example, with `x2 = 2 * x1` and a combined effect of 5
     per unit of `x1`, it gave `x1` a coefficient of 1 and `x2` a coefficient of 2. That
     choice changes when a covariate is rescaled (dollars to thousands of dollars), and so
-    did the ATTs. 0.11.0 drops `x2` and gives `x1` a coefficient of 5, whatever the units.
+    did the ATTs. 0.10.1 drops `x2` and gives `x1` a coefficient of 5, whatever the units.
   - Under `"int"`, 0.10.0 already dropped collinear covariates within a cell, but chose
     which one by a column-pivoted QR decomposition, which favours the covariates with the
     most variation and therefore also depended on units. Estimates change in cells where
     it dropped a covariate other than the one listed last.
-  - Under `"add"`, no covariate is dropped, as before. Which columns of its first-stage
-    regression count as linearly dependent is now decided by the same relative tolerance
-    as under the other options. In 0.10.0 the rounding error left by demeaning a
-    covariate with a very large mean that is collinear with another could count as a
-    covariate of its own, and the estimates then changed with the order of the rows of
-    the data. Estimates are otherwise unchanged.
-- Warnings:
-  - Under `"hom"`, `"state"` and `"time"`, a warning names the covariates that were
-    dropped for being collinear, and where.
-  - Under `"int"`, a warning is given only for the ATTs that depend on a dropped
-    covariate. A cell's coefficients are evaluated at the covariate means of the treated
-    state, and a dropped covariate (one that does not vary in the cell, or that is
-    collinear with covariates listed before it) matters when the cell's data cannot
-    determine its fitted value at those means. The warning names the ATT, the cell and
-    the covariate.
-  - Under `"add"`, the first-stage regression is always rank deficient in a way that does
-    not affect the estimates. When it is rank deficient beyond that, every direction in
-    which its solution is undetermined is checked, and a warning is given if an ATT
-    depends on the solution used.
-- `edgecase = true` no longer changes any ATT. With `edgecase = true`, the cells involved
-  in an edge case are estimated by a separate regression that also yields the covariance
-  matrix needed for the standard error. In 0.10.0 that regression handled collinear
-  covariates differently from the regression used for all other cells, so with collinear
-  covariates the ATTs could depend on whether `edgecase` was on. Both now use the same
-  covariates, determined once, and return identical ATTs.
-- Fewer missing edge case standard errors. An edge case standard error was `missing` in
-  0.10.0 when collinear covariates made that separate regression rank deficient. It is
+
+  Estimates without collinear covariates, and all estimates under `"add"`, are unchanged.
+- **`edgecase = true` no longer changes any ATT.** With `edgecase = true`, the cells
+  involved in an edge case are estimated by a separate regression that also yields the
+  covariance matrix needed for the standard error. In 0.10.0 that regression handled
+  collinear covariates differently from the regression used for all other cells, so with
+  collinear covariates the ATTs could depend on whether `edgecase` was on. Both now use
+  the same covariates, determined once, and return identical ATTs.
+- **Fewer missing edge case standard errors.** An edge case standard error was `missing`
+  in 0.10.0 when collinear covariates made that separate regression rank deficient. It is
   now computed.
+- **`ccc = "add"` warns about unusual rank deficiency.** Its first-stage regression is
+  always rank deficient in a way that does not affect the estimates. A warning is now
+  given when it is rank deficient beyond that (for example, a covariate that does not vary
+  within any cell of some state or period), as the ATTs may then depend on the
+  least-squares solution used.
 
 ### Edge case standard errors under `ccc = "int"` with covariates
 
-- These standard errors are now conditional on the observed covariates: the variance of
-  the ATT is the sum, over the four state-period cells involved, of the variance of each
-  cell's fitted value at the covariate means of the treated state, with those means
-  treated as fixed. 0.10.0 also included the sampling variability of the covariate means,
-  so the standard errors are now smaller. Only standard errors computed with
-  `edgecase = true` under `ccc = "int"` with covariates change; no ATT changes.
+- **Bug fix: these standard errors were slightly too large.** The variance of the
+  ATT of a treated state in a period with a single control state has three terms, the third
+  being a trace term for the product of two estimation errors. The first two terms are
+  computed with estimates in place of unknown true values, which already makes each of
+  them too large by that trace term on average. 0.10.0 added the trace term on top; it is
+  now subtracted, which gives an estimate that is right on average. The difference is of
+  the order of a few percent of the variance in cells with around ten observations and
+  negligible in large cells. Only standard errors computed with `edgecase = true` under
+  `ccc = "int"` with covariates change; no ATT changes. The Details page has the full
+  derivation.
 
 ### Jackknife warnings
 
@@ -93,12 +133,10 @@
 ### Documentation
 
 - This changelog is now a page of the documentation site.
-- The estimation procedure is described in five steps, the last two being the average of
-  the ATTs within each sub-aggregate ATT and the average of the sub-aggregate ATTs.
 - The Details page has rewritten sections on weighting (as three successive averages),
-  on rank deficiency, on the edge case standard errors of two-way DID-INT with
-  covariates, on how alternative assignments are drawn for randomization inference, and
-  on how randomization inference and the jackknife are computed quickly.
+  on the edge case standard errors of two-way DID-INT with covariates, and on how
+  alternative assignments are drawn for randomization inference, and new sections on rank
+  deficiency and on how randomization inference and the jackknife are computed quickly.
 - The Examples page has new examples on cohort ATTs with and without policies and on the
   aggregate ATT across aggregation options, and explains when the parallel trends plots
   are valid.
