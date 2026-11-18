@@ -385,7 +385,7 @@ This is the more conservative of the two p-values discussed in [MacKinnon and We
 
 Alternative assignments are evaluated in batches of 500, so memory use does not grow with `nperm`.
 
-For the `"state"` and `"sgt"` options, each treated state's treatment time is assigned to a randomly drawn state in each alternative assignment, and that state's estimate is used in its place (see [Aggregation by State](@ref)).
+For the `"state"` and `"sgt"` options, each treated state's treatment time is assigned to a randomly drawn state in each alternative assignment, and that state's estimate is used in its place.
 
 ### Kernel-Smoothed P-Values
 
@@ -404,10 +404,6 @@ Although every alternative assignment differs from the actual assignment, an est
 Ties are counted in favour of the null hypothesis (they satisfy $|ATT_{RI,r}| \geq |ATT_{Actual}|$). Because two estimates that are equal in exact arithmetic can differ by rounding error, estimates within a small relative tolerance (about $1.5 \times 10^{-8}$) of the actual estimate are treated as ties.
 
 This applies to the unsmoothed p-value. With [Kernel-Smoothed P-Values](@ref), an estimate equal to the actual estimate contributes $\Phi(0) = 0.5$ to the sum, so a tie counts as half of an exceedance rather than a whole one.
-
-### Aggregation by State
-
-When the randomization inference procedure is performed while the aggregation is set to `"state"` or `"sgt"`, each subaggregate ATT involves a single treated state, and an alternative assignment does not determine which state should take its place when more than one state receives the same treatment time. There is therefore an additional level of randomization: for each actually treated state, one state is drawn at random from the set of states that the alternative assignment associates with the treatment time of the actually treated state, and is used in its place in every period. This is in order to preserve the structure of the `"state"` and `"sgt"` aggregation methods whereby only one treated state is considered at a time.
 
 ### When Randomization Inference Is Not Performed
 
