@@ -108,80 +108,79 @@ result_time.sub
 
 ### Running `didint_plot()`
 
-`didint_plot()` prepares the data for parallel trends plots (`event = false`, the default)
-and for event study plots (`event = true`), and returns them as a `DiDIntPlot`. Its `data`
-field holds the plot data as a DataFrame, shown below, and `plot` draws it once a
-[Makie](https://docs.makie.org) backend is loaded: the [Plotting Examples](@ref) page shows
-every kind of plot. The [Plotting with `didint_plot()`](@ref) section gives the formulas
-behind each plot.
-
-#### Parallel trends plot data
-
-With `event = false` the data have one block of rows per `ccc` option. By default every
-option is included: `"hom"`, `"time"`, `"state"`, `"add"`, `"int"`, and `"none"` for the
-data without covariates. A vector of strings passed to the `ccc` argument selects the
-options.
+`didint_plot()` prepares the data for parallel trends plots and event study plots, and
+returns them as a `DiDIntPlot`. One call prepares the data for every kind of plot:
 
 ```@example didint
-plot_parallel = didint_plot(
+plot_data = didint_plot(
     "coll", "state", "year", merit;
     treatment_times = treated_times,
     treated_states  = treated_states,
-    event      = false,
     covariates = ["asian", "black", "male"]
 )
 ```
 
-For every option except `"int"`, the rows hold the conditional parallel trends data: the
-residualised outcome mean of each state and period (`lambda`) and the number of
-observations behind it (`n`). How the series of a treated state changes over time
-relative to the series of its controls is exactly the comparison that `didint()` bases
-its estimates on under these options, so they can be plotted against `period`, one line
-per state, to judge parallel trends under each form of covariate adjustment. The *level*
-of a series rests on a convention (the adjusted means are evaluated at covariates equal to
-zero), but another choice of covariate values would shift the series together and leave
-their parallelism unaffected.
+With a [Makie](https://docs.makie.org) backend loaded, `plot(plot_data; plot_type = ...)`
+draws each of these: the [Plotting Examples](@ref) page shows every plot, and the
+[Plotting with `didint_plot()`](@ref) section gives the formulas behind them. The data of
+each kind of plot are in the table of the same name. The `plot_type` argument of
+`didint_plot()` selects the kinds to prepare, and `ccc` the options.
 
-Under `ccc = "int"` that is no longer true: another choice of covariate values would
-change each point by its own amount. The rows of `"int"` therefore hold the integrated
-parallel trends data instead. For each treated state (`treated_state_covars`) there is one
-series for that state and one for each never-treated state (`state`): the change in the
-predicted outcome since the previous period (`delta`), with every state evaluated at the
-covariate means of `treated_state_covars`. `treat_period` is the period in which that
-treated state is first treated, and `n` the number of observations of `state` in the two
-periods. Setting `notyet = true` adds the states that are not yet treated as comparison
-states.
+#### Conditional parallel trends data
+
+The `conditional` table has the mean outcome of each state and period, residualised by
+the covariates as each `ccc` option other than `"int"` specifies (`lambda`), and the number
+of observations behind it (`n`). `"none"` is the option without covariates.
 
 ```@example didint
-filter(row -> isequal(row.ccc, "int"), plot_parallel.data)[1:4, :]
+plot_data.conditional[1:4, :]
 ```
 
-#### Event study plot data
+How the series of a treated state changes over time relative to the series of its
+controls is exactly the comparison that `didint()` bases its estimates on under these
+options. The *level* of a series rests on a convention (the adjusted means are evaluated
+at covariates equal to zero), but another choice of covariate values would shift the
+series together and leave their parallelism unaffected.
 
-Setting `event = true` prepares the treated-state means by period relative to treatment,
-with standard errors and confidence interval bounds.
+The `conditional2` table has those changes themselves: for each treated state
+(`treated_state`), the change in `lambda` of that state and of each of its control states
+(`state`) since the period before its treatment (`base_period`).
 
 ```@example didint
-plot_event = didint_plot(
-    "coll", "state", "year", merit;
-    treatment_times = treated_times,
-    treated_states  = treated_states,
-    event      = true,
-    covariates = ["asian", "black", "male"]
-);
+plot_data.conditional2[1:4, :]
+```
 
-plot_event.data[1:4, :]
+#### Integrated parallel trends data
+
+Under `ccc = "int"` another choice of covariate values would change each point of a
+series by its own amount, so the levels cannot be compared. The `integrated` table
+therefore has, for each treated state (`treated_state_covars`), the change in the
+predicted outcome since the previous period (`delta`) of that state and of each of its
+control states (`state`), with every state evaluated at the covariate means of
+`treated_state_covars`. `treat_period` is the period in which that treated state is first
+treated, and `n` the number of observations of `state` in the two periods.
+
+```@example didint
+plot_data.integrated[1:4, :]
+```
+
+The `integrated2` table has the same changes measured from the period before the treated
+state's treatment (`base_period`). In both tables the control states are the never-treated
+states; `notyet = true` adds the states of later cohorts while they are not yet treated.
+
+#### Event study data
+
+The `event` table has the treated-state means by period relative to treatment, with
+standard errors and confidence interval bounds.
+
+```@example didint
+plot_data.event[1:4, :]
 ```
 
 The `ccc` column indicates which model was used (`"hom"`, `"time"`, `"state"`, `"add"`,
 `"int"`, or `"none"` for no covariates), and `time_since_treatment = 0` marks the
 treatment period; negative values are pre-treatment and positive values are
 post-treatment.
-
-#### Drawing the plots
-
-With a Makie backend loaded, `plot(plot_parallel)` and `plot(plot_event)` draw these data.
-See the [Plotting Examples](@ref) page.
 
 ---
 

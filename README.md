@@ -95,86 +95,99 @@ Other aggregations are available through the `agg` argument (`"cohort"`, `"simpl
 
 ## `didint_plot()` - Parallel Trends and Event Study Plots
 
-The `didint_plot()` function prepares the data for parallel trends plots and event study plots. It returns a `DiDIntPlot`, which holds the data in a long format (in its `data` field) and can be drawn with `plot` (see [Plots](#plots) below).
+The `didint_plot()` function prepares the data for parallel trends plots and event study plots. It returns a `DiDIntPlot`, which holds a table for each kind of plot and can be drawn with `plot` (see [Plots](#plots) below).
 
 ```julia
 
-# Generate data for parallel trends plots
-plot_parallel = didint_plot("coll", "state", "year", test_data,
-                            treatment_times = treated_times,
-                            treated_states = treated_states,
-                            event = false, covariates = ["asian", "black", "male"])
+# Prepare the data for every kind of plot
+plot_data = didint_plot("coll", "state", "year", test_data,
+                        treatment_times = treated_times,
+                        treated_states = treated_states,
+                        covariates = ["asian", "black", "male"])
 
-# For every ccc option except "int": the covariate-adjusted mean outcome (lambda) of every
-# state and period (conditional parallel trends)
-plot_parallel.data[1:4, :]
-# 4×11 DataFrame
-#  Row │ state    time     lambda    delta     n       treated_state_covars  ccc      period  start_date  treat_period  period_length
-#      │ String?  String?  Float64?  Float64?  Int64?  String?               String?  Int64?  String?     Int64?        String
-# ─────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-#    1 │ 11       1989     0.467895   missing      39  missing               hom           0  1989             missing  1 year
-#    2 │ 11       1990     0.316912   missing      35  missing               hom           1  1989             missing  1 year
-#    3 │ 11       1991     0.445936   missing      33  missing               hom           2  1989             missing  1 year
-#    4 │ 11       1992     0.579997   missing      32  missing               hom           3  1989             missing  1 year
+# DID-INT plot data
+#   Outcome:          coll
+#   Covariates:       asian, black, male
+#   ccc options:      none, hom, time, state, add, int
+#   Treated states:   34 (2000), 57 (1998), 58 (1993), 59 (1997), 61 (1999), 64 (1996),
+#                     71 (1991), 72 (1998), 85 (1997), 88 (2000)
+#   Controls:         never-treated states
+#   Periods:          1 year, from 1989 to 2000
+#
+# Tables of plot data, each drawn with plot(x; plot_type = ...) (see ?DiDIntPlot)
+#   event          126 rows: ccc, time_since_treatment, y, se, ci_lower, ci_upper, ngroup
+#   conditional    3060 rows: state, time, period, ccc, lambda, n
+#   conditional2   23100 rows: state, time, period, ccc, delta, n, treated_state, base_period, treat_period
+#   integrated     4620 rows: state, time, period, delta, n, treated_state_covars, treat_period
+#   integrated2    4620 rows: state, time, period, delta, n, treated_state_covars, base_period, treat_period
 
-# For ccc = "int": for each treated state (treated_state_covars), the change since the previous
-# period in the predicted outcome (delta) of that state and of its comparison states, all
-# evaluated at that treated state's covariate means (integrated parallel trends)
-filter(row -> isequal(row.ccc, "int"), plot_parallel.data)[1:4, :]
-# 4×11 DataFrame
-#  Row │ state    time     lambda    delta       n       treated_state_covars  ccc      period  start_date  treat_period  period_length
-#      │ String?  String?  Float64?  Float64?    Int64?  String?               String?  Int64?  String?     Int64?        String
-# ─────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-#    1 │ 34       1990      missing  -0.0791523     375  34                    int           1  1989                  11  1 year
-#    2 │ 11       1990      missing  -0.125941       74  34                    int           1  1989                  11  1 year
-#    3 │ 12       1990      missing   0.0223095      72  34                    int           1  1989                  11  1 year
-#    4 │ 13       1990      missing  -0.160495       64  34                    int           1  1989                  11  1 year
+# Conditional parallel trends: the covariate-adjusted mean outcome (lambda) of every state
+# and period, for every ccc option except "int"
+plot_data.conditional[1:4, :]
+# 4×6 DataFrame
+#  Row │ state   time    period  ccc     lambda    n
+#      │ String  String  Int64   String  Float64   Int64
+# ─────┼─────────────────────────────────────────────────
+#    1 │ 11      1989         0  hom     0.467895     39
+#    2 │ 11      1990         1  hom     0.316912     35
+#    3 │ 11      1991         2  hom     0.445936     33
+#    4 │ 11      1992         3  hom     0.579997     32
 
+# Integrated parallel trends (ccc = "int"): for each treated state (treated_state_covars), the
+# change since the previous period in the predicted outcome (delta) of that state and of its
+# control states, all evaluated at that treated state's covariate means
+plot_data.integrated[1:4, :]
+# 4×7 DataFrame
+#  Row │ state   time    period  delta       n      treated_state_covars  treat_period
+#      │ String  String  Int64   Float64     Int64  String                Int64
+# ─────┼───────────────────────────────────────────────────────────────────────────────
+#    1 │ 34      1990         1  -0.0791523    375  34                              11
+#    2 │ 11      1990         1  -0.125941      74  34                              11
+#    3 │ 12      1990         1   0.0223095     72  34                              11
+#    4 │ 13      1990         1  -0.160495      64  34                              11
 
-# Generate data for an event study plot
-plot_event = didint_plot("coll", "state", "year", test_data,
-                               treatment_times = treated_times, 
-                               treated_states = treated_states,
-                               event = true, covariates = ["asian", "black", "male"])
-plot_event.data[1:4, :]
-# 4×8 DataFrame
-#  Row │ ccc     time_since_treatment  y         se         ci_lower   ci_upper  ngroup  period_length
-#      │ String  Int64                 Float64   Float64?   Float64?   Float64?  Int64   String
-# ─────┼───────────────────────────────────────────────────────────────────────────────────────────────
-#    1 │ hom                      -11  0.528292  0.0964386  -0.697077  1.75366        2  1 year
-#    2 │ hom                      -10  0.447675  0.0554866   0.208936  0.686415       3  1 year
-#    3 │ hom                       -9  0.470806  0.0223596   0.408725  0.532886       5  1 year
-#    4 │ hom                       -8  0.452972  0.0248907   0.392067  0.513878       7  1 year
+# Event study: the mean of the treated states by period relative to treatment
+plot_data.event[1:4, :]
+# 4×7 DataFrame
+#  Row │ ccc     time_since_treatment  y         se         ci_lower   ci_upper  ngroup
+#      │ String  Int64                 Float64   Float64?   Float64?   Float64?  Int64
+# ─────┼────────────────────────────────────────────────────────────────────────────────
+#    1 │ add                      -11  0.51728   0.104552   -0.81118   1.84574        2
+#    2 │ add                      -10  0.439195  0.0549642   0.202703  0.675687       3
+#    3 │ add                       -9  0.472126  0.0289763   0.391675  0.552577       5
+#    4 │ add                       -8  0.4383    0.030128    0.364579  0.51202        7
 ```
+
+The `conditional2` and `integrated2` tables hold the same comparisons as changes since the period before each treated state's treatment. The `plot_type` argument of `didint_plot()` selects the kinds of plot data to prepare, for example `plot_type = ["event", "integrated2"]`.
 
 ## Plots
 
-`plot` draws a `DiDIntPlot` once a [Makie](https://docs.makie.org) backend, such as CairoMakie, is loaded. It returns a Makie `Figure`.
+`plot` draws a `DiDIntPlot` once a [Makie](https://docs.makie.org) backend, such as CairoMakie, is loaded. Its `plot_type` argument chooses the plot, and it returns a Makie `Figure`.
 
 ```julia
 using CairoMakie
 
 # Event study: the mean of the treated states by period relative to treatment
-plot(plot_event)
+plot(plot_data; plot_type = "event")
 ```
 
 ![Event study plot](docs/src/assets/readme_event.png)
 
 ```julia
 # Conditional parallel trends under each ccc option, here for treated state 72
-plot(plot_parallel; treated_states = "72")
+plot(plot_data; treated_states = "72")
 ```
 
 ![Conditional parallel trends plot](docs/src/assets/readme_conditional.png)
 
 ```julia
 # Integrated parallel trends (ccc = "int"): each treated state next to the average of its control states
-plot(plot_parallel; plot_type = "integrated")
+plot(plot_data; plot_type = "integrated")
 ```
 
 ![Integrated parallel trends plot](docs/src/assets/readme_integrated.png)
 
-There are more options: selecting treated states and `ccc` options, one panel per treated state, each control state instead of their average, equal weights, not-yet-treated states as controls, and versions of the parallel trends plots measured from the period before treatment (`plot_type = "conditional2"` and `"integrated2"`), from which the ATT estimates can be read. They are shown on the [Plotting Examples](https://ebjamieson97.github.io/DiDInt.jl/stable/plotting/) page of the documentation.
+There are more options: selecting treated states and `ccc` options, one panel per treated state, each control state instead of their average, equal weights, not-yet-treated states as controls, and versions of the parallel trends plots as changes since the pre-treatment period (`plot_type = "conditional2"` and `"integrated2"`), from which the ATT estimates and placebo estimates before treatment can be read. They are shown on the [Plotting Examples](https://ebjamieson97.github.io/DiDInt.jl/stable/plotting/) page of the documentation.
 
 ## Citations
 - Karim & Webb (2025). ["Good Controls Gone Bad: Difference-in-Differences with Covariates".](https://arxiv.org/abs/2412.14447)

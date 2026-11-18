@@ -34,7 +34,7 @@ didint_plot
 
 ## `DiDIntPlot` - Plot Data and Plots
 
-`didint_plot()` returns its data as a `DiDIntPlot`, which prints a summary when displayed, stores the plot data as a table, and is drawn with `plot` once a [Makie](https://docs.makie.org) backend such as CairoMakie is loaded.
+`didint_plot()` returns its data as a `DiDIntPlot`, which prints a summary when displayed, stores the data of each kind of plot as a table, and is drawn with `plot` once a [Makie](https://docs.makie.org) backend such as CairoMakie is loaded.
 
 ```@docs
 DiDIntPlot

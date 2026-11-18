@@ -1,5 +1,6 @@
 # Tests of the parallel trends data of didint_plot(): the conditional parallel trends data
-# (every ccc option except "int") and the integrated parallel trends data (ccc = "int").
+# (every ccc option except "int") and the integrated parallel trends data (ccc = "int"), as
+# they are passed in one table to the Stata and R wrappers (plot_table, see runtests.jl).
 
 using Dates
 using LinearAlgebra
@@ -56,13 +57,17 @@ using Statistics
         end
     end
 
-    # notyet = true adds the states not yet treated in the period: for s01 (treated 2004), s03 and
-    # s04 until 2005, s05 until 2006, and the other state of its own cohort (s02) until 2003
+    # notyet = true adds the states of later cohorts while they are not yet treated, as in
+    # didint(): for s01 (treated 2004), s03 and s04 until 2005 and s05 until 2006, but not the
+    # other state of its own cohort (s02)
     with_notyet = plot_data(notyet = true)
     rows = with_notyet[with_notyet.treated_state_covars .== "s01", :]
     @test sort(unique(rows.time[rows.state .== "s03"])) == string.(2002:2005)
     @test sort(unique(rows.time[rows.state .== "s05"])) == string.(2002:2006)
-    @test sort(unique(rows.time[rows.state .== "s02"])) == string.(2002:2003)
+    @test !("s02" in rows.state[rows.state .!= "s01"])
+    # ... and for s03 (treated 2006) only s05, not the states treated earlier
+    rows = with_notyet[with_notyet.treated_state_covars .== "s03", :]
+    @test sort(unique(rows.state)) == sort(vcat("s03", "s05", never_treated))
     @test all(isapprox(row.delta, delta(row.state, row.treated_state_covars, parse(Int, row.time)); atol = 1e-8) for row in eachrow(with_notyet))
     # the rows without notyet are unchanged
     in_default = in.(with_notyet.state, Ref(never_treated)) .| (with_notyet.state .== with_notyet.treated_state_covars)
@@ -80,12 +85,12 @@ using Statistics
     @test isequal(plot_table("y", "state", "year", treated_gvar; gvar = "gvar", covariates = INTEGRATION_COVARIATES, ccc = "int"),
                   integrated)
 
-    # Without the treated states: an error if "int" is asked for by name; with the default
-    # ccc = "all" it is left out, with a warning
-    @test_throws r"need the treated states" plot_table("y", "state", "year", INTEGRATION_PANEL; treatment_times = INPUT_TIMES,
-                                                              ccc = ["hom", "int"])
-    @test_logs (:warn, r"\"int\" is left out") match_mode = :any plot_table("y", "state", "year", INTEGRATION_PANEL;
-                                                                                    treatment_times = INPUT_TIMES)
+    # Without the treated states: only the conditional data are prepared, with a warning; the
+    # integrated data asked for by name are an error
+    @test_throws r"need the treated states" DiDInt.didint_plot("y", "state", "year", INTEGRATION_PANEL; treatment_times = INPUT_TIMES,
+                                                              ccc = ["hom", "int"], plot_type = "integrated")
+    @test_logs (:warn, r"Only the conditional parallel trends data are prepared") match_mode = :any plot_table("y", "state", "year", INTEGRATION_PANEL;
+                                                                                                             treatment_times = INPUT_TIMES)
     without_treated = quiet_call(() -> plot_table("y", "state", "year", INTEGRATION_PANEL; treatment_times = INPUT_TIMES))
     @test sort(unique(skipmissing(without_treated.ccc))) == ["add", "hom", "none", "state", "time"]
 
@@ -140,8 +145,11 @@ end
     @test !any(ismissing, integrated.ccc)
 
     # The conditional data do not need the treated states
-    @test isequal(plot_table("y", "state", "year", INTEGRATION_PANEL; treatment_times = INPUT_TIMES,
-                                     covariates = INTEGRATION_COVARIATES, ccc = ["hom", "time", "state", "add", "none"]), conditional)
+    without_treated = quiet_call() do
+        plot_table("y", "state", "year", INTEGRATION_PANEL; treatment_times = INPUT_TIMES, covariates = INTEGRATION_COVARIATES,
+                   ccc = ["hom", "time", "state", "add", "none"])
+    end
+    @test isequal(without_treated, conditional)
 
     # The event study still uses the lambdas of "int"
     event = plot_data(event = true, ccc = ["hom", "int"])

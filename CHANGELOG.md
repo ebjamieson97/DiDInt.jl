@@ -38,47 +38,58 @@
 
 ### `didint_plot()`
 
-- With `event = false`, `ccc = "int"` now gives the data of the integrated parallel trends
-  plot of Karim & Webb (2025, eqs. 36-38) instead of the first-stage estimates: for each
-  treated state (`treated_state_covars`), the change from one period to the next (`delta`)
-  in the predicted outcome of that state and of its comparison states (`state`), all
-  evaluated at that treated state's covariate means. These rows have the treated state's
-  treatment period in `treat_period`. They need the treated states (`treated_states` or
-  `gvar`); without them, `"int"` is left out of the default `ccc = "all"` with a warning.
-- The other `ccc` options give the same conditional parallel trends data as before
-  (`lambda`).
-- The output has three new columns: `delta` and `treated_state_covars`, which are missing
-  in the rows of the other `ccc` options (as `lambda` is in the rows of `"int"`), and `n`,
-  the number of observations behind each row.
-- New `notyet` argument: with `notyet = true` the comparison states of the integrated data
-  also include the states not yet treated in the period in question.
-- The event study data (`event = true`) are unchanged.
-- `didint_plot()` now returns a `DiDIntPlot` instead of a DataFrame. Its `data` field is
-  the DataFrame that was returned before (also given by `DataFrame(x)`), and displaying it
-  prints a summary. With `wrapper = "stata"` or `"r"` the DataFrame itself is still returned.
+- `didint_plot()` now returns a `DiDIntPlot` instead of a DataFrame. One call prepares the
+  data for every kind of plot, each in a table (a DataFrame) of the `DiDIntPlot`:
+  - `conditional`: the conditional parallel trends data as before, the covariate-adjusted
+    mean outcome of every state and period (`lambda`) under every `ccc` option except
+    `"int"`;
+  - `conditional2`: for each treated state, the change in `lambda` of that state and of its
+    control states since the period before its treatment (`delta`);
+  - `integrated`: the data of the integrated parallel trends plot of Karim & Webb (2025,
+    eqs. 36-38) under `ccc = "int"`: for each treated state (`treated_state_covars`), the
+    change from one period to the next (`delta`) in the predicted outcome of that state and
+    of its control states (`state`), all evaluated at that treated state's covariate means;
+  - `integrated2`: the same changes measured from the period before the treated state's
+    treatment;
+  - `event`: the event study data.
+
+  In `conditional2` and `integrated2`, the change of a treated state minus the average
+  change of its control states is the ATT that `didint()` estimates in each treated period,
+  and a placebo estimate in each period before treatment.
+- New `plot_type` argument, which replaces `event`: `"all"` (the default) or any
+  combination of `"event"`, `"conditional"`, `"conditional2"`, `"integrated"` and
+  `"integrated2"`, the kinds of plot data to prepare. Every kind except `"conditional"`
+  needs the treated states (`treated_states` or `gvar`); without them only the conditional
+  data are prepared, with a warning.
+- New `notyet` argument: with `notyet = true` the control states of a treated state also
+  include the states of later cohorts while they are not yet treated, as in `didint()`.
+- The event study now uses the first stage estimated on all states, as `didint()` and the
+  other plot data do; before, it was estimated on the treated states only. Its estimates
+  change under the `ccc` options `"hom"`, `"time"` and `"add"`.
+- The tables have a column `n`, the number of observations behind each row.
+- With `wrapper = "stata"` or `"r"` a single DataFrame is still returned: the event study
+  with `plot_type = "event"`, otherwise the conditional and integrated parallel trends in
+  one table (with the columns `delta`, `treated_state_covars` and `n` added, and the rows
+  of `ccc = "int"` holding the integrated data instead of the first-stage estimates).
 - New: a `DiDIntPlot` can be drawn with `plot` once a [Makie](https://docs.makie.org)
   backend such as CairoMakie is loaded (Makie is an optional dependency, loaded as a
-  package extension). `plot_type` chooses among five plots:
+  package extension). Its `plot_type` argument chooses among five plots:
   - `"event"`: the event study, one panel per `ccc` option;
   - `"conditional"`: the conditional parallel trends, one panel per `ccc` option with a
     line for every state or, with `facet = "state"`, one panel per treated state that
     compares it with its control states under one `ccc` option;
-  - `"conditional2"`: the conditional parallel trends per treated state, with the average
-    of the control states measured from the period before treatment as in `didint()`, so
-    that the change in the gap between the two lines since that period is the ATT of each
-    treated period;
+  - `"conditional2"`: the conditional parallel trends as changes since the pre-treatment
+    period, one panel per treated state;
   - `"integrated"`: the integrated parallel trends, one panel per treated state, as
     changes since the previous period;
-  - `"integrated2"`: the same as changes since the period before treatment, so that the
-    gap between the two lines is the ATT of each treated period. Its data are in the new
-    `long_differences` field of the `DiDIntPlot`.
+  - `"integrated2"`: the same as changes since the pre-treatment period.
 
   In the panels of a treated state, the control states are drawn as their average,
   weighted by their numbers of observations (`weights = false` weights them equally), or
   each on its own with `controls = "separate"`. `treated_states` and `ccc` select what is
   shown, and `window` limits the periods.
 - When `treated_states` (or `gvar`) is given, it is now checked in the same way whichever
-  `ccc` options are asked for, as the plots use it to mark the treated states.
+  kinds of plot data are asked for, as the plots use it to mark the treated states.
 
 ### Warnings about collinear covariates and rank deficiency
 
@@ -115,8 +126,9 @@
   errors of two-way DID-INT with covariates, how alternative assignments are drawn, and
   how randomization inference and the jackknife are computed quickly. The example of the
   aggregate ATT across aggregation options now uses the default weighting.
-- The Details page describes the three kinds of plot data of `didint_plot()` with their
-  formulas, and the Examples page shows the integrated parallel trends data.
+- The Details page describes the kinds of plot data of `didint_plot()` with their
+  formulas, and how to read the placebo estimates before treatment; the Examples page
+  shows the tables of plot data.
 - A new Plotting Examples page shows every kind of plot and its options, the README shows
   three of them, and the Details page describes what the plots draw.
 

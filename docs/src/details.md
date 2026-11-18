@@ -546,11 +546,13 @@ with the variances and covariances estimated from each cell's regression. This t
 
 ## Plotting with `didint_plot()`
 
-`didint_plot()` prepares the data for three kinds of plots, which `plot` draws (see [Drawing the Plots](@ref)). All are visual aids built from the first-stage estimates of Step 1 of the [Five Step Estimation Procedure](@ref). Two further plots, described under [Drawing the Plots](@ref), measure the same quantities from the period before treatment, so that the ATT estimates of `didint()` can be read from them.
+`didint_plot()` prepares the data for five kinds of plots, which `plot` draws; the [Plotting Examples](@ref) page shows each of them. All are built from the first-stage estimates $\hat{\lambda}_{s,t}$ of Step 1 of the [Five Step Estimation Procedure](@ref), estimated on all states exactly as in `didint()`. The `plot_type` argument of `didint_plot()` chooses the kinds of data to prepare (by default all of them), and each kind is returned as a table of the same name.
+
+Below, $g_s$ is the first treated period of a treated state $s$, and $r_s = g_s - 1$ its pre-treatment period. The control states $C_{s,t}$ of $s$ in period $t$ are the never-treated states and, with `notyet = true`, the states of later cohorts that are not yet treated in $t$, as in `didint()`.
 
 ### Conditional Parallel Trends
 
-With `event = false`, every `ccc` option other than `"int"` gives the $\hat{\lambda}_{s,t}$ values themselves, for every state and period:
+The `"conditional"` data are the $\hat{\lambda}_{s,t}$ values themselves, for every state and period, under every `ccc` option other than `"int"`:
 
 ```math
 \hat{\lambda}_{s,t} = \overline{Y}_{s,t} - \hat{\gamma}_{s,t}'\,\overline{X}_{s,t}
@@ -558,39 +560,7 @@ With `event = false`, every `ccc` option other than `"int"` gives the $\hat{\lam
 
 where $\hat{\gamma}_{s,t}$ are the covariate coefficients that the `ccc` option implies for the cell (`"none"` uses $\overline{Y}_{s,t}$ itself). Under these options `didint()` compares exactly the changes over time in these series, so series that move in parallel before treatment support conditional parallel trends under that option, and comparing the options shows which form of covariate adjustment makes the trends parallel.
 
-### Integrated Parallel Trends
-
-Under `"int"` the $\hat{\lambda}_{s,t}$ values depend on how the covariates are coded, so with `event = false` the option `ccc = "int"` instead gives the data for the integrated parallel trends plot of the DID-INT paper (equations 36 to 38). The outcome is regressed on the covariates separately in every $(s,t)$ cell, which gives $\hat{\lambda}_{s,t}$ and $\hat{\gamma}_{s,t}$. For a treated state $s$ and a state $j$, the change in the predicted outcome of $j$ between periods $t-1$ and $t$, evaluated at the covariate means of $s$ in period $t$, is
-
-```math
-\widehat{\delta}_{j \to s,t} = \left(\hat{\lambda}_{j,t} - \hat{\lambda}_{j,t-1}\right) + \left(\hat{\gamma}_{j,t} - \hat{\gamma}_{j,t-1}\right)'\,\overline{X}_{s,t}
-```
-
-It is computed for every treated state $s$ (the `treated_state_covars` column), for $j = s$ and for each comparison state of $s$: the never-treated states and, with `notyet = true`, the states not yet treated in period $t$. The `n` column holds $n_{j,t} + n_{j,t-1}$, the weight that a control state has in `didint()`.
-
-These are the [Integrated Long Differences](@ref) of `didint()` under `ccc = "int"`, taken from one period to the next rather than from the period before treatment; in the first treated period the two coincide. One plot is made per treated state: if its series stays close to those of its comparison states before treatment, integrated parallel trends is plausible for that state.
-
-### Event Study
-
-With `event = true`, the $\hat{\lambda}_{s,t}$ values of the treated states are averaged by period relative to treatment, $e = t - g_s$, for each requested `ccc` option:
-
-```math
-\overline{\lambda}_{e} = \sum_{s} \omega_{s,e}\, \hat{\lambda}_{s,\,g_s + e}, \qquad \omega_{s,e} = \frac{n_{s,\,g_s+e}}{\sum_{s'} n_{s',\,g_{s'}+e}}
-```
-
-where $g_s$ is the treatment time of state $s$ and the sums run over the treated states observed $e$ periods from treatment (`weights = false` uses equal weights). The standard error and confidence interval of each average come from the weighted regression of those $\hat{\lambda}_{s,t}$ values on a constant. The plot shows the average covariate-adjusted outcome of the treated states around treatment. It contains no comparison states, so it describes the path of the treated states and does not estimate dynamic treatment effects, which `didint()` reports with `agg = "time"`.
-
-### Drawing the Plots
-
-`didint_plot()` returns a `DiDIntPlot`, and `plot` draws it once a [Makie](https://docs.makie.org) backend such as CairoMakie is loaded. The `plot_type` argument chooses among `"event"`, `"conditional"`, `"conditional2"`, `"integrated"` and `"integrated2"`, and `treated_states` selects the treated states to show. A dashed vertical line marks the first treated period, and the panels of treated states are ordered from the earliest treated state to the latest. The [Plotting Examples](@ref) page shows every plot.
-
-Below, $g_s$ is the first treated period of the treated state $s$ and $r_s = g_s - 1$ the period before it. The control states $C_{s,t}$ of $s$ in period $t$ are the never-treated states and, if `didint_plot()` was called with `notyet = true`, the states not yet treated.
-
-The event study plot (`"event"`) has one panel per `ccc` option, with $\overline{\lambda}_{e}$ and its confidence interval. Intervals are drawn where at least `groupmin` (by default 3) treated states are behind the average.
-
-The conditional parallel trends plot (`"conditional"`) has one panel per `ccc` option, with the $\hat{\lambda}_{s,t}$ series of every state: each treated state in its own colour, the never-treated states in grey.
-
-With `facet = "state"` it instead has one panel per treated state $s$, under a single `ccc` option, which compares the series of $s$ with the average of its control states (or, with `controls = "separate"`, with each of them). Because `didint()` compares the *change* of a treated state with the average of its controls' changes, the line of the average control state is built from changes. It starts at the average of the controls' $\hat{\lambda}$ in the first period, and then
+The plot has one panel per `ccc` option, with the series of every state: each treated state in its own colour, the never-treated states in grey. With `facet = "state"` it instead has one panel per treated state $s$, under a single `ccc` option, which compares the series of $s$ with the average of its control states (or, with `controls = "separate"`, with each of them). Because `didint()` compares the *change* of a treated state with the average of its controls' changes, the line of the average control state is built from changes. It starts at the average of the controls' $\hat{\lambda}$ in the first period, and then
 
 ```math
 \overline{\lambda}^{C}_{s,t} = \overline{\lambda}^{C}_{s,t-1} + \sum_{c \in C_{s,t}} w_{c,t} \left(\hat{\lambda}_{c,t} - \hat{\lambda}_{c,t-1}\right), \qquad w_{c,t} = \frac{n_{c,t} + n_{c,t-1}}{\sum_{c' \in C_{s,t}} \left(n_{c',t} + n_{c',t-1}\right)}
@@ -598,37 +568,73 @@ With `facet = "state"` it instead has one panel per treated state $s$, under a s
 
 with $w_{c,t} = 1 / |C_{s,t}|$ under `weights = false`. With the same control states and weights in every period this is the average of the controls' $\hat{\lambda}_{c,t}$. An average of those levels would move whenever a not-yet-treated state leaves the controls or the numbers of observations change, even if every control state were parallel to the treated state; this line does not.
 
-The plot `"conditional2"` has the same panels, with the average control state measured from the period before treatment, as `didint()` measures it:
+### Changes Since the Pre-Treatment Period
+
+The `"conditional2"` data are the differences from which `didint()` computes its estimates under the `ccc` options other than `"int"`, for every period instead of the treated periods only. For a treated state $s$ and a state $j$ (the state $s$ itself or one of its control states),
 
 ```math
-\overline{\lambda}^{C}_{s,t} = \overline{\lambda}^{C}_{s,r_s} + \sum_{c \in C_{s,t}} w_{c,t} \left(\hat{\lambda}_{c,t} - \hat{\lambda}_{c,r_s}\right), \qquad w_{c,t} = \frac{n_{c,t} + n_{c,r_s}}{\sum_{c' \in C_{s,t}} \left(n_{c',t} + n_{c',r_s}\right)}
+\widehat{\delta}_{j,t} = \hat{\lambda}_{j,t} - \hat{\lambda}_{j,r_s}
 ```
 
-where $\overline{\lambda}^{C}_{s,r_s}$ is the average of the controls' $\hat{\lambda}$ in period $r_s$, and a not-yet-treated control belongs to another cohort and is untreated in both $t$ and $r_s$. These are the differences and the weights of Steps 2 and 3 of the [Five Step Estimation Procedure](@ref), so the gap between the two lines, less the gap in period $r_s$, is the estimate itself:
+for every period $t \neq r_s$; in period $r_s$ the change is zero. The plot has one panel per treated state, under a single `ccc` option, which compares $\widehat{\delta}_{s,t}$ with the average over its control states,
 
 ```math
-\left(\hat{\lambda}_{s,t} - \overline{\lambda}^{C}_{s,t}\right) - \left(\hat{\lambda}_{s,r_s} - \overline{\lambda}^{C}_{s,r_s}\right) = \widehat{ATT}(s,t) \qquad \text{for } t \geq g_s
+\overline{\delta}_{s,t} = \sum_{c \in C_{s,t}} w_{c,t}\, \widehat{\delta}_{c,t}, \qquad w_{c,t} = \frac{n_{c,t} + n_{c,r_s}}{\sum_{c' \in C_{s,t}} \left(n_{c',t} + n_{c',r_s}\right)}
 ```
 
-under the `ccc` options `"hom"`, `"state"`, `"time"` and `"add"`. For $t < r_s$ the same quantity is a placebo estimate, which conditional parallel trends requires to be zero in expectation. This line can shift slightly when a not-yet-treated state leaves the controls, as the control group of the estimate changes there.
-
-The integrated parallel trends plot (`"integrated"`) has one panel per treated state $s$, which compares $\widehat{\delta}_{s \to s,t}$ with the average over its control states,
+(or, with `controls = "separate"`, with each $\widehat{\delta}_{c,t}$). These are the differences and the weights of Steps 2 and 3 of the [Five Step Estimation Procedure](@ref), so the gap between the two lines is the estimate itself:
 
 ```math
-\overline{\delta}_{s,t} = \sum_{c \in C_{s,t}} w_{c,t}\, \widehat{\delta}_{c \to s,t}
+\widehat{\delta}_{s,t} - \overline{\delta}_{s,t} = \widehat{ATT}(s,t) \qquad \text{for } t \geq g_s
 ```
 
-with the weights $w_{c,t}$ of the first formula (or, with `controls = "separate"`, with each $\widehat{\delta}_{c \to s,t}$). In the first treated period the gap between the two lines is the estimate of `didint()` for that state and period, $\widehat{\delta}_{s \to s,g_s} - \overline{\delta}_{s,g_s} = \widehat{ATT}(s, g_s)$ under `ccc = "int"`. The gaps in the periods before it are what integrated parallel trends requires to be zero in expectation.
+For $t < r_s$ the gap is a placebo estimate (see [Placebo Estimates Before Treatment](@ref)).
 
-The plot `"integrated2"` measures the same changes from the period before treatment:
+### Integrated Parallel Trends
+
+Under `"int"` the $\hat{\lambda}_{s,t}$ values depend on how the covariates are coded, so the `"integrated"` data are instead those of the integrated parallel trends plot of the DID-INT paper (equations 36 to 38). The outcome is regressed on the covariates separately in every $(s,t)$ cell, which gives $\hat{\lambda}_{s,t}$ and $\hat{\gamma}_{s,t}$. For a treated state $s$ and a state $j$, the change in the predicted outcome of $j$ between periods $t-1$ and $t$, evaluated at the covariate means of $s$ in period $t$, is
+
+```math
+\widehat{\delta}_{j \to s,t} = \left(\hat{\lambda}_{j,t} - \hat{\lambda}_{j,t-1}\right) + \left(\hat{\gamma}_{j,t} - \hat{\gamma}_{j,t-1}\right)'\,\overline{X}_{s,t}
+```
+
+It is computed for every treated state $s$ (the `treated_state_covars` column), for $j = s$ and for each control state of $s$. The `n` column holds $n_{j,t} + n_{j,t-1}$.
+
+These are the [Integrated Long Differences](@ref) of `didint()` under `ccc = "int"`, taken from one period to the next rather than from the pre-treatment period; in the first treated period the two coincide. The plot has one panel per treated state, which compares $\widehat{\delta}_{s \to s,t}$ with the average of $\widehat{\delta}_{c \to s,t}$ over its control states, weighted by $n_{c,t} + n_{c,t-1}$ (or with each of them). If the two lines stay close to each other before treatment, integrated parallel trends is plausible for that state. In the first treated period the gap between them is the estimate of `didint()` for that state and period, $\widehat{ATT}(s, g_s)$.
+
+The `"integrated2"` data measure the same changes from the pre-treatment period:
 
 ```math
 \widehat{\delta}^{\,r}_{j \to s,t} = \left(\hat{\lambda}_{j,t} - \hat{\lambda}_{j,r_s}\right) + \left(\hat{\gamma}_{j,t} - \hat{\gamma}_{j,r_s}\right)'\,\overline{X}_{s,t}
 ```
 
-For $t \geq g_s$ these are the [Integrated Long Differences](@ref) of `didint()`; the plot has them for the earlier periods as well, and they are zero in period $r_s$. The controls are averaged with the weights of `"conditional2"`. The gap between the two lines is $\widehat{ATT}(s,t)$ in every treated period and a placebo estimate in every period before $r_s$. A trend that differs between a treated state and its controls accumulates in this plot, where the changes from one period to the next show it as a small gap in each period; in return, every point of a line shares the sampling error of period $r_s$. These changes are in the `long_differences` field of the `DiDIntPlot`.
+For $t \geq g_s$ these are the [Integrated Long Differences](@ref) of `didint()` themselves; the data have them for the earlier periods as well, and they are zero in period $r_s$. The controls are averaged with the weights $n_{c,t} + n_{c,r_s}$. As in `"conditional2"`, the gap between the two lines is $\widehat{ATT}(s,t)$ in every treated period and a placebo estimate before treatment.
 
-In all of these, `weights = true` (the default) gives the control states the weights that `didint()` gives them under `weighting = "both"` or `"diff"`, and `weights = false` the equal weights of `"att"` or `"none"`.
+### Placebo Estimates Before Treatment
+
+In the plots of changes since the pre-treatment period (`"conditional2"` and `"integrated2"`), the gap between the treated state and the average of its controls in a period before treatment is the same difference-in-differences that `didint()` computes for a treated period, applied where no treatment has taken place. Under parallel trends, and without anticipation of the treatment, it is zero in expectation. These gaps are the counterpart of the pre-treatment estimates of Callaway & Sant'Anna (2021) with a fixed base period, and the gaps before treatment in the `"integrated"` plot are the counterpart of their estimates with a base period that moves with $t$.
+
+- Gaps before treatment that scatter around zero and are small next to the gaps after treatment support parallel trends.
+- Gaps that drift steadily towards or away from zero as treatment approaches suggest that the treated state was on a different trend, which the gaps after treatment then partly continue.
+- A jump in the last periods before treatment suggests anticipation.
+
+The gaps before and after treatment are in the same units, so they show how large a violation would be relative to the estimated effect. A trend that differs between a treated state and its controls accumulates in the changes since the pre-treatment period, where the changes from one period to the next show it as a small gap in each period; in return, every point of a line shares the sampling error of period $r_s$. The gap is zero by construction in period $r_s$, and the plots do not show the sampling error of the placebo estimates.
+
+### Event Study
+
+For the `"event"` data, the $\hat{\lambda}_{s,t}$ values of the treated states are averaged by period relative to treatment, $e = t - g_s$, for each requested `ccc` option:
+
+```math
+\overline{\lambda}_{e} = \sum_{s} \omega_{s,e}\, \hat{\lambda}_{s,\,g_s + e}, \qquad \omega_{s,e} = \frac{n_{s,\,g_s+e}}{\sum_{s'} n_{s',\,g_{s'}+e}}
+```
+
+where the sums run over the treated states observed $e$ periods from treatment (`weights = false` uses equal weights). The standard error and confidence interval of each average come from the weighted regression of those $\hat{\lambda}_{s,t}$ values on a constant. The plot has one panel per `ccc` option and shows the average covariate-adjusted outcome of the treated states around treatment; intervals are drawn where at least `groupmin` (by default 3) treated states are behind the average. It contains no comparison states, so it describes the path of the treated states and does not estimate dynamic treatment effects, which `didint()` reports with `agg = "time"`.
+
+### Drawing the Plots
+
+`plot` draws a `DiDIntPlot` once a [Makie](https://docs.makie.org) backend such as CairoMakie is loaded. Its `plot_type` argument chooses among `"event"`, `"conditional"`, `"conditional2"`, `"integrated"` and `"integrated2"`, and `treated_states` selects the treated states to show. A dashed vertical line marks the first treated period, and the panels of treated states are ordered from the earliest treated state to the latest.
+
+In the panels of a treated state, `weights = true` (the default) gives the control states the weights that `didint()` gives them under `weighting = "both"` or `"diff"`, and `weights = false` the equal weights of `"att"` or `"none"`.
 
 ## Fast Computation of Randomization Inference and Jackknife
 

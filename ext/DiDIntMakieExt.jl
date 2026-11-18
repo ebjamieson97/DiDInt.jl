@@ -98,13 +98,22 @@ end
 # Lines with at most this many points are drawn with markers
 const MAX_POINTS_WITH_MARKERS = 30
 
+# Size of the title, and the width of a character of it relative to that size (an estimate
+# for the bold font, used to make the title fit the figure)
+const TITLE_FONTSIZE = 16
+const TITLE_CHARACTER_WIDTH = 0.6
+
 # A legend with more entries than this is not drawn, and the number of entries on a row of it
 const MAX_LEGEND_ENTRIES = 40
 const LEGEND_ENTRIES_PER_ROW = 7
 
+# Estimated width of an entry of the legend: its mark and gaps, and each character of its label
+const LEGEND_MARK_WIDTH = 42
+const LEGEND_CHARACTER_WIDTH = 6.0
+
 function draw_layout(layout::PlotLayout, ncols, size)
 
-    # The figure: a title, a grid of panels that share their axes (one panel per element of
+    # The figure: a title (with a second line under it), a grid of panels that share their axes (one panel per element of
     # `layout.panels`, filled row by row), the axis labels and a legend below the panels
     n_panels = length(layout.panels)
     ncols = isnothing(ncols) ? (n_panels <= 3 ? n_panels : ceil(Int, sqrt(n_panels))) : min(ncols, n_panels)
@@ -112,17 +121,26 @@ function draw_layout(layout::PlotLayout, ncols, size)
     with_markers = draws_markers(layout)
     elements, labels = legend_contents(layout, with_markers)
     has_legend = 2 <= length(labels) <= MAX_LEGEND_ENTRIES
-    legend_rows = cld(length(labels), LEGEND_ENTRIES_PER_ROW)
+    # By default the figure is wide enough for its panels and for its title; in a figure of a
+    # given size, a title that is too long is drawn smaller
+    # The legend has as many rows as its entries need to fit the width of the figure.
+    title_width = TITLE_CHARACTER_WIDTH * TITLE_FONTSIZE * length(layout.title)
+    width = isnothing(size) ? max(560, 300 * ncols + 80, ceil(Int, title_width) + 60) : size[1]
+    legend_rows = legend_rows_for(labels, layout.legend_title, width - 40)
     if isnothing(size)
-        size = (max(560, 300 * ncols + 80),
-                250 * nrows + 90 + (isempty(layout.title) ? 0 : 30) + (has_legend ? 18 + 22 * legend_rows : 0))
+        size = (width, 250 * nrows + 90 + (isempty(layout.title) ? 0 : 30) + (isempty(layout.subtitle) ? 0 : 20) +
+                       (has_legend ? 18 + 22 * legend_rows : 0))
     end
+    title_fontsize = title_width <= size[1] - 60 ? TITLE_FONTSIZE : max(9, TITLE_FONTSIZE * (size[1] - 60) / title_width)
 
     figure = Makie.Figure(; size = size)
     panels = figure[2, 2] = Makie.GridLayout()
-    if !isempty(layout.title)
-        # centred above the panels
-        Makie.Label(figure[1, 2], layout.title; font = :bold, fontsize = 16, tellwidth = false)
+    if !isempty(layout.title) || !isempty(layout.subtitle)
+        # the title and the line under it, centred above the panels
+        header = figure[1, 2] = Makie.GridLayout()
+        isempty(layout.title) || Makie.Label(header[1, 1], layout.title; font = :bold, fontsize = title_fontsize, tellwidth = false)
+        isempty(layout.subtitle) || Makie.Label(header[2, 1], layout.subtitle; fontsize = 13, color = SECONDARY_TEXT_COLOR, tellwidth = false)
+        Makie.rowgap!(header, 4)
     end
     Makie.Label(figure[2, 1], layout.ylabel; rotation = pi / 2, tellheight = false)
     Makie.Label(figure[3, 2], layout.xlabel; tellwidth = false)
@@ -159,6 +177,19 @@ function draw_layout(layout::PlotLayout, ncols, size)
         end
     end
     return figure
+end
+
+function legend_rows_for(labels, title, width)
+
+    # The number of rows of the legend: the smallest number, with at most
+    # LEGEND_ENTRIES_PER_ROW entries on a row, for which the legend is estimated to fit in
+    # `width`. The entries fill the legend column by column.
+    entry_width(label) = LEGEND_MARK_WIDTH + LEGEND_CHARACTER_WIDTH * length(label)
+    for rows in cld(length(labels), LEGEND_ENTRIES_PER_ROW):length(labels)
+        columns = Iterators.partition(labels, rows)
+        sum(maximum(entry_width, column) for column in columns) + LEGEND_CHARACTER_WIDTH * length(title) <= width && return rows
+    end
+    return max(length(labels), 1)
 end
 
 function draws_markers(layout::PlotLayout)
