@@ -108,80 +108,72 @@ result_time.sub
 
 ### Running `didint_plot()`
 
-`didint_plot()` prepares the data for three kinds of plots: integrated parallel trends
-(the default), conditional parallel trends (`integrated = false`) and event studies
-(`event = true`). The [Plotting with `didint_plot()`](@ref) section gives the formulas.
+`didint_plot()` prepares the data for parallel trends plots (`event = false`, the default)
+and for event study plots (`event = true`). The [Plotting with `didint_plot()`](@ref)
+section gives the formulas.
 
-#### Integrated parallel trends plot data
+#### Parallel trends plot data
 
-By default `didint_plot()` returns the data of the integrated parallel trends plot. For
-each treated state (`treated_state`) there is one series for that state and one for each
-never-treated state (`state`): the change in the predicted outcome since the previous
-period (`delta`), with every state evaluated at the treated state's covariate means.
-`treat_period` is the period in which the treated state is first treated. Setting
-`notyet = true` adds the states that are not yet treated as comparison states.
-
-```@example didint
-plot_integrated = didint_plot(
-    "coll", "state", "year", merit;
-    treatment_times = treated_times,
-    treated_states  = treated_states,
-    covariates = ["asian", "black", "male"]
-);
-
-plot_integrated[1:4, :]
-```
-
-One figure is made for each treated state, plotting `delta` against `period` with one
-line per `state`. For example, the series of state 71 (treated in 1991) and the mean of
-its comparison states:
-
-```@example didint
-state_71 = filter(row -> row.treated_state == "71", plot_integrated);
-own(delta, state) = only(delta[state .== "71"])
-others(delta, state) = sum(delta[state .!= "71"]) / count(state .!= "71")
-combine(
-    groupby(state_71, [:time, :period, :treat_period]),
-    [:delta, :state] => own => :treated,
-    [:delta, :state] => others => :comparison_mean
-)
-```
-
-If the treated state's series stays close to those of its comparison states in the periods
-before `treat_period`, integrated parallel trends is plausible for that state.
-
-#### Conditional parallel trends plot data
-
-Setting `integrated = false` returns a long-format DataFrame of residualised outcome means
-by state and period, for each `ccc` option (`"hom"`, `"time"`, `"state"`, `"add"`, `"int"`)
-as well as without covariates (`"none"`). A vector of strings passed to the `ccc` argument
-selects the options to plot.
-
-These plots are valid for assessing parallel trends under every `ccc` option except
-`"int"`. Under `"none"`, `"hom"`, `"state"`, `"time"` and `"add"`, how the series of a
-treated state changes over time relative to the series of its controls is exactly the
-comparison that `didint()` bases its estimates on. The *level* of a plotted series does
-rest on a convention: a covariate-adjusted mean has to be evaluated at some values of the
-covariates, and the plotted values are evaluated at covariates equal to zero. Under these
-options, however, a different choice of covariate values would make the plotted series
-shift together, so whether the series move in parallel is unaffected.
-
-Under `ccc = "int"` with covariates this is no longer true: a different choice of
-covariate values would change each plotted point by its own amount, so the plot depends on
-how the covariates are coded (measuring age in years, or in years above 40, gives
-different plots). The integrated parallel trends data above should be used instead.
+With `event = false` the output has one block of rows per `ccc` option. By default every
+option is included: `"hom"`, `"time"`, `"state"`, `"add"`, `"int"`, and `"none"` for the
+data without covariates. A vector of strings passed to the `ccc` argument selects the
+options.
 
 ```@example didint
 plot_parallel = didint_plot(
     "coll", "state", "year", merit;
     treatment_times = treated_times,
     treated_states  = treated_states,
-    integrated = false,
+    event      = false,
     covariates = ["asian", "black", "male"]
 );
 
 plot_parallel[1:4, :]
 ```
+
+For every option except `"int"`, the rows hold the conditional parallel trends data: the
+residualised outcome mean of each state and period (`lambda`) and the number of
+observations behind it (`n`). How the series of a treated state changes over time
+relative to the series of its controls is exactly the comparison that `didint()` bases
+its estimates on under these options, so they can be plotted against `period`, one line
+per state, to judge parallel trends under each form of covariate adjustment. The *level*
+of a series rests on a convention (the adjusted means are evaluated at covariates equal to
+zero), but another choice of covariate values would shift the series together and leave
+their parallelism unaffected.
+
+Under `ccc = "int"` that is no longer true: another choice of covariate values would
+change each point by its own amount. The rows of `"int"` therefore hold the integrated
+parallel trends data instead. For each treated state (`treated_state_covars`) there is one
+series for that state and one for each never-treated state (`state`): the change in the
+predicted outcome since the previous period (`delta`), with every state evaluated at the
+covariate means of `treated_state_covars`. `treat_period` is the period in which that
+treated state is first treated, and `n` the number of observations of `state` in the two
+periods. Setting `notyet = true` adds the states that are not yet treated as comparison
+states.
+
+```@example didint
+plot_integrated = filter(row -> isequal(row.ccc, "int"), plot_parallel);
+
+plot_integrated[1:4, :]
+```
+
+One figure is made for each treated state, plotting `delta` against `period` with one
+line per `state`. For example, the series of state 71 (treated in 1991) next to the mean
+of its comparison states, weighted by `n`:
+
+```@example didint
+state_71 = filter(row -> row.treated_state_covars == "71", plot_integrated);
+own(delta, state) = only(delta[state .== "71"])
+others(delta, n, state) = sum((n .* delta)[state .!= "71"]) / sum(n[state .!= "71"])
+combine(
+    groupby(state_71, [:time, :period, :treat_period]),
+    [:delta, :state] => own => :treated,
+    [:delta, :n, :state] => others => :comparison_mean
+)
+```
+
+If the treated state's series stays close to those of its comparison states in the periods
+before `treat_period`, integrated parallel trends is plausible for that state.
 
 #### Event study plot data
 
@@ -201,9 +193,8 @@ plot_event = didint_plot(
 plot_event[1:4, :]
 ```
 
-The `lambda` column in the conditional parallel trends output contains the residualised
-outcome for each state-period cell. The `ccc` column indicates which model was used (`"hom"`,
-`"time"`, `"state"`, `"add"`, `"int"`, or `"none"` for no covariates). In the event study output,
+The `ccc` column indicates which model was used (`"hom"`, `"time"`, `"state"`, `"add"`,
+`"int"`, or `"none"` for no covariates). In the event study output,
 `time_since_treatment = 0` marks the treatment period; negative values are
 pre-treatment and positive values are post-treatment.
 

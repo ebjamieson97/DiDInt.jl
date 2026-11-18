@@ -449,7 +449,7 @@ end
 
     # didint_plot() shows the lambdas themselves and says when they are not uniquely determined
     plot_call(panel) = () -> didint_plot("y", "state", "year", panel; treated_states = INTEGRATION_TREATED, treatment_times = INPUT_TIMES,
-                                         ccc = "add", covariates = ["x1", "z"], integrated = false)
+                                         ccc = "add", covariates = ["x1", "z"])
     @test isempty(rank_warnings(plot_call(with_z(noise))))
     warnings = rank_warnings(plot_call(cell_level))
     @test length(warnings) == 1 && occursin("not uniquely determined", warnings[1])

@@ -2,9 +2,8 @@
 # didint_plot.jl: data for parallel trends and event study plots                          #
 #                                                                                         #
 #   Section 1: didint_plot(), the main function                                           #
-#   Section 2: Conditional parallel trends data                                           #
-#   Section 3: Integrated parallel trends data                                            #
-#   Section 4: Event study data                                                           #
+#   Section 2: Parallel trends data (conditional and integrated)                          #
+#   Section 3: Event study data                                                           #
 ###########################################################################################
 
 
@@ -26,7 +25,6 @@
                 ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
                 ccc::Union{AbstractString, Vector{<:AbstractString}} = "all",
                 event::Bool = false,
-                integrated::Bool = true,
                 notyet::Bool = false,
                 weights::Bool = true,
                 ci::Number = 0.95,
@@ -43,13 +41,13 @@ trends or event study plots.
 # Details
 `didint_plot()` prepares the data for three kinds of plots:
 
-- Integrated parallel trends (`event = false`, `integrated = true`, the default), the diagnostic of Karim & Webb
-  (2025, eqs. 36-38). The outcome is regressed on the covariates separately in every state-period cell. For each
-  treated state, the change from one period to the next in the predicted outcome is computed for that state and for
-  its comparison states, all evaluated at the treated state's covariate means in the later period.
-- Conditional parallel trends (`event = false`, `integrated = false`): the first-stage estimates `λ(s,t)` of
-  Karim & Webb (2025, eq. 45), the mean of the outcome for each state and period, adjusted for covariates as each
+- Conditional parallel trends (`event = false`, every `ccc` option except `"int"`): the first-stage estimates `λ(s,t)`
+  of Karim & Webb (2025, eq. 45), the mean of the outcome for each state and period, adjusted for covariates as the
   `ccc` option specifies.
+- Integrated parallel trends (`event = false`, `ccc = "int"`), the diagnostic of Karim & Webb (2025, eqs. 36-38). The
+  outcome is regressed on the covariates separately in every state-period cell. For each treated state, the change
+  from one period to the next in the predicted outcome is computed for that state and for its comparison states, all
+  evaluated at the treated state's covariate means in the later period.
 - Event study (`event = true`): the `λ(s,t)` of the treated states, averaged by period relative to treatment, for
   each `ccc` option.
 
@@ -82,9 +80,9 @@ in `treatment_times`, and so on.
 - `ccc::Union{AbstractString, Vector{<:AbstractString}} = "all"`
     Specify which versions of DID-INT should be used.
     Options are either `"all"`, or any combination of: `"none"`, `"hom"`, `"time"`, `"state"`, "`add`", and `"int"`.
-    `"none"` uses the unadjusted means of the outcome. It does not apply to the integrated parallel trends data,
-    which always come from separate regressions in every state-period cell (as `"int"`); any other value is
-    ignored with a warning.
+    `"none"` uses the unadjusted means of the outcome. With `event = false`, `"int"` gives the integrated parallel
+    trends data, which need the treated states (`treated_states` or `gvar`), and every other option the
+    conditional parallel trends data.
 - `covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol, Nothing} = nothing`
     A vector of covariates entered as either strings or symbols (or a single covariate string or symbol),
     or, `nothing` (default).
@@ -92,13 +90,10 @@ in `treatment_times`, and so on.
     A dictionary specifying which category in a categorical variable should be used
     as the reference (baseline) category.
 
-## Parallel Trends Plots
-- `integrated::Bool = true`
-    With `event = false`: `true` prepares the integrated parallel trends data, `false` the conditional parallel
-    trends data. The integrated data need the treated states (`treated_states` or `gvar`). Ignored with `event = true`.
+## Integrated Parallel Trends Plot
 - `notyet::Bool = false`
-    For the integrated parallel trends data: the comparison states of a treated state are the never-treated states
-    and, with `notyet = true`, also the states not yet treated in the period in question.
+    For the integrated parallel trends data (`ccc = "int"`): the comparison states of a treated state are the
+    never-treated states and, with `notyet = true`, also the states not yet treated in the period in question.
 
 ## Event Study Plot
 - `event::Bool = false`
@@ -133,14 +128,20 @@ in `treatment_times`, and so on.
     grid construction if activated.
 
 # Returns
-With `event = false` and `integrated = true`, a DataFrame with one row per treated state (`treated_state`), state
-(`state`: the treated state itself or one of its comparison states) and period from the second one on: the change
-in the state's predicted outcome since the previous period, evaluated at the treated state's covariate means
-(`delta`), with the period number (`period`) and the period in which the treated state is first treated (`treat_period`).
+With `event = false`, a DataFrame in which the `ccc` column tells the two kinds of rows apart:
 
-With `event = false` and `integrated = false`, a DataFrame with one row per state, period and `ccc` option: the state's
-mean outcome in that period (`lambda`), residualized by the specified covariates as the `ccc` option specifies, with the
-period number (`period`). Extra rows with only `treat_period` filled give the periods in which treatments start.
+- Conditional parallel trends (every `ccc` option except `"int"`): one row per state, period and `ccc` option, with
+  the state's mean outcome in that period, residualized by the covariates as the `ccc` option specifies (`lambda`),
+  and the number of observations of the state in that period (`n`).
+- Integrated parallel trends (`ccc = "int"`): one row per treated state (`treated_state_covars`), state (`state`: that
+  treated state itself or one of its comparison states) and period from the second one on, with the change in the
+  state's predicted outcome since the previous period, evaluated at the covariate means of `treated_state_covars`
+  (`delta`), the number of observations of the state in the two periods (`n`), and the period in which
+  `treated_state_covars` is first treated (`treat_period`).
+
+Both have the period number (`period`). `lambda` is missing in the integrated rows, and `delta` and
+`treated_state_covars` in the conditional rows. When there are conditional rows, extra rows with only `treat_period`
+filled give the periods in which treatments start.
 
 With `event = true`, a DataFrame with one row per `ccc` option and period relative to treatment (`time_since_treatment`):
 the mean of the treated states' `lambda` values (`y`), its standard error (`se`), the bounds of its confidence interval
@@ -163,7 +164,6 @@ function didint_plot(
          ref::Union{Dict{<:AbstractString, <:AbstractString}, Nothing} = nothing,
          ccc::Union{AbstractString, Vector{<:AbstractString}} = "all",
          event::Bool = false,
-         integrated::Bool = true,
          notyet::Bool = false,
          weights::Bool = true,
          ci::Number = 0.95,
@@ -187,17 +187,14 @@ function didint_plot(
     date_format = check_date_format(date_format)
     freq_multiplier = check_positive_integer(freq_multiplier, "freq_multiplier")
 
-    # The integrated parallel trends data are an alternative to the conditional parallel trends
-    # data; the event study has no integrated version
-    integrated = integrated && !event
-
     # The ccc options to plot
     if !(ccc isa AbstractVector)
         ccc = [ccc]
     end
     ccc = replace.(lowercase.(ccc), r"\s" => "")
     ccc_options = ["hom", "time", "state", "int", "add", "none"]
-    if ccc == ["all"]
+    all_ccc = ccc == ["all"]
+    if all_ccc
         ccc = ccc_options
     else
         for c in ccc
@@ -205,14 +202,23 @@ function didint_plot(
                 error("$c is not a valid 'ccc' option. Try any combination of: ", join(ccc_options, ", "))
             end
         end
-        if integrated && ccc != ["int"]
-            @warn "'ccc' is ignored for the integrated parallel trends data, which come from separate regressions " *
-                  "in every state-period cell. Set 'integrated = false' for the conditional parallel trends data " *
-                  "of each 'ccc' option."
-        end
     end
-    if integrated
-        ccc = ["int"]
+
+    # For a parallel trends plot, ccc = "int" gives the integrated parallel trends data (Karim &
+    # Webb 2025, eqs. 36-38) instead of the lambdas, and these need to know which states are
+    # treated. Without the treated states, "int" is an error if it was asked for by name, and is
+    # left out (with a warning) if it is only there through ccc = "all".
+    integrated = !event && "int" in ccc
+    if integrated && isnothing(gvar) && !isnothing(treatment_times) && isnothing(treated_states)
+        if all_ccc
+            @warn "The integrated parallel trends data of ccc = \"int\" need the treated states: specify 'treated_states' " *
+                  "(or 'gvar') to include them. \"int\" is left out."
+            ccc = filter(!=("int"), ccc)
+            integrated = false
+        else
+            error("The integrated parallel trends data of ccc = \"int\" need the treated states: specify 'treated_states' " *
+                  "(or 'gvar'), or leave \"int\" out of 'ccc'.")
+        end
     end
 
     # Column names as strings, whether they were given as strings or symbols
@@ -222,10 +228,6 @@ function didint_plot(
     # Treated states and their treatment times, from gvar or from treated_states and treatment_times.
     # The event study and the integrated parallel trends data need to know which states are treated.
     needs_treated_states = event || integrated
-    if integrated && isnothing(gvar) && !isnothing(treatment_times) && isnothing(treated_states)
-        error("The integrated parallel trends data need the treated states: specify 'treated_states' (or 'gvar'), " *
-              "or set 'integrated = false' for the conditional parallel trends data.")
-    end
     treated_states, treatment_times = gvar_or_treatment_times(gvar, treatment_times, treated_states, data, state;
                                                               event = needs_treated_states, check = "didint_plot")
 
@@ -268,13 +270,13 @@ function didint_plot(
     data_copy, treatment_times, start_date, end_date, all_times, freq = validate_and_convert_dates(data_copy, time, treatment_times, date_format,
                                                                                                    freq, start_date, end_date)
 
+    # A state treated at or before the first date is not counted as a treated state below. In the
+    # integrated parallel trends data it is not a comparison state either, as it is treated throughout.
+    always_treated = integrated ? string.(treated_states[treatment_times .<= start_date]) : String[]
+
     # Build the period grid and match every date and treatment time to a period on it
-    # (for the integrated parallel trends data, a state treated at or before the first date is
-    # dropped, as in didint(): it is neither a treated state with a pre-treatment period nor a
-    # valid comparison state)
     data_copy, treatment_times, treated_states, _, time_to_index, period = perform_date_matching(data_copy, all_times, freq, freq_multiplier, start_date,
-                                                                                                 end_date, treatment_times, treated_states;
-                                                                                                 drop_already_treated = integrated)
+                                                                                                 end_date, treatment_times, treated_states)
     if integrated && isempty(treated_states)
         error("None of the treated states has a treatment time within the data used (after its first date and no later than its last date).")
     end
@@ -305,38 +307,44 @@ function didint_plot(
     # outcome of each state and period (Karim & Webb 2025, eq. 45)
     #--------------------------------------------------------------------------------------
 
-    # (for the integrated parallel trends data, only the cell-by-cell regressions of "int", whose
-    # covariate slopes and covariate means are needed as well)
+    # The lambdas of every ccc option, one below the other. For the integrated parallel trends
+    # data, the cell-by-cell regressions of "int" are kept apart, with their covariate slopes and
+    # covariate means.
     master_lambda = DataFrame()
-    covariate_fit = nothing
+    int_lambda, int_fit = nothing, nothing
     for c in ccc
         lambda_df, _, covariate_fit = first_stage(data_copy, c, covariates_to_include, hc, false)
         # Under "add" the plotted lambdas can depend on the least-squares solution used
         c == "add" && warn_additive_identification(covariate_fit)
-        master_lambda = [master_lambda;lambda_df]
+        if integrated && c == "int"
+            int_lambda, int_fit = lambda_df, covariate_fit
+        else
+            master_lambda = [master_lambda;lambda_df]
+        end
     end
 
-    # Number the periods from 0
-    master_lambda.period = [time_to_index[date] for date in master_lambda.time] .- 1
-    master_lambda = select(master_lambda, Not(:lambda_index))
-
     #--------------------------------------------------------------------------------------
-    # Step 4: Arrange the first-stage estimates for an event study plot, an integrated parallel
-    # trends plot or a conditional parallel trends plot
+    # Step 4: Arrange the first-stage estimates for an event study plot or for parallel trends
+    # plots (conditional and integrated)
     #--------------------------------------------------------------------------------------
 
     if event == true
+        # Number the periods from 0
+        master_lambda.period = [time_to_index[date] for date in master_lambda.time] .- 1
+        master_lambda = select(master_lambda, Not(:lambda_index))
         plot_data = event_study_data(master_lambda, data_copy, treated_states, treatment_times, time_to_index, weights, ci, hc)
     else
         if isnothing(date_format) || date_format == "yyyy"
             date_format = assume_date_format(period)
         end
-        if integrated
-            plot_data = integrated_trends_data(master_lambda, covariate_fit, treated_states, treatment_times, time_to_index,
-                                               notyet, start_date, date_format)
-        else
-            plot_data = parallel_trends_data(master_lambda, treatment_times, time_to_index, start_date, date_format)
-        end
+        # Number of observations of every state in every period
+        cell_counts = combine(groupby(data_copy, [:state_71X9yTx, :time_dmG5fpM]), nrow => :n)
+        n_obs = Dict(zip(zip(String.(cell_counts.state_71X9yTx), cell_counts.time_dmG5fpM), cell_counts.n))
+
+        conditional = conditional_trends_data(master_lambda, n_obs, time_to_index)
+        integrated_rows = integrated ? integrated_trends_data(int_lambda, int_fit, n_obs, treated_states, treatment_times,
+                                                              always_treated, time_to_index, notyet) : nothing
+        plot_data = parallel_trends_data(conditional, integrated_rows, treatment_times, time_to_index, start_date, date_format)
     end
     plot_data.period_length .= string(period)
     return wrapper_check(plot_data, wrapper)
@@ -344,45 +352,28 @@ end
 
 
 ###########################################################################################
-# Section 2: Conditional parallel trends data                                             #
+# Section 2: Parallel trends data (conditional and integrated)                            #
 ###########################################################################################
 
-function parallel_trends_data(master_lambda, treatment_times, time_to_index, start_date, date_format)
+# Columns of the parallel trends data, in their order (period_length is added by didint_plot)
+const PARALLEL_TRENDS_COLUMNS = [:state, :time, :lambda, :delta, :n, :treated_state_covars, :ccc, :period,
+                                 :start_date, :treat_period]
 
-    # The lambdas of every state, period and ccc option, with dates as strings, followed by one
-    # row per treatment period (only `treat_period` filled) so that plots can mark when
-    # treatments start
+function conditional_trends_data(master_lambda, n_obs, time_to_index)
 
-    # Switch time column to string labels
-    master_lambda.time = parse_date_to_string_didint.(master_lambda.time, date_format)
-    master_lambda.start_date .= parse_date_to_string_didint(start_date, date_format)
-
-    # The treatment periods, numbered like the periods. Which state is treated when does not
-    # matter here.
-    treatment_times = unique(treatment_times)
-    treatment_periods = [time_to_index[date] for date in treatment_times] .-1
-
-    # Rows for the treatment periods, with every other column missing
-    treat_df = DataFrame(treat_period = treatment_periods)
-    for col in names(master_lambda)
-        if col != "treat_period"
-            treat_df[!, col] .= missing
-        end
-    end
-    max_period = maximum(master_lambda.period)
-    treat_df = filter(row -> row.treat_period <= max_period, treat_df)
-
-    master_lambda.treat_period .= missing
-    return vcat(master_lambda, treat_df)
+    # The conditional parallel trends data: the lambda of every state and period under every
+    # ccc option other than "int" (Karim & Webb 2025, eq. 45), with the number of observations
+    # of the state in that period and the period number (from 0). Empty if no such option was
+    # asked for.
+    nrow(master_lambda) == 0 && return DataFrame(state = String[], time = Date[], lambda = Float64[], n = Int[],
+                                                 ccc = String[], period = Int[])
+    return DataFrame(state = String.(master_lambda.state), time = master_lambda.time, lambda = master_lambda.lambda,
+                     n = [n_obs[(String(s), t)] for (s, t) in zip(master_lambda.state, master_lambda.time)],
+                     ccc = String.(master_lambda.ccc), period = [time_to_index[t] for t in master_lambda.time] .- 1)
 end
 
-
-###########################################################################################
-# Section 3: Integrated parallel trends data                                              #
-###########################################################################################
-
-function integrated_trends_data(lambda_df, fit::CovariateFit, treated_states, treatment_times, time_to_index, notyet,
-                                start_date, date_format)
+function integrated_trends_data(lambda_df, fit::CovariateFit, n_obs, treated_states, treatment_times, always_treated,
+                                time_to_index, notyet)
 
     # The data of the integrated parallel trends plot of Karim & Webb (2025, eqs. 36-38).
     # `lambda_df` and `fit` hold the intercept lambda_{j,t}, the covariate slopes gamma_{j,t} and
@@ -392,21 +383,23 @@ function integrated_trends_data(lambda_df, fit::CovariateFit, treated_states, tr
     # in the predicted outcome of state j, evaluated at the covariate means of s in period t, is
     #   delta_{j -> s,t} = (lambda_{j,t} + gamma_{j,t}' xbar_{s,t}) - (lambda_{j,t-1} + gamma_{j,t-1}' xbar_{s,t})
     # for j = s (eq. 37) and for each comparison state j of s (eq. 38): the never-treated states
-    # and, with `notyet`, the states not yet treated in period t. These are the integrated long
-    # differences of didint() under ccc = "int" (eqs. 46-47), taken from one period to the next
-    # instead of from the period before treatment.
+    # and, with `notyet`, the states not yet treated in period t. A state that is treated
+    # throughout the data (`always_treated`) is not a comparison state. These are the integrated
+    # long differences of didint() under ccc = "int" (eqs. 46-47), taken from one period to the
+    # next instead of from the period before treatment.
     # Returns one row per (treated state, state, period) for which both cells of the state and
-    # the cell (s,t) of the treated state are observed.
-    lambda = Dict(zip(zip(lambda_df.state, lambda_df.time), lambda_df.lambda))
+    # the cell (s,t) of the treated state are observed, with n = n_{j,t} + n_{j,t-1}, the
+    # observations behind the change (the weight of a control's long difference in didint()).
+    lambda = Dict(zip(zip(String.(lambda_df.state), lambda_df.time), lambda_df.lambda))
     predicted(state, date, x) = lambda[(state, date)] + dot(fit.slopes[(state, date)], x)
     date_of_period = Dict(index => date for (date, index) in time_to_index)
     treated_states = String.(treated_states)
     treatment_time = Dict(zip(treated_states, treatment_times))
-    never_treated = sort(String.(setdiff(unique(lambda_df.state), treated_states)), by = custom_sort_order)
+    never_treated = sort(String.(setdiff(unique(lambda_df.state), treated_states, always_treated)), by = custom_sort_order)
     dates = sort(unique(lambda_df.time))
 
-    rows = NamedTuple{(:treated_state, :state, :time, :delta, :period, :treat_period),
-                      Tuple{String, String, Date, Float64, Int, Int}}[]
+    rows = NamedTuple{(:state, :time, :delta, :n, :treated_state_covars, :ccc, :period, :treat_period),
+                      Tuple{String, Date, Float64, Int, String, String, Int, Int}}[]
     for s in sort(treated_states, by = custom_sort_order), t in dates
         previous = get(date_of_period, time_to_index[t] - 1, nothing)
         (isnothing(previous) || !haskey(fit.xbar, (s, t))) && continue
@@ -418,21 +411,49 @@ function integrated_trends_data(lambda_df, fit::CovariateFit, treated_states, tr
         end
         for j in vcat(s, comparisons)
             (haskey(lambda, (j, t)) && haskey(lambda, (j, previous))) || continue
-            push!(rows, (treated_state = s, state = j, time = t, delta = predicted(j, t, x) - predicted(j, previous, x),
+            push!(rows, (state = j, time = t, delta = predicted(j, t, x) - predicted(j, previous, x),
+                         n = n_obs[(j, t)] + n_obs[(j, previous)], treated_state_covars = s, ccc = "int",
                          period = time_to_index[t] - 1, treat_period = time_to_index[treatment_time[s]] - 1))
         end
     end
+    return DataFrame(rows)
+end
 
-    plot_data = DataFrame(rows)
+function parallel_trends_data(conditional, integrated, treatment_times, time_to_index, start_date, date_format)
+
+    # The parallel trends data in one table: the conditional rows (`lambda`), then the integrated
+    # rows of ccc = "int" (`delta`, `treated_state_covars` and the treatment period of that
+    # treated state in `treat_period`), with dates as strings. The columns that a kind of row
+    # does not have are missing. When there are conditional rows, they are followed by one row
+    # per treatment period (only `treat_period` filled) so that plots can mark when treatments
+    # start; which state is treated when does not matter there.
+    pieces = DataFrame[conditional]
+    isnothing(integrated) || push!(pieces, integrated)
+    plot_data = vcat(pieces...; cols = :union)
+    for col in PARALLEL_TRENDS_COLUMNS
+        col in (:start_date,) && continue
+        string(col) in names(plot_data) || (plot_data[!, col] = Vector{Missing}(missing, nrow(plot_data)))
+    end
     plot_data.time = parse_date_to_string_didint.(plot_data.time, date_format)
-    plot_data.ccc .= "int"
     plot_data.start_date .= parse_date_to_string_didint(start_date, date_format)
-    return select(plot_data, :treated_state, :state, :time, :delta, :ccc, :period, :treat_period, :start_date)
+    plot_data = select(plot_data, PARALLEL_TRENDS_COLUMNS)
+
+    if nrow(conditional) > 0
+        # Rows for the treatment periods, with every other column missing
+        treatment_periods = [time_to_index[date] for date in unique(treatment_times)] .- 1
+        treatment_periods = filter(<=(maximum(conditional.period)), treatment_periods)
+        treat_df = DataFrame(treat_period = treatment_periods)
+        for col in PARALLEL_TRENDS_COLUMNS
+            col == :treat_period || (treat_df[!, col] .= missing)
+        end
+        plot_data = vcat(plot_data, select(treat_df, PARALLEL_TRENDS_COLUMNS))
+    end
+    return plot_data
 end
 
 
 ###########################################################################################
-# Section 4: Event study data                                                             #
+# Section 3: Event study data                                                             #
 ###########################################################################################
 
 function event_study_data(master_lambda, data_copy, treated_states, treatment_times, time_to_index, weights, ci, hc)

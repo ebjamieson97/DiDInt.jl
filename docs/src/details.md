@@ -548,27 +548,27 @@ with the variances and covariances estimated from each cell's regression. This t
 
 `didint_plot()` prepares the data for three kinds of plots. All are visual aids built from the first-stage estimates of Step 1 of the [Five Step Estimation Procedure](@ref); none reproduces the ATT estimates of `didint()`.
 
-### Integrated Parallel Trends
-
-With `event = false` and `integrated = true` (the default), `didint_plot()` returns the data for the integrated parallel trends plot of the DID-INT paper (equations 36 to 38). The outcome is regressed on the covariates separately in every $(s,t)$ cell, as under two-way DID-INT, which gives $\hat{\lambda}_{s,t}$ and $\hat{\gamma}_{s,t}$. For a treated state $s$ and a state $j$, the change in the predicted outcome of $j$ between periods $t-1$ and $t$, evaluated at the covariate means of $s$ in period $t$, is
-
-```math
-\widehat{\delta}_{j \to s,t} = \left(\hat{\lambda}_{j,t} - \hat{\lambda}_{j,t-1}\right) + \left(\hat{\gamma}_{j,t} - \hat{\gamma}_{j,t-1}\right)'\,\overline{X}_{s,t}
-```
-
-It is computed for $j = s$ and for each comparison state of $s$: the never-treated states and, with `notyet = true`, the states not yet treated in period $t$. The `ccc` argument does not apply.
-
-These are the [Integrated Long Differences](@ref) of `didint()` under `ccc = "int"`, taken from one period to the next rather than from the period before treatment; in the first treated period the two coincide. One plot is made per treated state: if its series stays close to those of its comparison states before treatment, integrated parallel trends is plausible for that state.
-
 ### Conditional Parallel Trends
 
-With `event = false` and `integrated = false`, the data are the $\hat{\lambda}_{s,t}$ values themselves, for every state, period and requested `ccc` option:
+With `event = false`, every `ccc` option other than `"int"` gives the $\hat{\lambda}_{s,t}$ values themselves, for every state and period:
 
 ```math
 \hat{\lambda}_{s,t} = \overline{Y}_{s,t} - \hat{\gamma}_{s,t}'\,\overline{X}_{s,t}
 ```
 
-where $\hat{\gamma}_{s,t}$ are the covariate coefficients that the `ccc` option implies for the cell (`"none"` uses $\overline{Y}_{s,t}$ itself). Under every `ccc` option except `"int"`, `didint()` compares exactly the changes over time in these series, so series that move in parallel before treatment support conditional parallel trends under that option, and comparing the options shows which form of covariate adjustment makes the trends parallel. Under `"int"` the plotted levels depend on how the covariates are coded, and the integrated plot should be used instead.
+where $\hat{\gamma}_{s,t}$ are the covariate coefficients that the `ccc` option implies for the cell (`"none"` uses $\overline{Y}_{s,t}$ itself). Under these options `didint()` compares exactly the changes over time in these series, so series that move in parallel before treatment support conditional parallel trends under that option, and comparing the options shows which form of covariate adjustment makes the trends parallel.
+
+### Integrated Parallel Trends
+
+Under `"int"` the $\hat{\lambda}_{s,t}$ values depend on how the covariates are coded, so with `event = false` the option `ccc = "int"` instead gives the data for the integrated parallel trends plot of the DID-INT paper (equations 36 to 38). The outcome is regressed on the covariates separately in every $(s,t)$ cell, which gives $\hat{\lambda}_{s,t}$ and $\hat{\gamma}_{s,t}$. For a treated state $s$ and a state $j$, the change in the predicted outcome of $j$ between periods $t-1$ and $t$, evaluated at the covariate means of $s$ in period $t$, is
+
+```math
+\widehat{\delta}_{j \to s,t} = \left(\hat{\lambda}_{j,t} - \hat{\lambda}_{j,t-1}\right) + \left(\hat{\gamma}_{j,t} - \hat{\gamma}_{j,t-1}\right)'\,\overline{X}_{s,t}
+```
+
+It is computed for every treated state $s$ (the `treated_state_covars` column), for $j = s$ and for each comparison state of $s$: the never-treated states and, with `notyet = true`, the states not yet treated in period $t$. The `n` column holds $n_{j,t} + n_{j,t-1}$, the weight that a control state has in `didint()`.
+
+These are the [Integrated Long Differences](@ref) of `didint()` under `ccc = "int"`, taken from one period to the next rather than from the period before treatment; in the first treated period the two coincide. One plot is made per treated state: if its series stays close to those of its comparison states before treatment, integrated parallel trends is plausible for that state.
 
 ### Event Study
 

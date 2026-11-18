@@ -95,7 +95,7 @@ const TEST_DATA_EC_STAG = filter(r -> r.state ∈ [_t1, _t2, EC_CONTROL], TEST_D
     @testset "Collinear covariates" begin
         include("test_collinearity.jl")
     end
-    @testset "didint_plot(): integrated parallel trends" begin
+    @testset "didint_plot(): parallel trends data" begin
         include("test_plot_integrated.jl")
     end
     @testset "Batched engine, RI draws and p-values" begin

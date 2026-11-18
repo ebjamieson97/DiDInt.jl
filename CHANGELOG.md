@@ -38,17 +38,18 @@
 
 ### `didint_plot()`
 
-- New `integrated` argument, `true` by default. With `event = false`, `didint_plot()` now
-  returns the data of the integrated parallel trends plot of Karim & Webb (2025,
-  eqs. 36-38): for each treated state, the change from one period to the next in the
-  predicted outcome of that state and of its comparison states, all evaluated at the
-  treated state's covariate means. The columns are `treated_state`, `state`, `time`,
-  `delta`, `ccc`, `period`, `treat_period`, `start_date` and `period_length`.
-- To update existing code: `integrated = false` returns the data that earlier versions
-  returned with `event = false` (the first-stage estimates of every state, period and
-  `ccc` option). The integrated data need the treated states (`treated_states` or
-  `gvar`) and always come from separate regressions in every state-period cell, so
-  `ccc` does not apply to them.
+- With `event = false`, `ccc = "int"` now gives the data of the integrated parallel trends
+  plot of Karim & Webb (2025, eqs. 36-38) instead of the first-stage estimates: for each
+  treated state (`treated_state_covars`), the change from one period to the next (`delta`)
+  in the predicted outcome of that state and of its comparison states (`state`), all
+  evaluated at that treated state's covariate means. These rows have the treated state's
+  treatment period in `treat_period`. They need the treated states (`treated_states` or
+  `gvar`); without them, `"int"` is left out of the default `ccc = "all"` with a warning.
+- The other `ccc` options give the same conditional parallel trends data as before
+  (`lambda`).
+- The output has three new columns: `delta` and `treated_state_covars`, which are missing
+  in the rows of the other `ccc` options (as `lambda` is in the rows of `"int"`), and `n`,
+  the number of observations behind each row.
 - New `notyet` argument: with `notyet = true` the comparison states of the integrated data
   also include the states not yet treated in the period in question.
 - The event study data (`event = true`) are unchanged.

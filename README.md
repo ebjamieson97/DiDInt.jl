@@ -8,7 +8,7 @@ Integrated difference-in-differences!
 
 **DiDInt.jl** introduces two functions:
 - `didint()`, which is used for estimating the average effect of treatment on the treated (ATT) while accounting for various violations of the common causal covariates (CCC) assumption
-- `didint_plot()` which produces datasets that can easily be used to make integrated parallel trends plots, as well as conditional parallel trends plots that help determine which CCC violation should be accounted for when using `didint()`. `didint_plot` can also produce datasets that can easily be used to make event study plots.
+- `didint_plot()` which produces datasets that can easily be used to make parallel trends plots that help determine which CCC violation should be accounted for when using `didint()`. `didint_plot` can also produce datasets that can easily be used to make event study plots.
 
 To learn more about the common causal covariates assumption and integrated difference-in-differences please see [Karim & Webb (2025)](https://arxiv.org/abs/2412.14447).
 
@@ -95,43 +95,40 @@ Other aggregations are available through the `agg` argument (`"cohort"`, `"simpl
 
 ## `didint_plot()` - Prepare Data for Visualization
 
-The `didint_plot()` function produces a dataset in a long format that can easily be used for plotting integrated parallel trends (the default), conditional parallel trends (`integrated = false`) or event study plots (`event = true`).
+The `didint_plot()` function produces a dataset in a long format that can easily be used for plotting parallel trends or event study plots.
 
 ```julia
 
-# Generate data for an integrated parallel trends plot: for each treated state, the change
-# since the previous period in the predicted outcome of that state and of its comparison
-# states, all evaluated at the treated state's covariate means
-plot_integrated = didint_plot("coll", "state", "year", test_data,
-                              treatment_times = treated_times,
-                              treated_states = treated_states,
-                              covariates = ["asian", "black", "male"])
-plot_integrated[1:4, :]
-# 4×9 DataFrame
-#  Row │ treated_state  state   time    delta       ccc     period  treat_period  start_date  period_length
-#      │ String         String  String  Float64     String  Int64   Int64         String      String
-# ─────┼─────────────────────────────────────────────────────────────────────────────────────────────────────
-#    1 │ 34             34      1990    -0.0791523  int          1            11  1989        1 year
-#    2 │ 34             11      1990    -0.125941   int          1            11  1989        1 year
-#    3 │ 34             12      1990     0.0223095  int          1            11  1989        1 year
-#    4 │ 34             13      1990    -0.160495   int          1            11  1989        1 year
-
-
-# Generate data for a conditional parallel trends plot: the covariate-adjusted mean
-# outcome of every state and period, for each CCC specification
+# Generate data for parallel trends plots
 plot_parallel = didint_plot("coll", "state", "year", test_data,
                             treatment_times = treated_times,
                             treated_states = treated_states,
-                            integrated = false, covariates = ["asian", "black", "male"])
+                            event = false, covariates = ["asian", "black", "male"])
+
+# For every ccc option except "int": the covariate-adjusted mean outcome (lambda) of every
+# state and period (conditional parallel trends)
 plot_parallel[1:4, :]
-# 4×8 DataFrame
-#  Row │ state    time     lambda    ccc      period  start_date  treat_period  period_length
-#      │ String?  String?  Float64?  String?  Int64?  String?     Int64?        String
-# ─────┼──────────────────────────────────────────────────────────────────────────────────────
-#    1 │ 11       1989     0.467895  hom           0  1989             missing  1 year
-#    2 │ 11       1990     0.316912  hom           1  1989             missing  1 year
-#    3 │ 11       1991     0.445936  hom           2  1989             missing  1 year
-#    4 │ 11       1992     0.579997  hom           3  1989             missing  1 year
+# 4×11 DataFrame
+#  Row │ state    time     lambda    delta     n       treated_state_covars  ccc      period  start_date  treat_period  period_length
+#      │ String?  String?  Float64?  Float64?  Int64?  String?               String?  Int64?  String?     Int64?        String
+# ─────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#    1 │ 11       1989     0.467895   missing      39  missing               hom           0  1989             missing  1 year
+#    2 │ 11       1990     0.316912   missing      35  missing               hom           1  1989             missing  1 year
+#    3 │ 11       1991     0.445936   missing      33  missing               hom           2  1989             missing  1 year
+#    4 │ 11       1992     0.579997   missing      32  missing               hom           3  1989             missing  1 year
+
+# For ccc = "int": for each treated state (treated_state_covars), the change since the previous
+# period in the predicted outcome (delta) of that state and of its comparison states, all
+# evaluated at that treated state's covariate means (integrated parallel trends)
+filter(row -> isequal(row.ccc, "int"), plot_parallel)[1:4, :]
+# 4×11 DataFrame
+#  Row │ state    time     lambda    delta       n       treated_state_covars  ccc      period  start_date  treat_period  period_length
+#      │ String?  String?  Float64?  Float64?    Int64?  String?               String?  Int64?  String?     Int64?        String
+# ─────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#    1 │ 34       1990      missing  -0.0791523     375  34                    int           1  1989                  11  1 year
+#    2 │ 11       1990      missing  -0.125941       74  34                    int           1  1989                  11  1 year
+#    3 │ 12       1990      missing   0.0223095      72  34                    int           1  1989                  11  1 year
+#    4 │ 13       1990      missing  -0.160495       64  34                    int           1  1989                  11  1 year
 
 
 # Generate data for an event study plot
