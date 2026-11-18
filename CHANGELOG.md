@@ -1,42 +1,5 @@
 # Changelog
 
-## 0.12.0
-
-### Jackknife standard errors
-
-- Jackknife standard errors are now centered at the mean of the delete-one estimates
-  (the CV3J estimator; Karim & Webb 2025, eq. 87) instead of at the full-sample estimate
-  (CV3). They are never larger than before, and all jackknife standard errors and
-  p-values change.
-
-### Randomization inference p-values
-
-- The p-values are kernel-smoothed when fewer than `ri_kernel_cutoff` permutations are
-  used (default 99), as in Karim & Webb (2025). Previously they were smoothed when
-  `ri_kernel_cutoff` or fewer were used, so results change only when exactly 99
-  permutations are used (or exactly the value given).
-
-### `didint_plot()`
-
-- New `integrated` argument, `true` by default. With `event = false`, `didint_plot()` now
-  returns the data of the integrated parallel trends plot of Karim & Webb (2025,
-  eqs. 36-38): for each treated state, the change from one period to the next in the
-  predicted outcome of that state and of its comparison states, all evaluated at the
-  treated state's covariate means. The columns are `treated_state`, `state`, `time`,
-  `delta`, `ccc`, `period`, `treat_period`, `start_date` and `period_length`.
-- To update existing code: `integrated = false` returns the data that earlier versions
-  returned with `event = false` (the first-stage estimates of every state, period and
-  `ccc` option). The integrated data need the treated states (`treated_states` or
-  `gvar`) and ignore `ccc`.
-- New `notyet` argument: with `notyet = true` the comparison states of the integrated data
-  also include the states not yet treated in the period in question.
-- The event study data (`event = true`) are unchanged.
-
-### Documentation
-
-- The Details page describes the three kinds of plot data with their formulas, and the
-  Examples page shows the integrated parallel trends data.
-
 ## 0.11.0
 
 ### Weighting options
@@ -58,6 +21,37 @@
   those means treated as fixed. 0.10.1 also included the sampling variability of the
   covariate means. Only standard errors computed with `edgecase = true` under
   `ccc = "int"` with covariates change; no ATT changes.
+
+### Jackknife standard errors
+
+- Jackknife standard errors are now centered at the mean of the delete-one estimates
+  (the CV3J estimator; Karim & Webb 2025, eq. 87) instead of at the full-sample estimate
+  (CV3) as in 0.10.1. They are never larger than before, and all jackknife standard
+  errors and p-values change.
+
+### Randomization inference p-values
+
+- The p-values are kernel-smoothed when fewer than `ri_kernel_cutoff` permutations are
+  used (default 99), as in Karim & Webb (2025). In 0.10.1 they were smoothed when
+  `ri_kernel_cutoff` or fewer were used, so results change only when exactly 99
+  permutations are used (or exactly the value given).
+
+### `didint_plot()`
+
+- New `integrated` argument, `true` by default. With `event = false`, `didint_plot()` now
+  returns the data of the integrated parallel trends plot of Karim & Webb (2025,
+  eqs. 36-38): for each treated state, the change from one period to the next in the
+  predicted outcome of that state and of its comparison states, all evaluated at the
+  treated state's covariate means. The columns are `treated_state`, `state`, `time`,
+  `delta`, `ccc`, `period`, `treat_period`, `start_date` and `period_length`.
+- To update existing code: `integrated = false` returns the data that earlier versions
+  returned with `event = false` (the first-stage estimates of every state, period and
+  `ccc` option). The integrated data need the treated states (`treated_states` or
+  `gvar`) and always come from separate regressions in every state-period cell, so
+  `ccc` does not apply to them.
+- New `notyet` argument: with `notyet = true` the comparison states of the integrated data
+  also include the states not yet treated in the period in question.
+- The event study data (`event = true`) are unchanged.
 
 ### Warnings about collinear covariates and rank deficiency
 
@@ -94,6 +88,8 @@
   errors of two-way DID-INT with covariates, how alternative assignments are drawn, and
   how randomization inference and the jackknife are computed quickly. The example of the
   aggregate ATT across aggregation options now uses the default weighting.
+- The Details page describes the three kinds of plot data of `didint_plot()` with their
+  formulas, and the Examples page shows the integrated parallel trends data.
 
 ## 0.10.1
 

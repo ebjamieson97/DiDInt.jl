@@ -82,8 +82,9 @@ in `treatment_times`, and so on.
 - `ccc::Union{AbstractString, Vector{<:AbstractString}} = "all"`
     Specify which versions of DID-INT should be used.
     Options are either `"all"`, or any combination of: `"none"`, `"hom"`, `"time"`, `"state"`, "`add`", and `"int"`.
-    `"none"` uses the unadjusted means of the outcome. It is ignored for the integrated parallel trends data, which
-    always come from separate regressions in every state-period cell (as `"int"`).
+    `"none"` uses the unadjusted means of the outcome. It does not apply to the integrated parallel trends data,
+    which always come from separate regressions in every state-period cell (as `"int"`); any other value is
+    ignored with a warning.
 - `covariates::Union{T, Vector{T}} where T <: Union{AbstractString, Symbol, Nothing} = nothing`
     A vector of covariates entered as either strings or symbols (or a single covariate string or symbol),
     or, `nothing` (default).
@@ -204,7 +205,7 @@ function didint_plot(
                 error("$c is not a valid 'ccc' option. Try any combination of: ", join(ccc_options, ", "))
             end
         end
-        if integrated
+        if integrated && ccc != ["int"]
             @warn "'ccc' is ignored for the integrated parallel trends data, which come from separate regressions " *
                   "in every state-period cell. Set 'integrated = false' for the conditional parallel trends data " *
                   "of each 'ccc' option."

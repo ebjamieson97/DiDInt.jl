@@ -80,6 +80,9 @@ using Statistics
     @test_throws r"need the treated states" DiDInt.didint_plot("y", "state", "year", INTEGRATION_PANEL; treatment_times = INPUT_TIMES)
     @test_logs (:warn, r"'ccc' is ignored") match_mode = :any plot_data(ccc = "hom")
     @test quiet_call(() -> plot_data(ccc = "hom")) == integrated
+    # ... except "int", which is what the integrated data use: no warning
+    @test_logs plot_data(ccc = "int")
+    @test plot_data(ccc = "int") == integrated
     # gvar gives the treated states as well
     with_gvar = copy(INTEGRATION_PANEL)
     with_gvar.gvar = [get(treatment_year, s, 0) for s in with_gvar.state]
