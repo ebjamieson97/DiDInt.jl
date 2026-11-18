@@ -162,7 +162,7 @@ The `conditional2` and `integrated2` tables hold the same comparisons as changes
 
 ## Plots
 
-`plot` draws a `DiDIntPlot` once a [Makie](https://docs.makie.org) backend, such as CairoMakie, is loaded. Its `plot_type` argument chooses the plot, and it returns a Makie `Figure`.
+`plot` draws a `DiDIntPlot` once a [Makie](https://docs.makie.org) backend, such as CairoMakie, is loaded. Its `plot_type` argument chooses the plot, and it returns a Makie `Figure`. One of each:
 
 ```julia
 using CairoMakie
@@ -174,20 +174,36 @@ plot(plot_data; plot_type = "event")
 ![Event study plot](docs/src/assets/readme_event.png)
 
 ```julia
-# Conditional parallel trends under each ccc option, here for treated state 72
-plot(plot_data; treated_states = "72")
+# Conditional parallel trends: the covariate-adjusted mean outcome of every state, under each ccc option
+plot(plot_data; plot_type = "conditional")
 ```
 
 ![Conditional parallel trends plot](docs/src/assets/readme_conditional.png)
 
 ```julia
-# Integrated parallel trends (ccc = "int"): each treated state next to the average of its control states
+# Conditional parallel trends as changes since the pre-treatment period, here for treated state 72
+# under ccc = "state": the gap between the lines is the ATT after treatment and a placebo estimate before
+plot(plot_data; plot_type = "conditional2", ccc = "state", treated_states = "72")
+```
+
+![Conditional parallel trends plot of changes since the pre-treatment period](docs/src/assets/readme_conditional2.png)
+
+```julia
+# Integrated parallel trends (ccc = "int"): each treated state next to the average of its control
+# states, as changes since the previous period
 plot(plot_data; plot_type = "integrated")
 ```
 
 ![Integrated parallel trends plot](docs/src/assets/readme_integrated.png)
 
-There are more options: selecting treated states and `ccc` options, one panel per treated state, each control state instead of their average, equal weights, not-yet-treated states as controls, and versions of the parallel trends plots as changes since the pre-treatment period (`plot_type = "conditional2"` and `"integrated2"`), from which the ATT estimates and placebo estimates before treatment can be read. They are shown on the [Plotting Examples](https://ebjamieson97.github.io/DiDInt.jl/stable/plotting/) page of the documentation.
+```julia
+# Integrated parallel trends as changes since the pre-treatment period
+plot(plot_data; plot_type = "integrated2")
+```
+
+![Integrated parallel trends plot of changes since the pre-treatment period](docs/src/assets/readme_integrated2.png)
+
+There are more options: selecting treated states and `ccc` options, one panel per treated state for the conditional parallel trends, each control state instead of their average, equal weights, and not-yet-treated states as controls. They are shown on the [Plotting Examples](https://ebjamieson97.github.io/DiDInt.jl/stable/plotting/) page of the documentation.
 
 ## Citations
 - Karim & Webb (2025). ["Good Controls Gone Bad: Difference-in-Differences with Covariates".](https://arxiv.org/abs/2412.14447)

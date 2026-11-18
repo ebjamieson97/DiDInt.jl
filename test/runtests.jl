@@ -7,10 +7,9 @@ using Random
 # didint() returns a DiDIntResult; most tests check the columns of its wide table of results
 didint_table(args...; kwargs...) = DataFrame(DiDInt.didint(args...; kwargs...))
 
-# didint_plot() returns a DiDIntPlot with a table per kind of plot (see test_plots.jl). These
-# tests check the single table that it passes to the Stata and R wrappers: the event study
-# (event = true), or the conditional and integrated parallel trends in one table
-plot_table(args...; event = false, kwargs...) = DiDInt.didint_plot(args...; wrapper = "r", plot_type = event ? "event" : "all", kwargs...)
+# didint_plot() returns a DiDIntPlot with a table per kind of plot (see test_plots.jl);
+# same_plot tells whether two of them hold the same data
+same_plot(a, b) = all(isequal(getfield(a, field), getfield(b, field)) for field in fieldnames(DiDIntPlot))
 
 # Regenerate the snapshot files instead of testing (see test/update_snapshots.jl)
 if "--update-snapshots" in ARGS

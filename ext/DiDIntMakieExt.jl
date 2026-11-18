@@ -56,11 +56,14 @@ end
 ###########################################################################################
 
 # Colours of the lines that are told apart by colour (treated states, estimates), in a fixed
-# order; of the control states' lines and of their average; of the vertical line at the first
-# treated period; and of text, axes and grid
+# order; of the event study estimates and their confidence band; of the control states' lines
+# and of their average; of the vertical line at the first treated period; and of text, axes
+# and grid
 const SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948",
                        "#8c5a2b", "#12a5c9", "#9a9c00", "#a23b8f", "#0d366b", "#7ac74f", "#7b1f1f", "#00695c"]
 const SERIES_LINESTYLES = [:solid, :dash, :dashdot]
+const ESTIMATE_COLOR = "#1f1f1d"
+const ESTIMATE_BAND_COLOR = "#2a78d6"
 const CONTROL_COLOR = "#b9b8b0"
 const CONTROL_MEAN_COLOR = "#52514e"
 const TREATMENT_LINE = (color = "#1f1f1d", linestyle = :dash, linewidth = 1.7)
@@ -241,15 +244,16 @@ function draw_line!(axis, role, color, x, y, lower, upper, with_markers)
         Makie.lines!(axis, x, y; color = series_color(color), linestyle = series_linestyle(color), linewidth = 2)
         with_markers && Makie.scatter!(axis, x, y; color = series_color(color), markersize = 7)
     else
-        # An estimate with its confidence interval: a band over each run of periods that have
-        # an interval, and a square instead of a circle where there is none
+        # An estimate with its confidence interval, a black line in a light band: a band over
+        # each run of periods that have an interval, and a square instead of a circle where
+        # there is none
         has_interval = .!ismissing.(lower) .& .!ismissing.(upper)
         for run in runs_of(has_interval)
-            Makie.band!(axis, x[run], Float64.(lower[run]), Float64.(upper[run]); color = (series_color(color), 0.2))
+            Makie.band!(axis, x[run], Float64.(lower[run]), Float64.(upper[run]); color = (ESTIMATE_BAND_COLOR, 0.2))
         end
-        Makie.lines!(axis, x, y; color = series_color(color), linewidth = 2)
-        any(has_interval) && Makie.scatter!(axis, x[has_interval], y[has_interval]; color = series_color(color), markersize = 8)
-        all(has_interval) || Makie.scatter!(axis, x[.!has_interval], y[.!has_interval]; color = series_color(color), markersize = 8,
+        Makie.lines!(axis, x, y; color = ESTIMATE_COLOR, linewidth = 2)
+        any(has_interval) && Makie.scatter!(axis, x[has_interval], y[has_interval]; color = ESTIMATE_COLOR, markersize = 8)
+        all(has_interval) || Makie.scatter!(axis, x[.!has_interval], y[.!has_interval]; color = ESTIMATE_COLOR, markersize = 8,
                                             marker = :rect)
     end
 end
@@ -284,9 +288,9 @@ function legend_contents(layout::PlotLayout, with_markers)
     labels = String.(series.label)
     for (kind, label) in layout.legend_extras
         if kind == :band
-            push!(elements, Makie.PolyElement(color = (series_color(1), 0.2), strokewidth = 0))
+            push!(elements, Makie.PolyElement(color = (ESTIMATE_BAND_COLOR, 0.2), strokewidth = 0))
         elseif kind == :no_interval
-            push!(elements, Makie.MarkerElement(color = series_color(1), marker = :rect, markersize = 8))
+            push!(elements, Makie.MarkerElement(color = ESTIMATE_COLOR, marker = :rect, markersize = 8))
         else
             push!(elements, Makie.LineElement(; TREATMENT_LINE...))
         end
@@ -301,7 +305,7 @@ function legend_element(entry, with_markers)
     if entry.role == :control
         return Makie.LineElement(color = CONTROL_COLOR, linewidth = 1.5)
     end
-    color = entry.role == :control_mean ? CONTROL_MEAN_COLOR : series_color(entry.color)
+    color = entry.role == :control_mean ? CONTROL_MEAN_COLOR : entry.role == :estimate ? ESTIMATE_COLOR : series_color(entry.color)
     line = Makie.LineElement(color = color, linestyle = entry.role == :treated ? series_linestyle(entry.color) : :solid, linewidth = 2)
     marker = Makie.MarkerElement(color = color, marker = :circle, markersize = 7)
     return entry.role == :estimate || (with_markers && entry.role != :state) ? [line, marker] : line

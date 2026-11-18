@@ -121,23 +121,11 @@ end
     end
     @test early.specs.treated_states == INTEGRATION_TREATED && early.specs.always_treated == ["s06"]
 
-    # The Stata and R wrappers receive one table: the conditional and integrated parallel trends
-    # (with the columns that a kind of row does not have missing), or the event study
-    for wrapper in ["r", "stata"]
-        table = plot_object(wrapper = wrapper)
-        @test table isa DataFrame
-        @test names(table) == ["state", "time", "lambda", "delta", "n", "treated_state_covars", "ccc", "period", "start_date",
-                               "treat_period", "period_length"]
-        conditional = table[.!ismissing.(table.lambda), :]
-        @test conditional.lambda == x.conditional.lambda && conditional.state == x.conditional.state && conditional.ccc == x.conditional.ccc
-        integrated = table[isequal.(table.ccc, "int"), :]
-        @test integrated.delta == x.integrated.delta && integrated.treated_state_covars == x.integrated.treated_state_covars
-        @test integrated.treat_period == x.integrated.treat_period && all(ismissing, integrated.lambda)
-        @test sort(table.treat_period[ismissing.(table.ccc)]) == [3, 5, 6]
-        event = plot_object(wrapper = wrapper, plot_type = "event")
-        @test isequal(select(event, Not(:period_length)), x.event) && all(event.period_length .== "1 year")
+    # The Stata and R wrappers receive the DiDIntPlot as well
+    for wrapper in ["r", "stata", "julia"]
+        @test same_plot(plot_object(wrapper = wrapper), x)
     end
-    @test plot_object(wrapper = "julia") isa DiDIntPlot
+    @test_throws r"'wrapper' must be one of" plot_object(wrapper = "python")
 
     # Display
     text = sprint(show, MIME("text/plain"), x)

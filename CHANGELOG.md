@@ -67,10 +67,8 @@
   other plot data do; before, it was estimated on the treated states only. Its estimates
   change under the `ccc` options `"hom"`, `"time"` and `"add"`.
 - The tables have a column `n`, the number of observations behind each row.
-- With `wrapper = "stata"` or `"r"` a single DataFrame is still returned: the event study
-  with `plot_type = "event"`, otherwise the conditional and integrated parallel trends in
-  one table (with the columns `delta`, `treated_state_covars` and `n` added, and the rows
-  of `ccc = "int"` holding the integrated data instead of the first-stage estimates).
+- With `wrapper = "stata"` or `"r"` the `DiDIntPlot` is returned as well; the Stata and R
+  wrappers need updating to read its tables.
 - New: a `DiDIntPlot` can be drawn with `plot` once a [Makie](https://docs.makie.org)
   backend such as CairoMakie is loaded (Makie is an optional dependency, loaded as a
   package extension). Its `plot_type` argument chooses among five plots:
@@ -128,7 +126,7 @@
   aggregate ATT across aggregation options now uses the default weighting.
 - The Details page describes the kinds of plot data of `didint_plot()` with their
   formulas, and how to read the placebo estimates before treatment; the Examples page
-  shows the tables of plot data.
+  shows the tables of plot data; the README shows one plot of each kind.
 - A new Plotting Examples page shows every kind of plot and its options, the README shows
   three of them, and the Details page describes what the plots draw.
 

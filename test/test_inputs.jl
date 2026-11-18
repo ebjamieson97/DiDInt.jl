@@ -242,31 +242,31 @@ end
 
 @testset "didint_plot() accepts the argument shapes that didint() accepts" begin
     plot(; kwargs...) = quiet_call() do
-        plot_table("y", "state", "year", INTEGRATION_PANEL; kwargs...)
+        DiDInt.didint_plot("y", "state", "year", INTEGRATION_PANEL; kwargs...)
     end
     covariates = ["x1", "x2"]
-    for event in [false, true]
-        vectors = plot(treated_states = ["s01", "s02"], treatment_times = [2004, 2004], event = event, covariates = covariates)
+    for plot_type in ["all", "event"]
+        vectors = plot(treated_states = ["s01", "s02"], treatment_times = [2004, 2004], plot_type = plot_type, covariates = covariates)
 
         # A single treatment time for several treated states, and a single treated state
-        @test isequal(plot(treated_states = ["s01", "s02"], treatment_times = 2004, event = event, covariates = covariates), vectors)
-        single = plot(treated_states = "s01", treatment_times = 2004, event = event, covariates = covariates)
-        @test isequal(single, plot(treated_states = ["s01"], treatment_times = [2004], event = event, covariates = covariates))
+        @test same_plot(plot(treated_states = ["s01", "s02"], treatment_times = 2004, plot_type = plot_type, covariates = covariates), vectors)
+        single = plot(treated_states = "s01", treatment_times = 2004, plot_type = plot_type, covariates = covariates)
+        @test same_plot(single, plot(treated_states = ["s01"], treatment_times = [2004], plot_type = plot_type, covariates = covariates))
 
         # Covariates as symbols, or as a single name
-        @test isequal(plot(treated_states = ["s01", "s02"], treatment_times = 2004, event = event, covariates = [:x1, :x2]), vectors)
-        @test isequal(plot(treated_states = "s01", treatment_times = 2004, event = event, covariates = :x1),
-                      plot(treated_states = "s01", treatment_times = 2004, event = event, covariates = "x1"))
+        @test same_plot(plot(treated_states = ["s01", "s02"], treatment_times = 2004, plot_type = plot_type, covariates = [:x1, :x2]), vectors)
+        @test same_plot(plot(treated_states = "s01", treatment_times = 2004, plot_type = plot_type, covariates = :x1),
+                        plot(treated_states = "s01", treatment_times = 2004, plot_type = plot_type, covariates = "x1"))
 
-        @test_throws r"same length" plot(treated_states = ["s01", "s02", "s03"], treatment_times = [2004, 2006], event = event)
-        @test_throws r"listed more than once" plot(treated_states = ["s01", "s01"], treatment_times = [2004, 2004], event = event)
+        @test_throws r"same length" plot(treated_states = ["s01", "s02", "s03"], treatment_times = [2004, 2006], plot_type = plot_type)
+        @test_throws r"listed more than once" plot(treated_states = ["s01", "s01"], treatment_times = [2004, 2004], plot_type = plot_type)
     end
     @test_throws r"not a valid 'ccc' option" plot(treated_states = ["s01"], treatment_times = 2004, ccc = "homm")
 
     # The caller's data is left as it was
     data = copy(INTEGRATION_PANEL)
     plot_data = quiet_call() do
-        plot_table("y", "state", "year", data; treated_states = ["s01", "s02"], treatment_times = 2004, covariates = covariates, event = true)
+        DiDInt.didint_plot("y", "state", "year", data; treated_states = ["s01", "s02"], treatment_times = 2004, covariates = covariates)
     end
     result = input_didint(data; covariates = covariates)
     @test isequal(data, INTEGRATION_PANEL) && names(data) == names(INTEGRATION_PANEL)

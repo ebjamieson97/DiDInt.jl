@@ -5,7 +5,6 @@
 #   Section 1: didint_plot(), the main function                                           #
 #   Section 2: Parallel trends data (conditional and integrated)                          #
 #   Section 3: Event study data                                                           #
-#   Section 4: The table of the Stata and R wrappers                                      #
 ###########################################################################################
 
 
@@ -195,6 +194,7 @@ function didint_plot(
     # Step 1: Check the arguments
     #--------------------------------------------------------------------------------------
 
+    # The Stata and R wrappers receive the DiDIntPlot like every other caller; `wrapper` is only checked
     wrapper = init_wrapper_check(wrapper)
     data_type_check(data)
     date_format = check_date_format(date_format)
@@ -242,12 +242,6 @@ function didint_plot(
         end
     end
 
-    # The Stata and R wrappers receive a single table: the event study, or the conditional and
-    # integrated parallel trends
-    if wrapper in ("stata", "r")
-        plot_types = plot_types == ["event"] ? plot_types : intersect(plot_types, ["conditional", "integrated"])
-        isempty(plot_types) && error("There are no plot data to prepare for these 'plot_type' and 'ccc'.")
-    end
     wants(type) = type in plot_types
 
     # The HC covariance estimator and the confidence level are those of the event study
@@ -381,14 +375,6 @@ function didint_plot(
     if wants("event")
         event_lambdas = event_study_lambdas(master_lambda, n_obs, treated_states, treatment_times, time_to_index)
         event = event_study_data(event_lambdas, weights, ci, hc)
-    end
-
-    # The Stata and R wrappers receive one table
-    if wrapper in ("stata", "r")
-        table = wants("event") ? event : wrapper_parallel_trends_table(conditional, integrated, treatment_times, time_to_index,
-                                                                       date_label(start_date))
-        table.period_length .= string(period)
-        return wrapper_check(table, wrapper)
     end
 
     #--------------------------------------------------------------------------------------
@@ -638,51 +624,4 @@ function event_study_data(event_lambdas, weights, ci, hc)
         any(ismissing, event_data[!, column]) || disallowmissing!(event_data, column)
     end
     return event_data
-end
-
-
-###########################################################################################
-# Section 4: The table of the Stata and R wrappers                                        #
-###########################################################################################
-
-# Columns of the parallel trends table of the wrappers, in their order (period_length is added
-# by didint_plot)
-const PARALLEL_TRENDS_COLUMNS = [:state, :time, :lambda, :delta, :n, :treated_state_covars, :ccc, :period,
-                                 :start_date, :treat_period]
-
-function wrapper_parallel_trends_table(conditional, integrated, treatment_times, time_to_index, start_date)
-
-    # The conditional and the integrated parallel trends data in one table, for the Stata and R
-    # wrappers: the conditional rows (`lambda`), then the integrated rows as ccc = "int"
-    # (`delta`, `treated_state_covars` and the treatment period of that treated state in
-    # `treat_period`). The columns that a kind of row does not have are missing. When there
-    # are conditional rows, they are followed by one row per treatment period (only
-    # `treat_period` filled) so that plots can mark when treatments start.
-    pieces = DataFrame[]
-    nrow(conditional) > 0 && push!(pieces, conditional)
-    if nrow(integrated) > 0
-        integrated = copy(integrated)
-        integrated.ccc .= "int"
-        push!(pieces, integrated)
-    end
-    isempty(pieces) && error("There are no plot data to prepare for these 'plot_type' and 'ccc'.")
-    table = vcat(pieces...; cols = :union)
-    for col in PARALLEL_TRENDS_COLUMNS
-        col == :start_date && continue
-        string(col) in names(table) || (table[!, col] = Vector{Missing}(missing, nrow(table)))
-    end
-    table.start_date .= start_date
-    table = select(table, PARALLEL_TRENDS_COLUMNS)
-
-    if nrow(conditional) > 0
-        # Rows for the treatment periods, with every other column missing
-        treatment_periods = [time_to_index[date] for date in unique(treatment_times)] .- 1
-        treatment_periods = filter(<=(maximum(conditional.period)), treatment_periods)
-        treat_df = DataFrame(treat_period = treatment_periods)
-        for col in PARALLEL_TRENDS_COLUMNS
-            col == :treat_period || (treat_df[!, col] .= missing)
-        end
-        table = vcat(table, select(treat_df, PARALLEL_TRENDS_COLUMNS))
-    end
-    return table
 end
