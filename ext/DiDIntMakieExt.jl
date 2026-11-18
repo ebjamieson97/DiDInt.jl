@@ -25,8 +25,8 @@ using Makie
     plot(x::DiDIntPlot; plot_type, treated_states, ccc, window,
          facet, controls, weights, groupmin, ncols, size, title, theme)
 
-Draw the event study, conditional parallel trends or integrated parallel trends plot of the data prepared by
-`didint_plot()`, as a Makie `Figure`. The arguments are described under [`DiDIntPlot`](@ref).
+Draw one of the plots of the data prepared by `didint_plot()` (event study, conditional parallel trends or integrated
+parallel trends), as a Makie `Figure`. The arguments are described under [`DiDIntPlot`](@ref).
 """
 function Makie.plot(x::DiDIntPlot;
                     plot_type::Union{AbstractString, Nothing} = nothing,
@@ -56,17 +56,24 @@ end
 ###########################################################################################
 
 # Colours of the lines that are told apart by colour (treated states, estimates), in a fixed
-# order; of the control states' lines and of their average; and of text, axes and grid
-const SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
+# order; of the control states' lines and of their average; of the vertical line at the first
+# treated period; and of text, axes and grid
+const SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948",
+                       "#8c5a2b", "#12a5c9", "#9a9c00", "#a23b8f", "#0d366b", "#7ac74f", "#7b1f1f", "#00695c"]
+const SERIES_LINESTYLES = [:solid, :dash, :dashdot]
 const CONTROL_COLOR = "#b9b8b0"
 const CONTROL_MEAN_COLOR = "#52514e"
+const TREATMENT_LINE = (color = "#1f1f1d", linestyle = :dash, linewidth = 1.7)
 const TEXT_COLOR = "#0b0b0b"
 const SECONDARY_TEXT_COLOR = "#52514e"
 const AXIS_COLOR = "#898781"
 const GRID_COLOR = "#e6e5df"
 const STRIP_COLOR = "#ecebe6"
 
+# The colour of the coloured line number `index`, and its line style: when there are more
+# lines than colours, the colours are used again with another style
 series_color(index) = SERIES_COLORS[mod1(index, length(SERIES_COLORS))]
+series_linestyle(index) = SERIES_LINESTYLES[mod1(cld(index, length(SERIES_COLORS)), length(SERIES_LINESTYLES))]
 
 # The default look: white panels with a light grid and a frame, and a shaded strip with the
 # title above each panel
@@ -91,8 +98,9 @@ end
 # Lines with at most this many points are drawn with markers
 const MAX_POINTS_WITH_MARKERS = 30
 
-# A legend with more entries than this is not drawn
-const MAX_LEGEND_ENTRIES = 12
+# A legend with more entries than this is not drawn, and the number of entries on a row of it
+const MAX_LEGEND_ENTRIES = 40
+const LEGEND_ENTRIES_PER_ROW = 7
 
 function draw_layout(layout::PlotLayout, ncols, size)
 
@@ -104,14 +112,17 @@ function draw_layout(layout::PlotLayout, ncols, size)
     with_markers = draws_markers(layout)
     elements, labels = legend_contents(layout, with_markers)
     has_legend = 2 <= length(labels) <= MAX_LEGEND_ENTRIES
+    legend_rows = cld(length(labels), LEGEND_ENTRIES_PER_ROW)
     if isnothing(size)
-        size = (max(560, 300 * ncols + 80), 250 * nrows + 90 + (isempty(layout.title) ? 0 : 30) + (has_legend ? 40 : 0))
+        size = (max(560, 300 * ncols + 80),
+                250 * nrows + 90 + (isempty(layout.title) ? 0 : 30) + (has_legend ? 18 + 22 * legend_rows : 0))
     end
 
     figure = Makie.Figure(; size = size)
     panels = figure[2, 2] = Makie.GridLayout()
     if !isempty(layout.title)
-        Makie.Label(figure[1, 1:2], layout.title; font = :bold, fontsize = 16, halign = :left, tellwidth = false)
+        # centred above the panels
+        Makie.Label(figure[1, 2], layout.title; font = :bold, fontsize = 16, tellwidth = false)
     end
     Makie.Label(figure[2, 1], layout.ylabel; rotation = pi / 2, tellheight = false)
     Makie.Label(figure[3, 2], layout.xlabel; tellwidth = false)
@@ -141,10 +152,10 @@ function draw_layout(layout::PlotLayout, ncols, size)
 
     if has_legend
         if isempty(layout.legend_title)
-            Makie.Legend(figure[4, 1:2], elements, labels; orientation = :horizontal, nbanks = cld(length(labels), 6), tellwidth = false)
+            Makie.Legend(figure[4, 2], elements, labels; orientation = :horizontal, nbanks = legend_rows, tellwidth = false)
         else
-            Makie.Legend(figure[4, 1:2], elements, labels, layout.legend_title; orientation = :horizontal, titleposition = :left,
-                         nbanks = cld(length(labels), 6), tellwidth = false)
+            Makie.Legend(figure[4, 2], elements, labels, layout.legend_title; orientation = :horizontal, titleposition = :left,
+                         nbanks = legend_rows, tellwidth = false)
         end
     end
     return figure
@@ -172,7 +183,7 @@ function draw_panel!(axis, layout::PlotLayout, panel, with_markers)
     # The lines of one panel, from back to front: the reference lines, the control states,
     # their average, then the treated states or the estimates
     for x in layout.vlines.x[layout.vlines.panel .== panel]
-        Makie.vlines!(axis, x; color = SECONDARY_TEXT_COLOR, linestyle = :dot, linewidth = 1.3)
+        Makie.vlines!(axis, x; TREATMENT_LINE...)
     end
     series = layout.series[layout.series.panel .== panel, :]
     for role in (:control, :state, :control_mean, :estimate, :treated)
@@ -196,7 +207,7 @@ function draw_line!(axis, role, color, x, y, lower, upper, with_markers)
         Makie.lines!(axis, x, y; color = CONTROL_MEAN_COLOR, linewidth = 2)
         with_markers && Makie.scatter!(axis, x, y; color = CONTROL_MEAN_COLOR, markersize = 7)
     elseif role == :treated
-        Makie.lines!(axis, x, y; color = series_color(color), linewidth = 2)
+        Makie.lines!(axis, x, y; color = series_color(color), linestyle = series_linestyle(color), linewidth = 2)
         with_markers && Makie.scatter!(axis, x, y; color = series_color(color), markersize = 7)
     else
         # An estimate with its confidence interval: a band over each run of periods that have
@@ -246,7 +257,7 @@ function legend_contents(layout::PlotLayout, with_markers)
         elseif kind == :no_interval
             push!(elements, Makie.MarkerElement(color = series_color(1), marker = :rect, markersize = 8))
         else
-            push!(elements, Makie.LineElement(color = SECONDARY_TEXT_COLOR, linestyle = :dot, linewidth = 1.3))
+            push!(elements, Makie.LineElement(; TREATMENT_LINE...))
         end
         push!(labels, label)
     end
@@ -260,7 +271,7 @@ function legend_element(entry, with_markers)
         return Makie.LineElement(color = CONTROL_COLOR, linewidth = 1.5)
     end
     color = entry.role == :control_mean ? CONTROL_MEAN_COLOR : series_color(entry.color)
-    line = Makie.LineElement(color = color, linewidth = 2)
+    line = Makie.LineElement(color = color, linestyle = entry.role == :treated ? series_linestyle(entry.color) : :solid, linewidth = 2)
     marker = Makie.MarkerElement(color = color, marker = :circle, markersize = 7)
     return entry.role == :estimate || (with_markers && entry.role != :state) ? [line, marker] : line
 end

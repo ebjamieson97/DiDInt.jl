@@ -13,6 +13,8 @@ plot_object(; kwargs...) = quiet_call() do
 end
 const PLOT_NEVER_TREATED = setdiff(sort(unique(INTEGRATION_PANEL.state)), INTEGRATION_TREATED)
 const PLOT_TREATMENT_PERIODS = INPUT_TIMES .- 2001
+# Titles of the panels of the treated states
+const PLOT_STATE_TITLES = [string(s, " (treated ", g, ")") for (s, g) in zip(INTEGRATION_TREATED, INPUT_TIMES)]
 
 # The points of one panel of a layout, optionally of one line or of one kind of line
 function panel_series(layout, panel; group = nothing, role = nothing)
@@ -33,11 +35,14 @@ end
     @test parallel isa DiDIntPlot
     @test isequal(DataFrame(parallel), parallel.data)
     @test DiDInt.Tables.istable(parallel) && DiDInt.Tables.schema(parallel).names == Tuple(Symbol.(names(parallel.data)))
-    @test nrow(parallel.lambdas) == 0
-    @test DiDInt.available_plot_types(parallel) == ["conditional", "integrated"]
+    specs = parallel.specs
+    @test nrow(parallel.lambdas) == 0 && nrow(parallel.long_differences) > 0
+    @test DiDInt.available_plot_types(parallel) == ["conditional", "conditional2", "integrated", "integrated2"]
+    @test DiDInt.available_plot_types(plot_object(ccc = "hom")) == ["conditional", "conditional2"]
+    @test nrow(plot_object(ccc = "hom").long_differences) == 0
+    @test specs.period_labels == string.(2001:2008)
 
     # The specification that the plots use
-    specs = parallel.specs
     @test specs.outcome == "y" && !specs.event && !specs.notyet && specs.covariates == INTEGRATION_COVARIATES
     @test specs.treated_states == INTEGRATION_TREATED && specs.treatment_periods == PLOT_TREATMENT_PERIODS
     @test specs.treatment_times == string.(INPUT_TIMES) && isempty(specs.always_treated)
@@ -47,6 +52,7 @@ end
     # Event study data come with the lambdas of the treated states
     event = plot_object(event = true)
     @test event isa DiDIntPlot && event.specs.event && DiDInt.available_plot_types(event) == ["event"]
+    @test nrow(event.long_differences) == 0
     @test names(event.lambdas) == ["ccc", "state", "time_since_treatment", "lambda", "n"]
     @test sort(unique(event.lambdas.state)) == INTEGRATION_TREATED
 
@@ -74,12 +80,13 @@ end
     # Display
     text = sprint(show, MIME("text/plain"), parallel)
     @test occursin("DID-INT plot data: parallel trends", text) && occursin("s01 (2004)", text)
-    @test occursin("\"conditional\", \"integrated\" (drawn with plot", text) && occursin("never-treated states", text)
+    @test occursin("\"conditional\", \"conditional2\", \"integrated\", \"integrated2\"", text)
+    @test occursin("(drawn with plot", text) && occursin("never-treated states", text)
     @test all(length(line) <= 90 for line in split(first(split(text, "\n\nData")), "\n"))
     @test DiDInt.wrapped_list(["aa", "bb", "cc"], 2; width = 6) == "aa, bb,\n  cc"
     @test occursin("DID-INT plot data: event study", sprint(show, MIME("text/plain"), event))
     @test occursin("not specified (treatment times: 2004, 2006, 2007)", sprint(show, MIME("text/plain"), unknown))
-    @test sprint(show, parallel) == "DiDIntPlot(conditional and integrated plot data, $(nrow(parallel.data)) rows)"
+    @test sprint(show, parallel) == "DiDIntPlot(parallel trends plot data, $(nrow(parallel.data)) rows)"
 end
 
 @testset "Event study plot" begin
@@ -195,18 +202,27 @@ end
     @test DiDInt.plot_layout(parallel; ccc = "all").panels == layout.panels
     @test DiDInt.plot_layout(parallel; window = (2, 5)).xticks == (collect(2:5), string.(2003:2006))
 
-    # More than 8 treated states share a colour, unless at most 8 of them are selected
+    # Every treated state has its own colour and entry in the legend, however many there are,
+    # and keeps its colour when only some treated states are selected
     many = quiet_call() do
-        DiDInt.didint_plot("coll", "state", "year", TEST_DATA_FULL; treated_states = ["34", "57", "58", "59", "61", "64", "71", "72", "85", "88"],
+        DiDInt.didint_plot("coll", "state", "year", TEST_DATA_FULL; treated_states = ["88", "57", "58", "59", "61", "64", "71", "72", "85", "34"],
                            treatment_times = [2000, 1998, 1993, 1997, 1999, 1996, 1991, 1998, 1997, 2000], ccc = "none")
     end
-    shared = DiDInt.plot_layout(many)
-    treated_lines = shared.series[shared.series.role .== :treated, :]
-    @test length(unique(treated_lines.group)) == 10 && all(treated_lines.color .== 1) && all(treated_lines.label .== "Treated states")
-    @test shared.legend_title == ""
+    merit_states = ["34", "57", "58", "59", "61", "64", "71", "72", "85", "88"]
+    all_states = DiDInt.plot_layout(many)
+    @test unique(all_states.series[all_states.series.role .== :treated, [:group, :label, :color]]) ==
+          DataFrame(group = merit_states, label = merit_states, color = 1:10)
+    @test all_states.legend_title == "Treated state"
     # a state can be selected by its number when the states are numbers written as strings
     two = DiDInt.plot_layout(many; treated_states = [71, 58])
-    @test unique(two.series[two.series.role .== :treated, [:group, :color]]) == DataFrame(group = ["58", "71"], color = [1, 2])
+    @test unique(two.series[two.series.role .== :treated, [:group, :color]]) == DataFrame(group = ["58", "71"], color = [3, 7])
+
+    # Panels of treated states run from the earliest treated state to the latest
+    @test DiDInt.plot_layout(many; facet = "state").panels ==
+          ["71 (treated 1991)", "58 (treated 1993)", "64 (treated 1996)", "59 (treated 1997)", "85 (treated 1997)",
+           "57 (treated 1998)", "72 (treated 1998)", "61 (treated 1999)", "34 (treated 2000)", "88 (treated 2000)"]
+    @test DiDInt.plot_layout(many; plot_type = "conditional2", treated_states = [34, 71, 64]).panels ==
+          ["71 (treated 1991)", "64 (treated 1996)", "34 (treated 2000)"]
 
     # Without the treated states every state is drawn alike, and all treatment periods are marked
     unknown = quiet_call() do
@@ -237,7 +253,7 @@ end
     # The treated state next to the average control state. The average starts at the controls'
     # weighted mean and then adds the weighted mean of their changes, with weights n_t + n_{t-1}
     layout = DiDInt.plot_layout(parallel; plot_type = "conditional", facet = "state")
-    @test layout.panels == INTEGRATION_TREATED && occursin("ccc = \"hom\"", layout.title)
+    @test layout.panels == PLOT_STATE_TITLES && occursin("ccc = \"hom\"", layout.title)
     @test layout.vlines.panel == 1:5 && layout.vlines.x == PLOT_TREATMENT_PERIODS
     for (panel, s) in enumerate(INTEGRATION_TREATED)
         own = panel_series(layout, panel; role = :treated)
@@ -254,7 +270,7 @@ end
 
     # With equal weights and the same controls in every period, it is the mean of the controls' lambdas
     equal = DiDInt.plot_layout(parallel; plot_type = "conditional", facet = "state", weights = false, treated_states = "s04")
-    @test equal.panels == ["s04"]
+    @test equal.panels == ["s04 (treated 2006)"]
     average = panel_series(equal, 1; role = :control_mean)
     @test all(average.label .== "Control states (mean)")
     @test average.y ≈ [mean(lambda[(c, period)] for c in PLOT_NEVER_TREATED) for period in 0:7] atol = 1e-12
@@ -313,7 +329,7 @@ end
     # of observations under weighting = "both", and equally under weighting = "none"
     for (weights, weighting) in [(true, "both"), (false, "none")]
         layout = DiDInt.plot_layout(parallel; plot_type = "integrated", weights = weights)
-        @test layout.plot_type == "integrated" && layout.panels == INTEGRATION_TREATED
+        @test layout.plot_type == "integrated" && layout.panels == PLOT_STATE_TITLES
         @test layout.vlines.x == PLOT_TREATMENT_PERIODS && layout.xticks == (collect(1:7), string.(2002:2008))
         sgt = integration_didint(ccc = "int", agg = "sgt", weighting = weighting)
         for (panel, s) in enumerate(INTEGRATION_TREATED)
@@ -328,7 +344,7 @@ end
 
     # One line per control state instead, with the deltas of the data
     separate = DiDInt.plot_layout(parallel; plot_type = "integrated", controls = "separate", treated_states = ["s05", "s02"])
-    @test separate.panels == ["s02", "s05"]
+    @test separate.panels == ["s02 (treated 2004)", "s05 (treated 2007)"]
     for (panel, s) in enumerate(["s02", "s05"])
         delta = Dict((row.state, row.period) => row.delta for row in eachrow(rows[rows.treated_state_covars .== s, :]))
         series = panel_series(separate, panel)
@@ -339,7 +355,7 @@ end
 
     # notyet = true adds the not-yet-treated states to the controls of the average
     with_notyet = plot_object(ccc = "int", notyet = true)
-    @test DiDInt.available_plot_types(with_notyet) == ["integrated"]
+    @test DiDInt.available_plot_types(with_notyet) == ["integrated", "integrated2"]
     layout = DiDInt.plot_layout(with_notyet; weights = false, treated_states = "s01")
     @test layout.plot_type == "integrated"
     notyet_rows = with_notyet.data[with_notyet.data.treated_state_covars .== "s01", :]
@@ -350,9 +366,148 @@ end
     # Titles, and what cannot be drawn
     @test DiDInt.plot_layout(parallel; plot_type = "integrated", title = "My title").title == "My title"
     @test DiDInt.plot_layout(parallel; plot_type = "integrated", title = "").title == ""
-    @test DiDInt.plot_layout(parallel; plot_type = "integrated", ccc = "int").panels == INTEGRATION_TREATED
+    @test DiDInt.plot_layout(parallel; plot_type = "integrated", ccc = "int").panels == PLOT_STATE_TITLES
     @test_throws r"cannot select another option" DiDInt.plot_layout(parallel; plot_type = "integrated", ccc = "hom")
     @test_throws r"no integrated parallel trends" DiDInt.plot_layout(plot_object(ccc = "hom"); plot_type = "integrated")
+end
+
+@testset "Conditional parallel trends relative to the period before treatment (conditional2)" begin
+    # The average control state is measured from the period before the treated state's
+    # treatment with the differences and weights of didint(). The gap between the treated
+    # state and that average, less the gap in the period before treatment, is therefore
+    # ATT(s,t) in every treated period: with the controls weighted by their numbers of
+    # observations under weighting = "both" and equally under "none", with and without the
+    # not-yet-treated states as controls.
+    for notyet in [false, true], (weights, weighting) in [(true, "both"), (false, "none")], option in ["hom", "add"]
+        object = plot_object(ccc = option, notyet = notyet)
+        layout = DiDInt.plot_layout(object; plot_type = "conditional2", weights = weights)
+        @test layout.plot_type == "conditional2" && layout.panels == PLOT_STATE_TITLES
+        @test layout.vlines.x == PLOT_TREATMENT_PERIODS && layout.xticks == (collect(0:7), string.(2001:2008))
+        sgt = integration_didint(ccc = option, agg = "sgt", weighting = weighting, notyet = notyet)
+        for (panel, s) in enumerate(INTEGRATION_TREATED)
+            base = PLOT_TREATMENT_PERIODS[panel] - 1
+            own = panel_series(layout, panel; role = :treated)
+            average = panel_series(layout, panel; role = :control_mean)
+            @test own.x == 0:7 && average.x == 0:7
+            gap(period) = only(own.y[own.x .== period]) - only(average.y[average.x .== period])
+            estimates = sgt[sgt.state .== s, :]
+            @test nrow(estimates) == 8 - PLOT_TREATMENT_PERIODS[panel]
+            @test all(isapprox(gap(year(row.t) - 2001) - gap(base), row.att_sgt; atol = 1e-8) for row in eachrow(estimates))
+        end
+    end
+
+    # In the period before treatment the line is at the controls' average lambda; with equal
+    # weights and the same controls in every period it is their average in every period, as
+    # is the line of plot_type = "conditional" with facet = "state"
+    parallel = plot_object(ccc = "hom")
+    lambda, n = conditional_values(parallel, "hom")
+    weighted = DiDInt.plot_layout(parallel; plot_type = "conditional2", treated_states = "s03")
+    average = panel_series(weighted, 1; role = :control_mean)
+    @test only(average.y[average.x .== 4]) ≈ sum(n[(c, 4)] * lambda[(c, 4)] for c in PLOT_NEVER_TREATED) / sum(n[(c, 4)] for c in PLOT_NEVER_TREATED) atol = 1e-12
+    equal = DiDInt.plot_layout(parallel; plot_type = "conditional2", weights = false)
+    chained = DiDInt.plot_layout(parallel; facet = "state", weights = false)
+    @test equal.series.y ≈ chained.series.y atol = 1e-12
+    @test panel_series(equal, 1; role = :control_mean).y ≈ [mean(lambda[(c, period)] for c in PLOT_NEVER_TREATED) for period in 0:7] atol = 1e-12
+
+    # One line per control state: the lambdas themselves
+    @test isequal(DiDInt.plot_layout(parallel; plot_type = "conditional2", controls = "separate").series,
+                  DiDInt.plot_layout(parallel; facet = "state", controls = "separate").series)
+    # ... where a not-yet-treated state of another cohort is a control while it is untreated in
+    # both periods. For s03 (treated in period 5, compared with period 4): s05 (treated in
+    # period 6) until period 5; s01, s02 (treated before) and s04 (same cohort) never.
+    separate = DiDInt.plot_layout(plot_object(ccc = "hom", notyet = true); plot_type = "conditional2", controls = "separate", treated_states = "s03")
+    @test panel_series(separate, 1; group = "s05", role = :control).x == 0:5
+    @test sort(unique(separate.series.group)) == sort(vcat("s03", "s05", PLOT_NEVER_TREATED))
+
+    # Controls that are missing in a period or in the base period are left out; without any
+    # control in the base period there is no line
+    gaps = Dict(("a", 0) => 1.0, ("a", 1) => 2.0, ("b", 0) => 3.0, ("b", 1) => 3.0, ("a", 3) => 7.0, ("b", 3) => 9.0, ("a", 4) => 8.0)
+    counts = Dict(key => 1 for key in keys(gaps))
+    periods, values = DiDInt.anchored_average_of_controls(gaps, counts, period -> ["a", "b"], 0:4, 1, true)
+    @test periods == [0, 1, 3, 4] && values ≈ [2.0, 2.5, 8.0, 8.5]
+    @test DiDInt.anchored_average_of_controls(gaps, counts, period -> ["a", "b"], 0:4, 2, true) == (Int[], Float64[])
+
+    # It needs the treated states and a single ccc option
+    unknown = quiet_call() do
+        DiDInt.didint_plot("y", "state", "year", INTEGRATION_PANEL; treatment_times = INPUT_TIMES, ccc = "hom")
+    end
+    @test DiDInt.available_plot_types(unknown) == ["conditional"]
+    @test_throws r"\"conditional2\" needs the treated states" DiDInt.plot_layout(unknown; plot_type = "conditional2")
+    @test_throws r"\"conditional2\" shows a single 'ccc' option" DiDInt.plot_layout(plot_object(); plot_type = "conditional2")
+    @test_throws r"other than \"int\"" DiDInt.plot_layout(plot_object(ccc = "int"); plot_type = "conditional2")
+end
+
+@testset "Integrated parallel trends since the period before treatment (integrated2)" begin
+    predicted(state, yr, x) = (fit = cell_ols(INTEGRATION_PANEL, state, yr).beta; fit[1] + dot(fit[2:end], x))
+    cell_n(state, yr) = nrow(cell_rows(INTEGRATION_PANEL, state, yr))
+    treatment_period = Dict(zip(INTEGRATION_TREATED, PLOT_TREATMENT_PERIODS))
+
+    for notyet in [false, true]
+        object = plot_object(ccc = "int", notyet = notyet)
+        long = object.long_differences
+        @test names(long) == ["state", "time", "delta", "n", "treated_state_covars", "period", "base_period", "treat_period"]
+        @test all(row.time == string(2001 + row.period) && row.period != row.base_period for row in eachrow(long))
+        @test all(row.treat_period == treatment_period[row.treated_state_covars] && row.base_period == row.treat_period - 1 for row in eachrow(long))
+
+        # Every value is the change in the cell regressions' predictions between the period and
+        # the period before the treated state's treatment, at the covariate means of the
+        # treated state in the period; n counts the state's observations in the two periods
+        for row in eachrow(long)
+            yr, base_yr = 2001 + row.period, 2001 + row.base_period
+            x = cell_xbar(INTEGRATION_PANEL, row.treated_state_covars, yr)
+            @test row.delta ≈ predicted(row.state, yr, x) - predicted(row.state, base_yr, x) atol = 1e-8
+            @test row.n == cell_n(row.state, yr) + cell_n(row.state, base_yr)
+        end
+
+        # The comparison states: the never-treated states and, with notyet, the states of other
+        # cohorts that are untreated in both periods
+        if !notyet
+            @test nrow(long) == 5 * (1 + length(PLOT_NEVER_TREATED)) * 7
+        else
+            s01 = long[long.treated_state_covars .== "s01", :]
+            @test s01.period[s01.state .== "s03"] == [0, 1, 3, 4] && s01.period[s01.state .== "s05"] == [0, 1, 3, 4, 5]
+            @test !("s02" in s01.state[s01.state .!= "s01"])
+        end
+
+        # The treated state's change minus the average of its controls' changes is ATT(s,t) in
+        # every treated period, and both are zero in the period before treatment
+        for (weights, weighting) in [(true, "both"), (false, "none")]
+            layout = DiDInt.plot_layout(object; plot_type = "integrated2", weights = weights)
+            @test layout.plot_type == "integrated2" && layout.panels == PLOT_STATE_TITLES
+            @test layout.vlines.x == PLOT_TREATMENT_PERIODS && layout.xticks == (collect(0:7), string.(2001:2008))
+            sgt = integration_didint(ccc = "int", agg = "sgt", weighting = weighting, notyet = notyet)
+            for (panel, s) in enumerate(INTEGRATION_TREATED)
+                own = panel_series(layout, panel; role = :treated)
+                average = panel_series(layout, panel; role = :control_mean)
+                @test own.x == 0:7 && average.x == 0:7
+                base = treatment_period[s] - 1
+                @test only(own.y[own.x .== base]) == 0 && only(average.y[average.x .== base]) == 0
+                gap(period) = only(own.y[own.x .== period]) - only(average.y[average.x .== period])
+                estimates = sgt[sgt.state .== s, :]
+                @test nrow(estimates) == 8 - treatment_period[s]
+                @test all(isapprox(gap(year(row.t) - 2001), row.att_sgt; atol = 1e-8) for row in eachrow(estimates))
+            end
+        end
+    end
+
+    # In the first treated period the change since the period before treatment is the change
+    # since the previous period: the two integrated plots agree there
+    parallel = plot_object()
+    since_previous = DiDInt.plot_layout(parallel; plot_type = "integrated")
+    since_base = DiDInt.plot_layout(parallel; plot_type = "integrated2")
+    for (panel, g) in enumerate(PLOT_TREATMENT_PERIODS), role in [:treated, :control_mean]
+        @test only(panel_series(since_previous, panel; role = role).y[panel_series(since_previous, panel; role = role).x .== g]) ≈
+              only(panel_series(since_base, panel; role = role).y[panel_series(since_base, panel; role = role).x .== g]) atol = 1e-10
+    end
+
+    # One line per control state, each through zero in the period before treatment
+    separate = DiDInt.plot_layout(parallel; plot_type = "integrated2", controls = "separate", treated_states = "s05")
+    @test separate.panels == ["s05 (treated 2007)"]
+    @test sort(unique(separate.series.group)) == sort(vcat("s05", PLOT_NEVER_TREATED))
+    @test all(separate.series.y[separate.series.x .== 5] .== 0) && count(separate.series.x .== 5) == 1 + length(PLOT_NEVER_TREATED)
+
+    @test_throws r"cannot select another option" DiDInt.plot_layout(parallel; plot_type = "integrated2", ccc = "hom")
+    @test_throws r"no integrated parallel trends" DiDInt.plot_layout(plot_object(ccc = "hom"); plot_type = "integrated2")
 end
 
 @testset "plot() draws every kind of plot with Makie" begin
@@ -369,7 +524,11 @@ end
              (parallel, (facet = "state", ccc = "add"), 5),
              (parallel, (facet = "state", ccc = "state", controls = "separate", weights = false), 5),
              (parallel, (plot_type = "integrated",), 5),
-             (parallel, (plot_type = "integrated", controls = "separate", treated_states = ["s01", "s05"]), 2)]
+             (parallel, (plot_type = "integrated", controls = "separate", treated_states = ["s01", "s05"]), 2),
+             (parallel, (plot_type = "conditional2", ccc = "hom"), 5),
+             (parallel, (plot_type = "conditional2", ccc = "time", controls = "separate", treated_states = "s04"), 1),
+             (parallel, (plot_type = "integrated2",), 5),
+             (parallel, (plot_type = "integrated2", controls = "separate", weights = false, treated_states = ["s03", "s02"]), 2)]
     for (object, arguments, n_panels) in cases
         figure = CairoMakie.plot(object; arguments...)
         @test figure isa CairoMakie.Figure
@@ -386,4 +545,9 @@ end
     @test Tuple(figure.scene.viewport[].widths) == (500, 1100)
     @test_throws r"'ncols' must be" CairoMakie.plot(parallel; ncols = 0)
     @test_throws r"event = true" CairoMakie.plot(parallel; plot_type = "event")
+
+    # Every coloured line can be told from the others, also when there are more of them than colours
+    extension = Base.get_extension(DiDInt, :DiDIntMakieExt)
+    @test allunique((extension.series_color(index), extension.series_linestyle(index)) for index in 1:48)
+    @test length(unique(extension.series_color.(1:16))) == 16 && all(extension.series_linestyle.(1:16) .== :solid)
 end

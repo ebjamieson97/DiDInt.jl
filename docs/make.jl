@@ -25,6 +25,7 @@ makedocs(
         "Functions" => "functions.md",
         "Details" => "details.md",
         "Examples" => "examples.md",
+        "Plotting Examples" => "plotting.md",
         "Changelog" => "changelog.md"
     ]
 )

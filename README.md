@@ -161,8 +161,8 @@ plot(plot_event)
 ![Event study plot](docs/src/assets/readme_event.png)
 
 ```julia
-# Conditional parallel trends: every state, under each ccc option
-plot(plot_parallel)
+# Conditional parallel trends under each ccc option, here for treated state 72
+plot(plot_parallel; treated_states = "72")
 ```
 
 ![Conditional parallel trends plot](docs/src/assets/readme_conditional.png)
@@ -174,12 +174,7 @@ plot(plot_parallel; plot_type = "integrated")
 
 ![Integrated parallel trends plot](docs/src/assets/readme_integrated.png)
 
-Arguments of `plot` select the treated states (`treated_states`) and the `ccc` options (`ccc`) to show, compare each treated state with its control states under one `ccc` option (`facet = "state"`), draw each control state instead of their average (`controls = "separate"`), and weight the control states equally (`weights = false`). See the [examples](https://ebjamieson97.github.io/DiDInt.jl/stable/examples/) for more.
-
-```julia
-figure = plot(plot_parallel; facet = "state", ccc = "state", treated_states = ["71", "58"])
-save("trends.png", figure)
-```
+There are more options: selecting treated states and `ccc` options, one panel per treated state, each control state instead of their average, equal weights, not-yet-treated states as controls, and versions of the parallel trends plots measured from the period before treatment (`plot_type = "conditional2"` and `"integrated2"`), from which the ATT estimates can be read. They are shown on the [Plotting Examples](https://ebjamieson97.github.io/DiDInt.jl/stable/plotting/) page of the documentation.
 
 ## Citations
 - Karim & Webb (2025). ["Good Controls Gone Bad: Difference-in-Differences with Covariates".](https://arxiv.org/abs/2412.14447)

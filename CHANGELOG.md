@@ -58,12 +58,20 @@
   prints a summary. With `wrapper = "stata"` or `"r"` the DataFrame itself is still returned.
 - New: a `DiDIntPlot` can be drawn with `plot` once a [Makie](https://docs.makie.org)
   backend such as CairoMakie is loaded (Makie is an optional dependency, loaded as a
-  package extension). `plot_type` chooses among three plots:
+  package extension). `plot_type` chooses among five plots:
   - `"event"`: the event study, one panel per `ccc` option;
   - `"conditional"`: the conditional parallel trends, one panel per `ccc` option with a
     line for every state or, with `facet = "state"`, one panel per treated state that
     compares it with its control states under one `ccc` option;
-  - `"integrated"`: the integrated parallel trends, one panel per treated state.
+  - `"conditional2"`: the conditional parallel trends per treated state, with the average
+    of the control states measured from the period before treatment as in `didint()`, so
+    that the change in the gap between the two lines since that period is the ATT of each
+    treated period;
+  - `"integrated"`: the integrated parallel trends, one panel per treated state, as
+    changes since the previous period;
+  - `"integrated2"`: the same as changes since the period before treatment, so that the
+    gap between the two lines is the ATT of each treated period. Its data are in the new
+    `long_differences` field of the `DiDIntPlot`.
 
   In the panels of a treated state, the control states are drawn as their average,
   weighted by their numbers of observations (`weights = false` weights them equally), or
@@ -109,8 +117,8 @@
   aggregate ATT across aggregation options now uses the default weighting.
 - The Details page describes the three kinds of plot data of `didint_plot()` with their
   formulas, and the Examples page shows the integrated parallel trends data.
-- The Examples page and the README show each kind of plot, and the Details page describes
-  what the plots draw.
+- A new Plotting Examples page shows every kind of plot and its options, the README shows
+  three of them, and the Details page describes what the plots draw.
 
 ## 0.10.1
 

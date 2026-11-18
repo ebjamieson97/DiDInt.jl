@@ -6,10 +6,6 @@ The examples below use the `merit.csv` dataset included in the package's test su
 (`male`, `asian`, `black`). The dataset covers U.S. states over the period 1989–2000 and
 is used to study the effect of merit scholarships on college attendance.
 
-```@setup didint
-using CairoMakie
-```
-
 ```@example didint
 using DiDInt, CSV, DataFrames
 
@@ -114,14 +110,10 @@ result_time.sub
 
 `didint_plot()` prepares the data for parallel trends plots (`event = false`, the default)
 and for event study plots (`event = true`), and returns them as a `DiDIntPlot`. Its `data`
-field holds the plot data as a DataFrame, and `plot` draws it once a
-[Makie](https://docs.makie.org) backend is loaded:
-
-```@example didint
-using CairoMakie
-```
-
-The [Plotting with `didint_plot()`](@ref) section gives the formulas behind each plot.
+field holds the plot data as a DataFrame, shown below, and `plot` draws it once a
+[Makie](https://docs.makie.org) backend is loaded: the [Plotting Examples](@ref) page shows
+every kind of plot. The [Plotting with `didint_plot()`](@ref) section gives the formulas
+behind each plot.
 
 #### Parallel trends plot data
 
@@ -164,92 +156,7 @@ states.
 filter(row -> isequal(row.ccc, "int"), plot_parallel.data)[1:4, :]
 ```
 
-#### Conditional parallel trends plots
-
-By default `plot` draws the conditional parallel trends: one panel per `ccc` option, with
-a line for every state. The treated states are coloured (each in its own colour when
-there are at most eight of them) and the never-treated states are grey. The dotted lines
-mark the periods in which treatments start.
-
-```@example didint
-figure = plot(plot_parallel)
-save("plot_conditional.png", figure; px_per_unit = 1.5) # hide
-nothing # hide
-```
-
-![Conditional parallel trends, one panel per ccc option](plot_conditional.png)
-
-The `ccc` and `treated_states` arguments select the options and the treated states to
-show:
-
-```@example didint
-figure = plot(plot_parallel; ccc = ["none", "state"], treated_states = [71, 58])
-save("plot_conditional_selected.png", figure; px_per_unit = 1.5) # hide
-nothing # hide
-```
-
-![Conditional parallel trends of two treated states under two ccc options](plot_conditional_selected.png)
-
-With `facet = "state"` there is one panel per treated state instead, under a single `ccc`
-option. Each panel compares the treated state with the average of its control states,
-weighted by their numbers of observations (`weights = false` weights them equally).
-Parallel trends under that option means that the two lines move in parallel before the
-dotted line.
-
-```@example didint
-figure = plot(plot_parallel; facet = "state", ccc = "state")
-save("plot_conditional_by_state.png", figure; px_per_unit = 1.5) # hide
-nothing # hide
-```
-
-![Conditional parallel trends, one panel per treated state](plot_conditional_by_state.png)
-
-`controls = "separate"` draws a line for each control state instead of their average:
-
-```@example didint
-figure = plot(plot_parallel; facet = "state", ccc = "state", controls = "separate",
-              treated_states = [71, 58])
-save("plot_conditional_by_state_separate.png", figure; px_per_unit = 1.5) # hide
-nothing # hide
-```
-
-![Conditional parallel trends of two treated states with each control state](plot_conditional_by_state_separate.png)
-
-#### Integrated parallel trends plots
-
-`plot_type = "integrated"` draws the integrated parallel trends plot of `ccc = "int"`: one
-panel per treated state, with the change in its predicted outcome since the previous period
-(`delta`) next to the average change of its control states, all evaluated at the treated
-state's covariate means. If the two lines stay close to each other in the periods before
-the dotted line, integrated parallel trends is plausible for that state. In the period at
-the dotted line, the gap between them is the ATT that `didint()` estimates for that state's
-first treated period.
-
-```@example didint
-figure = plot(plot_parallel; plot_type = "integrated")
-save("plot_integrated.png", figure; px_per_unit = 1.5) # hide
-nothing # hide
-```
-
-![Integrated parallel trends, one panel per treated state](plot_integrated.png)
-
-As before, `treated_states` selects the panels, `weights = false` weights the control
-states equally, and `controls = "separate"` draws each control state:
-
-```@example didint
-figure = plot(plot_parallel; plot_type = "integrated", controls = "separate",
-              treated_states = [71, 58])
-save("plot_integrated_separate.png", figure; px_per_unit = 1.5) # hide
-nothing # hide
-```
-
-![Integrated parallel trends of two treated states with each control state](plot_integrated_separate.png)
-
-The control states are the never-treated states. Calling `didint_plot()` with
-`notyet = true` adds the states that are not yet treated, both to the data and to the
-plots.
-
-#### Event study plots
+#### Event study plot data
 
 Setting `event = true` prepares the treated-state means by period relative to treatment,
 with standard errors and confidence interval bounds.
@@ -271,37 +178,10 @@ The `ccc` column indicates which model was used (`"hom"`, `"time"`, `"state"`, `
 treatment period; negative values are pre-treatment and positive values are
 post-treatment.
 
-```@example didint
-figure = plot(plot_event)
-save("plot_event.png", figure; px_per_unit = 1.5) # hide
-nothing # hide
-```
+#### Drawing the plots
 
-![Event study, one panel per ccc option](plot_event.png)
-
-A confidence interval is drawn where at least three treated states are behind an estimate
-(the `groupmin` argument). `window` limits the periods shown, and `ccc` and
-`treated_states` work as for the other plots; with selected treated states the means and
-intervals are computed for those states.
-
-```@example didint
-figure = plot(plot_event; ccc = ["none", "int"], window = (-6, 4))
-save("plot_event_selected.png", figure; px_per_unit = 1.5) # hide
-nothing # hide
-```
-
-![Event study under two ccc options](plot_event_selected.png)
-
-#### Saving and customising a plot
-
-`plot` returns a Makie `Figure`, which can be saved with `save` or modified like any
-other. The `title`, `size`, `ncols` and `theme` arguments change its appearance.
-
-```julia
-figure = plot(plot_event; size = (900, 600),
-              title = "Merit aid and college attendance")
-save("event_study.png", figure)
-```
+With a Makie backend loaded, `plot(plot_parallel)` and `plot(plot_event)` draw these data.
+See the [Plotting Examples](@ref) page.
 
 ---
 

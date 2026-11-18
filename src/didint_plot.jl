@@ -49,7 +49,8 @@ such as CairoMakie is loaded.
 - Integrated parallel trends (`event = false`, `ccc = "int"`), the diagnostic of Karim & Webb (2025, eqs. 36-38). The
   outcome is regressed on the covariates separately in every state-period cell. For each treated state, the change
   from one period to the next in the predicted outcome is computed for that state and for its comparison states, all
-  evaluated at the treated state's covariate means in the later period.
+  evaluated at the treated state's covariate means in the later period. The same changes measured from the period
+  before the treated state's treatment are returned as well (the `long_differences` field of the result).
 - Event study (`event = true`): the `λ(s,t)` of the treated states, averaged by period relative to treatment, for
   each `ccc` option.
 
@@ -285,7 +286,7 @@ function didint_plot(
     always_treated = has_treated_states ? string.(treated_states[treatment_times .<= start_date]) : String[]
 
     # Build the period grid and match every date and treatment time to a period on it
-    data_copy, treatment_times, treated_states, _, time_to_index, period = perform_date_matching(data_copy, all_times, freq, freq_multiplier, start_date,
+    data_copy, treatment_times, treated_states, period_dates, time_to_index, period = perform_date_matching(data_copy, all_times, freq, freq_multiplier, start_date,
                                                                                                  end_date, treatment_times, treated_states)
     if integrated && isempty(treated_states)
         error("None of the treated states has a treatment time within the data used (after its first date and no later than its last date).")
@@ -345,14 +346,21 @@ function didint_plot(
     cell_counts = combine(groupby(data_copy, [:state_71X9yTx, :time_dmG5fpM]), nrow => :n)
     n_obs = Dict(zip(zip(String.(cell_counts.state_71X9yTx), cell_counts.time_dmG5fpM), cell_counts.n))
 
+    event_lambdas = DataFrame()
+    long_differences = DataFrame()
     if event == true
         event_lambdas = event_study_lambdas(master_lambda, n_obs, treated_states, treatment_times, time_to_index)
         plot_data = event_study_data(event_lambdas, weights, ci, hc)
     else
-        event_lambdas = DataFrame()
         conditional = conditional_trends_data(master_lambda, n_obs, time_to_index)
-        integrated_rows = integrated ? integrated_trends_data(int_lambda, int_fit, n_obs, treated_states, treatment_times,
-                                                              always_treated, time_to_index, notyet) : nothing
+        integrated_rows = nothing
+        if integrated
+            integrated_rows = integrated_trends_data(int_lambda, int_fit, n_obs, treated_states, treatment_times,
+                                                     always_treated, time_to_index, notyet)
+            # The same changes measured from the period before each treated state's treatment
+            long_differences = integrated_long_differences(int_lambda, int_fit, n_obs, treated_states, treatment_times,
+                                                           always_treated, time_to_index, notyet, date_format)
+        end
         plot_data = parallel_trends_data(conditional, integrated_rows, treatment_times, time_to_index, start_date, date_format)
     end
     plot_data.period_length .= string(period)
@@ -377,10 +385,11 @@ function didint_plot(
              treated_states = has_treated_states ? String.(treated_states) : String[],
              treatment_times = String[parse_date_to_string_didint(date, date_format) for date in treatment_times],
              treatment_periods = treatment_periods, always_treated = String.(always_treated),
+             period_labels = String[parse_date_to_string_didint(date, date_format) for date in period_dates],
              notyet = notyet, weights = weights, ci = Float64(ci), hc = event ? hc : nothing,
              period = string(period), start_date = parse_date_to_string_didint(start_date, date_format),
              end_date = parse_date_to_string_didint(end_date, date_format))
-    return DiDIntPlot(plot_data, event_lambdas, specs)
+    return DiDIntPlot(plot_data, event_lambdas, long_differences, specs)
 end
 
 
@@ -447,6 +456,55 @@ function integrated_trends_data(lambda_df, fit::CovariateFit, n_obs, treated_sta
             push!(rows, (state = j, time = t, delta = predicted(j, t, x) - predicted(j, previous, x),
                          n = n_obs[(j, t)] + n_obs[(j, previous)], treated_state_covars = s, ccc = "int",
                          period = time_to_index[t] - 1, treat_period = time_to_index[treatment_time[s]] - 1))
+        end
+    end
+    return DataFrame(rows)
+end
+
+function integrated_long_differences(lambda_df, fit::CovariateFit, n_obs, treated_states, treatment_times, always_treated,
+                                     time_to_index, notyet, date_format)
+
+    # The integrated long differences of didint() under ccc = "int" (Karim & Webb 2025, eqs.
+    # 46-47), for every period instead of the treated periods only. For every treated state s,
+    # with r the period before its treatment, and every other period t:
+    #   delta_{j -> s,t} = (lambda_{j,t} + gamma_{j,t}' xbar_{s,t}) - (lambda_{j,r} + gamma_{j,r}' xbar_{s,t})
+    # for j = s and for each control state j of s: the never-treated states and, with `notyet`,
+    # the states of other cohorts that are untreated in both periods. For t at or after the
+    # treatment of s these are the long differences behind ATT(s,t); for earlier t they are
+    # the same comparison where no effect is expected.
+    # Returns one row per (treated state, state, period) for which the state is observed in
+    # both periods and the cell (s,t) of the treated state is observed, with
+    # n = n_{j,t} + n_{j,r} (the weight of a control's long difference in didint()). Periods
+    # are numbered from 0 and dates are strings, as in the plot data.
+    lambda = Dict(zip(zip(String.(lambda_df.state), lambda_df.time), lambda_df.lambda))
+    predicted(state, date, x) = lambda[(state, date)] + dot(fit.slopes[(state, date)], x)
+    date_of_period = Dict(index => date for (date, index) in time_to_index)
+    treated_states = String.(treated_states)
+    treatment_time = Dict(zip(treated_states, treatment_times))
+    never_treated = sort(String.(setdiff(unique(lambda_df.state), treated_states, always_treated)), by = custom_sort_order)
+    dates = sort(unique(lambda_df.time))
+
+    rows = NamedTuple{(:state, :time, :delta, :n, :treated_state_covars, :period, :base_period, :treat_period),
+                      Tuple{String, String, Float64, Int, String, Int, Int, Int}}[]
+    for s in sort(treated_states, by = custom_sort_order)
+        g = treatment_time[s]
+        base = get(date_of_period, time_to_index[g] - 1, nothing)
+        (isnothing(base) || !haskey(lambda, (s, base))) && continue
+        for t in dates
+            (t == base || !haskey(fit.xbar, (s, t))) && continue
+            x = fit.xbar[(s, t)]
+            comparisons = never_treated
+            if notyet
+                not_yet = [j for j in treated_states if treatment_time[j] != g && treatment_time[j] > max(t, base)]
+                comparisons = vcat(never_treated, sort(not_yet, by = custom_sort_order))
+            end
+            for j in vcat(s, comparisons)
+                (haskey(lambda, (j, t)) && haskey(lambda, (j, base))) || continue
+                push!(rows, (state = j, time = parse_date_to_string_didint(t, date_format),
+                             delta = predicted(j, t, x) - predicted(j, base, x), n = n_obs[(j, t)] + n_obs[(j, base)],
+                             treated_state_covars = s, period = time_to_index[t] - 1, base_period = time_to_index[base] - 1,
+                             treat_period = time_to_index[g] - 1))
+            end
         end
     end
     return DataFrame(rows)

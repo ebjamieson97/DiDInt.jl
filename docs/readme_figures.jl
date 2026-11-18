@@ -21,5 +21,5 @@ plot_event = didint_plot("coll", "state", "year", test_data,
 
 assets = joinpath(@__DIR__, "src", "assets")
 save(joinpath(assets, "readme_event.png"), plot(plot_event); px_per_unit = 1)
-save(joinpath(assets, "readme_conditional.png"), plot(plot_parallel); px_per_unit = 1)
+save(joinpath(assets, "readme_conditional.png"), plot(plot_parallel; treated_states = "72"); px_per_unit = 1)
 save(joinpath(assets, "readme_integrated.png"), plot(plot_parallel; plot_type = "integrated"); px_per_unit = 1)

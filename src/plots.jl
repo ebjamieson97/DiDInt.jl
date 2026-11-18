@@ -6,7 +6,7 @@
 #   Section 3: Plot layouts: the arguments of plot() and what each plot shows             #
 #   Section 4: Event study layout                                                         #
 #   Section 5: Conditional parallel trends layouts                                        #
-#   Section 6: Integrated parallel trends layout                                          #
+#   Section 6: Integrated parallel trends layouts                                         #
 #                                                                                         #
 # The layouts are plain tables of lines and reference marks. They are drawn by the Makie  #
 # extension (ext/DiDIntMakieExt.jl), which is loaded together with a Makie backend.       #
@@ -28,6 +28,11 @@ The data that [`didint_plot`](@ref) prepares, which can be drawn with `plot`. Di
 - `lambdas::DataFrame`: for an event study, the `λ(s,t)` of each treated state behind `data`, by `ccc` option and
   period relative to treatment (`time_since_treatment`), with the state's number of observations (`n`). Empty
   for parallel trends data.
+- `long_differences::DataFrame`: for parallel trends data with `ccc = "int"`, the data behind
+  `plot_type = "integrated2"`. For each treated state (`treated_state_covars`): the change in the predicted outcome
+  of that state and of its control states (`state`) between the period before the treated state's treatment
+  (`base_period`) and each other period (`period`, `time`), evaluated at the treated state's covariate means in
+  that other period (`delta`), with the state's number of observations in the two periods (`n`). Empty otherwise.
 - `specs::NamedTuple`: the specification (`outcome`, `event`, `ccc`, `covariates`, `treated_states` with their
   `treatment_times` and `treatment_periods`, `notyet`, `weights`, `ci`, the period length and date range, and so on).
 
@@ -60,9 +65,21 @@ save("trends.png", figure)
 
 ## What is plotted
 - `plot_type::Union{AbstractString, Nothing} = nothing`
-    `"event"`, `"conditional"` or `"integrated"`. An event study plot needs data made with `event = true`, and
-    the other two data made with `event = false`. By default: the event study for event study data; otherwise
-    the conditional parallel trends if the data have them and the integrated parallel trends if not.
+    One of:
+    - `"event"`: the event study, one panel per `ccc` option. It needs data made with `event = true`; the
+      other plot types need data made with `event = false`.
+    - `"conditional"`: the conditional parallel trends (see `facet`).
+    - `"conditional2"`: the conditional parallel trends with one panel per treated state, in which the average
+      of the control states is measured from the period before the treated state's treatment, as in `didint()`.
+      The change in the gap between the two lines since that period is then the treated state's ATT in each
+      treated period.
+    - `"integrated"`: the integrated parallel trends of `ccc = "int"`, one panel per treated state, as changes
+      since the previous period.
+    - `"integrated2"`: the same as changes since the period before the treated state's treatment. The gap
+      between the two lines is then the treated state's ATT in each treated period.
+
+    By default: the event study for event study data; otherwise the conditional parallel trends if the data
+    have them and the integrated parallel trends if not.
 - `treated_states = nothing`
     The treated state(s) to show, as a single value or a vector. By default all of them.
 - `ccc = nothing`
@@ -74,12 +91,12 @@ save("trends.png", figure)
 
 ## Parallel trends plots
 - `facet::AbstractString = "ccc"`
-    For conditional parallel trends: `"ccc"` draws one panel per `ccc` option with a line for every state;
+    For `plot_type = "conditional"`: `"ccc"` draws one panel per `ccc` option with a line for every state;
     `"state"` draws one panel per treated state, comparing it with its control states under a single `ccc`
     option (chosen with `ccc` when the data have several).
 - `controls::AbstractString = "average"`
-    In the panels of a treated state (integrated parallel trends, and conditional parallel trends with
-    `facet = "state"`): `"average"` draws one line for the average of the control states, `"separate"` a line
+    In the panels of a treated state (every plot type except `"event"` and `"conditional"` with
+    `facet = "ccc"`): `"average"` draws one line for the average of the control states, `"separate"` a line
     for each control state.
 - `weights::Union{Bool, Nothing} = nothing`
     Whether the average of the control states weights them by their numbers of observations (`true`, the
@@ -98,12 +115,13 @@ save("trends.png", figure)
 - `theme`: a Makie `Theme` that replaces the default look.
 
 The control states of a treated state are the never-treated states and, if `didint_plot()` was called with
-`notyet = true`, the states not yet treated in the period in question. A dotted vertical line marks the first
-treated period.
+`notyet = true`, the states not yet treated in the period in question. Panels of treated states are ordered
+from the earliest treated state to the latest. A dashed vertical line marks the first treated period.
 """
 struct DiDIntPlot
     data::DataFrame
     lambdas::DataFrame
+    long_differences::DataFrame
     specs::NamedTuple
 end
 
@@ -122,19 +140,26 @@ const PLOT_CCC_LABELS = Dict("none" => "No covariates (ccc = \"none\")", "hom" =
 # Number of rows of the data printed in the summary
 const PLOT_ROWS_SHOWN = 5
 
+# The plot types of plot()
+const PLOT_TYPES = ["event", "conditional", "conditional2", "integrated", "integrated2"]
+
 # The plot types that the data of a DiDIntPlot allow
 function available_plot_types(plot::DiDIntPlot)
     plot.specs.event && return ["event"]
     types = String[]
-    any(!ismissing, plot.data.lambda) && push!(types, "conditional")
+    has_conditional = any(!ismissing, plot.data.lambda)
+    has_conditional && push!(types, "conditional")
+    # one panel per treated state: the treated states have to be known
+    has_conditional && !isempty(plot.specs.treated_states) && push!(types, "conditional2")
     any(!ismissing, plot.data.delta) && push!(types, "integrated")
+    nrow(plot.long_differences) > 0 && push!(types, "integrated2")
     return types
 end
 
 function Base.show(io::IO, plot::DiDIntPlot)
 
     # One-line form, used inside collections
-    print(io, "DiDIntPlot(", join(available_plot_types(plot), " and "), " plot data, ", nrow(plot.data), " rows)")
+    print(io, "DiDIntPlot(", plot.specs.event ? "event study" : "parallel trends", " plot data, ", nrow(plot.data), " rows)")
 end
 
 function wrapped_list(items, indent; width = 72)
@@ -176,7 +201,8 @@ function Base.show(io::IO, ::MIME"text/plain", plot::DiDIntPlot)
         println(io, "  Controls:         ", specs.notyet ? "never-treated and not-yet-treated states" : "never-treated states")
     end
     println(io, "  Periods:          ", specs.period, ", from ", specs.start_date, " to ", specs.end_date)
-    println(io, "  Plot types:       ", join(("\"" * type * "\"" for type in types), ", "), " (drawn with plot; see ?DiDIntPlot)")
+    println(io, "  Plot types:       ", join(("\"" * type * "\"" for type in types), ", "))
+    println(io, "                    (drawn with plot; see ?DiDIntPlot)")
     println(io)
     println(io, "Data (first ", min(PLOT_ROWS_SHOWN, nrow(plot.data)), " of ", nrow(plot.data), " rows; see the `data` field)")
     show(io, first(plot.data, PLOT_ROWS_SHOWN); summary = false, eltypes = false, show_row_number = false)
@@ -199,7 +225,8 @@ Tables.schema(plot::DiDIntPlot) = Tables.schema(plot.data)
 #   series:  one row per point, with the panel (its number), the line the point belongs to
 #            (`group`), the entry of the legend that the line belongs to (`label`), what the
 #            line is (`role`: :estimate, :treated, :state, :control or :control_mean), the
-#            number of its colour among the coloured lines (`color`, 0 for control lines), its
+#            number of its colour among the coloured lines (`color`, 0 for control lines; a
+#            treated state keeps its number whichever treated states are shown), its
 #            coordinates (`x`, `y`) and, for an event study, the confidence bounds
 #   vlines:  the vertical reference lines (first treated periods), by panel
 #   xticks:  for a period axis, the period numbers and the labels of their dates
@@ -218,9 +245,6 @@ struct PlotLayout
     xticks::Union{Nothing, Tuple{Vector{Int}, Vector{String}}}
     legend_extras::Vector{Pair{Symbol, String}}
 end
-
-# Largest number of treated states that are given a colour each; with more, they share one
-const MAX_STATE_COLORS = 8
 
 empty_series() = DataFrame(panel = Int[], group = String[], label = String[], role = Symbol[], color = Int[], x = Int[],
                            y = Float64[], lower = Union{Missing, Float64}[], upper = Union{Missing, Float64}[])
@@ -251,8 +275,10 @@ function plot_layout(plot::DiDIntPlot; plot_type::Union{AbstractString, Nothing}
 
     if plot_type == "event"
         layout = event_layout(plot, treated, ccc, weights, groupmin)
-    elseif plot_type == "integrated"
-        layout = integrated_layout(plot, treated, ccc, controls, something(weights, true))
+    elseif plot_type in ("integrated", "integrated2")
+        layout = integrated_layout(plot, treated, ccc, controls, something(weights, true); long = plot_type == "integrated2")
+    elseif plot_type == "conditional2"
+        layout = conditional_state_layout(plot, treated, ccc, controls, something(weights, true); anchored = true)
     elseif facet == "ccc"
         layout = conditional_layout(plot, treated, ccc)
     else
@@ -271,15 +297,19 @@ function check_plot_type(plot::DiDIntPlot, plot_type)
     isempty(available) && error("The plot data are empty.")
     isnothing(plot_type) && return first(available)
     plot_type = lowercase(strip(plot_type))
-    plot_type in ("event", "conditional", "integrated") || error("'plot_type' must be \"event\", \"conditional\" or \"integrated\".")
+    if !(plot_type in PLOT_TYPES)
+        error("'plot_type' must be one of: ", join(("\"" * type * "\"" for type in PLOT_TYPES), ", "), ".")
+    end
     plot_type in available && return plot_type
     if plot_type == "event"
         error("These are parallel trends data. An event study plot needs data from didint_plot() with event = true.")
     elseif plot.specs.event
         error("These are event study data. A parallel trends plot needs data from didint_plot() with event = false.")
-    elseif plot_type == "integrated"
+    elseif plot_type in ("integrated", "integrated2")
         error("The data have no integrated parallel trends: call didint_plot() with \"int\" among the 'ccc' options " *
               "(and with the treated states).")
+    elseif "conditional" in available
+        error("plot_type = \"conditional2\" needs the treated states: call didint_plot() with 'treated_states' or 'gvar'.")
     end
     error("The data have no conditional parallel trends: call didint_plot() with a 'ccc' option other than \"int\".")
 end
@@ -357,12 +387,26 @@ end
 
 sorted_states(states) = sort(String.(states), by = custom_sort_order)
 
-function period_ticks(rows)
+function period_ticks(plot::DiDIntPlot, periods)
 
-    # The period numbers of the rows with the labels of their dates
-    periods = sort(unique(rows.period))
-    label = Dict(zip(rows.period, rows.time))
-    return (Int.(periods), String[label[p] for p in periods])
+    # The period numbers that are plotted, with the labels of their dates
+    periods = sort(unique(Int.(periods)))
+    return (periods, String[plot.specs.period_labels[period + 1] for period in periods])
+end
+
+function by_treatment_time(plot::DiDIntPlot, treated)
+
+    # The treated states from the earliest treated to the latest (those treated at the same
+    # time in the order of their names), the order of their panels
+    period = Dict(zip(plot.specs.treated_states, plot.specs.treatment_periods))
+    return sort(treated, by = s -> (period[s], custom_sort_order(s)))
+end
+
+function treated_state_titles(plot::DiDIntPlot, treated)
+
+    # Titles of the panels of treated states: the state and when it is first treated
+    time = Dict(zip(plot.specs.treated_states, plot.specs.treatment_times))
+    return [string(s, " (treated ", time[s], ")") for s in treated]
 end
 
 function weighted_mean(values, weights)
@@ -425,7 +469,7 @@ end
 function conditional_layout(plot::DiDIntPlot, treated, ccc)
 
     # One panel per ccc option, with the lambdas of every state as a line (Karim & Webb 2025,
-    # eq. 45). The selected treated states are coloured and the states that are never treated
+    # eq. 45). The selected treated states are each in their own colour and the states that are never treated
     # are drawn as control states; treated states that are not selected, and states treated
     # throughout, are left out. When the treated states are not known, every state is drawn
     # alike. Vertical lines mark the first treated periods.
@@ -434,16 +478,8 @@ function conditional_layout(plot::DiDIntPlot, treated, ccc)
     options = selected_ccc(unique(rows.ccc), ccc)
     known = !isempty(specs.treated_states)
 
-    # A colour for each treated state, kept when only some of them are selected; when there
-    # are too many, the selected ones share a colour
-    if length(specs.treated_states) <= MAX_STATE_COLORS
-        color = Dict(s => i for (i, s) in enumerate(specs.treated_states))
-    elseif length(treated) <= MAX_STATE_COLORS
-        color = Dict(s => i for (i, s) in enumerate(treated))
-    else
-        color = Dict(s => 1 for s in treated)
-    end
-    one_color = length(treated) > MAX_STATE_COLORS
+    # A colour for each treated state, which it keeps when only some of them are selected
+    color = Dict(s => i for (i, s) in enumerate(sorted_states(specs.treated_states)))
 
     series = empty_series()
     for (panel, option) in enumerate(options)
@@ -454,8 +490,7 @@ function conditional_layout(plot::DiDIntPlot, treated, ccc)
             if !known
                 add_line!(series, panel, state, "States", :state, 1, state_rows.period, state_rows.lambda)
             elseif state in treated
-                add_line!(series, panel, state, one_color ? "Treated states" : state, :treated, color[state], state_rows.period,
-                          state_rows.lambda)
+                add_line!(series, panel, state, state, :treated, color[state], state_rows.period, state_rows.lambda)
             elseif !(state in specs.treated_states) && !(state in specs.always_treated)
                 add_line!(series, panel, state, "Control states", :control, 0, state_rows.period, state_rows.lambda)
             end
@@ -468,21 +503,28 @@ function conditional_layout(plot::DiDIntPlot, treated, ccc)
     vlines = DataFrame(panel = repeat(eachindex(options), inner = length(treatment_periods)),
                        x = repeat(treatment_periods, outer = length(options)))
     return PlotLayout("conditional", "Conditional parallel trends", "Time", outcome_label(plot, options),
-                      known && !one_color ? "Treated state" : "", [PLOT_CCC_LABELS[option] for option in options], series, vlines,
-                      period_ticks(rows), [:vline => (length(treatment_periods) == 1 ? "First treated period" : "First treated periods")])
+                      known ? "Treated state" : "", [PLOT_CCC_LABELS[option] for option in options], series, vlines,
+                      period_ticks(plot, series.x), [:vline => (length(treatment_periods) == 1 ? "First treated period" : "First treated periods")])
 end
 
-function control_states_of(plot::DiDIntPlot, states)
+function control_states_of(plot::DiDIntPlot, states; long::Bool = false)
 
     # The control states of a treated state s, as a function of the period: among `states`, the
     # never-treated states and, with `notyet`, the treated states other than s that are not
     # yet treated in that period. States treated throughout are never controls.
+    # With `long`, the controls are those of a comparison between the period and the period
+    # before the treatment of s, as in didint(): a not-yet-treated control belongs to another
+    # cohort and is untreated in both periods.
     specs = plot.specs
     treatment_period = Dict(zip(specs.treated_states, specs.treatment_periods))
     never_treated = sorted_states(setdiff(states, specs.treated_states, specs.always_treated))
     not_yet_candidates = sorted_states(intersect(specs.treated_states, states))
     return function (s, period)
         specs.notyet || return never_treated
+        if long
+            g = treatment_period[s]
+            return vcat(never_treated, [j for j in not_yet_candidates if treatment_period[j] != g && treatment_period[j] > max(period, g - 1)])
+        end
         return vcat(never_treated, [j for j in not_yet_candidates if j != s && treatment_period[j] > period])
     end
 end
@@ -524,22 +566,57 @@ function average_of_controls(lambda, n, controls_at, periods, weights)
     return out_periods, values
 end
 
+function anchored_average_of_controls(lambda, n, controls_at, periods, base, weights)
+
+    # The line of the average control state, measured from the period `base` (the period before
+    # the treatment of the treated state), with the differences and weights of didint(): the
+    # controls' average lambda in `base`, plus in every other period t the average over the
+    # controls of t (`controls_at(t)`) of lambda_{c,t} - lambda_{c,base}, weighted by
+    # n_{c,t} + n_{c,base} or equally. The treated state's lambda minus this line, less the
+    # same difference in `base`, is therefore its ATT(s,t) in every treated period t, and a
+    # placebo estimate in every earlier period.
+    # Returns the periods that have a value, and the values; none if no control is observed
+    # in `base`.
+    observed = [c for c in controls_at(base) if haskey(lambda, (c, base))]
+    isempty(observed) && return Int[], Float64[]
+    base_level = weighted_mean([lambda[(c, base)] for c in observed], weights ? Float64[n[(c, base)] for c in observed] : ones(length(observed)))
+
+    out_periods, values = Int[], Float64[]
+    for period in periods
+        if period == base
+            push!(out_periods, period)
+            push!(values, base_level)
+            continue
+        end
+        states = [c for c in controls_at(period) if haskey(lambda, (c, period)) && haskey(lambda, (c, base))]
+        isempty(states) && continue
+        w = weights ? Float64[n[(c, period)] + n[(c, base)] for c in states] : ones(length(states))
+        push!(out_periods, period)
+        push!(values, base_level + weighted_mean([lambda[(c, period)] - lambda[(c, base)] for c in states], w))
+    end
+    return out_periods, values
+end
+
 function control_mean_label(weights)
     return weights ? "Control states (mean, weighted by observations)" : "Control states (mean)"
 end
 
-function conditional_state_layout(plot::DiDIntPlot, treated, ccc, controls, weights)
+function conditional_state_layout(plot::DiDIntPlot, treated, ccc, controls, weights; anchored::Bool = false)
 
-    # One panel per treated state, under a single ccc option: the lambdas of the treated state
-    # and of its control states, the latter as their average (see average_of_controls) or as
-    # one line per control state. A state that is not yet treated is a control up to the
-    # period before its treatment.
+    # One panel per treated state (the earliest treated first), under a single ccc option: the
+    # lambdas of the treated state and of its control states, the latter as one line per
+    # control state or as their average. The average is built from the controls' changes, in
+    # one of two ways: from one period to the next (average_of_controls; plot_type =
+    # "conditional" with facet = "state"), or since the period before the treated state's
+    # treatment (anchored_average_of_controls; plot_type = "conditional2", `anchored`).
+    # A state that is not yet treated is a control up to the period before its treatment.
     specs = plot.specs
-    isempty(specs.treated_states) && error("facet = \"state\" needs the treated states: call didint_plot() with 'treated_states' or 'gvar'.")
+    option_name = anchored ? "plot_type = \"conditional2\"" : "facet = \"state\""
+    isempty(specs.treated_states) && error("$option_name needs the treated states: call didint_plot() with 'treated_states' or 'gvar'.")
     rows = conditional_rows(plot)
     options = selected_ccc(unique(rows.ccc), ccc)
     if length(options) != 1
-        error("facet = \"state\" shows a single 'ccc' option: choose one of ", join(options, ", "), " with the 'ccc' argument.")
+        error("$option_name shows a single 'ccc' option: choose one of ", join(options, ", "), " with the 'ccc' argument.")
     end
     option = only(options)
     rows = rows[rows.ccc .== option, :]
@@ -547,17 +624,22 @@ function conditional_state_layout(plot::DiDIntPlot, treated, ccc, controls, weig
     lambda = Dict(zip(zip(rows.state, rows.period), rows.lambda))
     n = Dict(zip(zip(rows.state, rows.period), rows.n))
     periods = sort(unique(rows.period))
-    controls_at = control_states_of(plot, unique(rows.state))
+    controls_at = control_states_of(plot, unique(rows.state); long = anchored)
+    treatment_period = Dict(zip(specs.treated_states, specs.treatment_periods))
+    treated = by_treatment_time(plot, treated)
 
     series = empty_series()
     vlines = DataFrame(panel = Int[], x = Int[])
     for (panel, s) in enumerate(treated)
+        controls_of_s(period) = controls_at(s, period)
         if controls == "average"
-            mean_periods, mean_values = average_of_controls(lambda, n, period -> controls_at(s, period), periods, weights)
+            mean_periods, mean_values = anchored ?
+                anchored_average_of_controls(lambda, n, controls_of_s, periods, treatment_period[s] - 1, weights) :
+                average_of_controls(lambda, n, controls_of_s, periods, weights)
             add_line!(series, panel, "Control states", control_mean_label(weights), :control_mean, 0, mean_periods, mean_values)
         else
             control_periods = Dict{String, Vector{Int}}()
-            for period in periods, c in controls_at(s, period)
+            for period in periods, c in controls_of_s(period)
                 haskey(lambda, (c, period)) && push!(get!(control_periods, c, Int[]), period)
             end
             for c in sorted_states(collect(keys(control_periods)))
@@ -567,56 +649,71 @@ function conditional_state_layout(plot::DiDIntPlot, treated, ccc, controls, weig
         end
         own_periods = [period for period in periods if haskey(lambda, (s, period))]
         add_line!(series, panel, s, "Treated state", :treated, 1, own_periods, [lambda[(s, period)] for period in own_periods])
-        push!(vlines, (panel = panel, x = specs.treatment_periods[findfirst(==(s), specs.treated_states)]))
+        push!(vlines, (panel = panel, x = treatment_period[s]))
     end
-    return PlotLayout("conditional", "Conditional parallel trends by treated state, ccc = \"$option\"", "Time", outcome_label(plot, options),
-                      "", copy(treated), series, vlines, period_ticks(rows), [:vline => "First treated period"])
+    title = anchored ? "Conditional parallel trends relative to the period before treatment, ccc = \"$option\"" :
+                       "Conditional parallel trends by treated state, ccc = \"$option\""
+    return PlotLayout(anchored ? "conditional2" : "conditional", title, "Time", outcome_label(plot, options), "",
+                      treated_state_titles(plot, treated), series, vlines, period_ticks(plot, series.x), [:vline => "First treated period"])
 end
 
 
 ###########################################################################################
-# Section 6: Integrated parallel trends layout                                            #
+# Section 6: Integrated parallel trends layouts                                           #
 ###########################################################################################
 
-function integrated_layout(plot::DiDIntPlot, treated, ccc, controls, weights)
+function with_base_period(periods, values, base)
 
-    # One panel per treated state s (Karim & Webb 2025, eqs. 36-38): the change since the
-    # previous period in the predicted outcome of s and of its control states, all evaluated at
-    # the covariate means of s. The controls are drawn as their average in each period,
+    # The points of a line of changes since the period `base`, with the point of `base` itself,
+    # where the change is zero
+    position = searchsortedfirst(periods, base)
+    return vcat(periods[1:position - 1], base, periods[position:end]), vcat(values[1:position - 1], 0.0, values[position:end])
+end
+
+function integrated_layout(plot::DiDIntPlot, treated, ccc, controls, weights; long::Bool = false)
+
+    # One panel per treated state s, the earliest treated first (Karim & Webb 2025, eqs. 36-38):
+    # the change in the predicted outcome of s and of its control states, all evaluated at the
+    # covariate means of s. The change is the one since the previous period (plot_type =
+    # "integrated") or, with `long`, the one since the period before the treatment of s
+    # (plot_type = "integrated2", from the `long_differences` of the plot data), which is zero
+    # in that period for every state. The controls are drawn as their average in each period,
     # weighted by their numbers of observations in the two periods (the weights of didint()) or
-    # equally, or as one line per control state.
+    # equally, or as one line per control state. With `long`, the treated state's change minus
+    # the average of its controls is its ATT(s,t) in every treated period t.
     if !isnothing(ccc) && unique(lowercase.(ccc isa AbstractVector ? ccc : [ccc])) != ["int"]
         error("The integrated parallel trends plot is that of ccc = \"int\"; 'ccc' cannot select another option.")
     end
-    data = plot.data
-    rows = data[.!ismissing.(data.delta), :]
+    rows = long ? plot.long_differences : plot.data[.!ismissing.(plot.data.delta), :]
     series = empty_series()
     vlines = DataFrame(panel = Int[], x = Int[])
-    panels = String[]
-    for s in treated
+    shown = String[]
+    for s in by_treatment_time(plot, treated)
         state_rows = sort(rows[rows.treated_state_covars .== s, :], :period)
         own = state_rows[state_rows.state .== s, :]
         others = state_rows[state_rows.state .!= s, :]
         nrow(own) == 0 && continue
-        push!(panels, s)
-        panel = length(panels)
+        push!(shown, s)
+        panel = length(shown)
+        line(periods, values) = long ? with_base_period(Int.(periods), Float64.(values), first(own.base_period)) : (periods, values)
         if controls == "average"
             periods = sort(unique(others.period))
             means = [(in_period = others.period .== period;
                       weighted_mean(others.delta[in_period], weights ? Float64.(others.n[in_period]) : ones(count(in_period))))
                      for period in periods]
-            add_line!(series, panel, "Control states", control_mean_label(weights), :control_mean, 0, periods, means)
+            isempty(periods) || add_line!(series, panel, "Control states", control_mean_label(weights), :control_mean, 0, line(periods, means)...)
         else
             for c in sorted_states(unique(others.state))
                 control_rows = others[others.state .== c, :]
-                add_line!(series, panel, c, "Control states", :control, 0, control_rows.period, control_rows.delta)
+                add_line!(series, panel, c, "Control states", :control, 0, line(control_rows.period, control_rows.delta)...)
             end
         end
-        add_line!(series, panel, s, "Treated state", :treated, 1, own.period, own.delta)
+        add_line!(series, panel, s, "Treated state", :treated, 1, line(own.period, own.delta)...)
         push!(vlines, (panel = panel, x = first(own.treat_period)))
     end
-    isempty(panels) && error("No integrated parallel trends data for the selected treated states.")
-    return PlotLayout("integrated", "Integrated parallel trends by treated state",
-                      "Time", "Change in predicted " * plot.specs.outcome * " since the previous period", "", panels, series, vlines,
-                      period_ticks(rows), [:vline => "First treated period"])
+    isempty(shown) && error("No integrated parallel trends data for the selected treated states.")
+    since = long ? "the period before treatment" : "the previous period"
+    return PlotLayout(long ? "integrated2" : "integrated", "Integrated parallel trends: changes since " * since,
+                      "Time", "Change in predicted " * plot.specs.outcome, "", treated_state_titles(plot, shown),
+                      series, vlines, period_ticks(plot, series.x), [:vline => "First treated period"])
 end
