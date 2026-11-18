@@ -378,11 +378,11 @@ end
         end
         @test other.ri_pval_agg_att[1] ≈ exact.ri_pval_agg_att[1] atol = 1e-12
 
-        # Smoothing applies when at most ri_kernel_cutoff alternatives are used (here 5), and
+        # Smoothing applies when fewer than ri_kernel_cutoff alternatives are used (here 5), and
         # nothing, false and 0 turn it off: then the ordinary p-value
         @test run(data, Dict("s1" => 2004); agg = "cohort", nperm = 999, use_pre_controls = upc,
-                  ri_kernel_cutoff = 5).ri_pval_agg_att[1] ≈ DiDInt.ri_pvalue_kernel(placebos, observed) atol = 1e-10
-        for off in [4, 0, nothing, false]
+                  ri_kernel_cutoff = 6).ri_pval_agg_att[1] ≈ DiDInt.ri_pvalue_kernel(placebos, observed) atol = 1e-10
+        for off in [5, 0, nothing, false]
             @test run(data, Dict("s1" => 2004); agg = "cohort", nperm = 999, use_pre_controls = upc,
                       ri_kernel_cutoff = off).ri_pval_agg_att[1] ≈ DiDInt.ri_pvalue(placebos, observed) atol = 1e-12
         end
@@ -411,15 +411,16 @@ end
     @test length(estimates) == 210
     observed, placebos = estimates[1], estimates[2:end]
 
-    # More than 99 alternatives: the ordinary p-value, the rank of |observed| among all 210
+    # 99 alternatives or more: the ordinary p-value, the rank of |observed| among all 210
     results = run(data, common; agg = "cohort", nperm = 999)
     @test results.nperm[1] == 209
     @test results.agg_att[1] ≈ observed atol = 1e-12
     @test results.ri_pval_agg_att[1] ≈ count(abs.(estimates) .>= abs(observed) * (1 - 1e-8)) / 210 atol = 1e-12
-    # With ri_kernel_cutoff = 209 the same alternatives are kernel-smoothed; 208 is below them
-    @test run(data, common; agg = "cohort", nperm = 999, ri_kernel_cutoff = 209).ri_pval_agg_att[1] ≈
+    # With ri_kernel_cutoff = 210 the same 209 alternatives are kernel-smoothed; with 209 they
+    # are not (smoothing needs fewer alternatives than the cutoff)
+    @test run(data, common; agg = "cohort", nperm = 999, ri_kernel_cutoff = 210).ri_pval_agg_att[1] ≈
           DiDInt.ri_pvalue_kernel(placebos, observed) atol = 1e-10
-    @test run(data, common; agg = "cohort", nperm = 999, ri_kernel_cutoff = 208).ri_pval_agg_att[1] ≈
+    @test run(data, common; agg = "cohort", nperm = 999, ri_kernel_cutoff = 209).ri_pval_agg_att[1] ≈
           results.ri_pval_agg_att[1] atol = 1e-12
 
     # Every level has an RI p-value, on the grid 1/210
@@ -497,6 +498,7 @@ end
     states = unique(ENGINE_PANEL.state)
     deleted = [run(filter(r -> r.state != s, ENGINE_PANEL), filter(!=(s), ENGINE_TREATED)).agg_att[1] for s in states]
     n = length(states)
-    @test full.jknifese_agg_att[1] ≈ sqrt((n - 1) / n * sum((deleted .- full.agg_att[1]) .^ 2)) rtol = 1e-10
+    # CV3J: centered at the mean of the delete-one estimates
+    @test full.jknifese_agg_att[1] ≈ sqrt((n - 1) / n * sum((deleted .- mean(deleted)) .^ 2)) rtol = 1e-10
     @test abs(full.jknifese_agg_att[1] - run(ENGINE_PANEL, ENGINE_TREATED; truejack = false).jknifese_agg_att[1]) > 1e-8
 end

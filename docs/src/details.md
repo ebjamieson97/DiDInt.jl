@@ -351,10 +351,10 @@ Note that for the `ccc` options of `"state"` and `"int"` that the true jackknife
 The jackknife standard error is computed as:
 
 ```math
-\widehat{\mathrm{se}}_{\mathrm{jack}} = \sqrt{\frac{N-1}{N} \sum_{i=1}^{N}\left(\hat{\beta}_{(-i)} - \hat{\beta}\right)^2}
+\widehat{\mathrm{se}}_{\mathrm{jack}} = \sqrt{\frac{N-1}{N} \sum_{i=1}^{N}\left(\hat{\beta}_{(-i)} - \overline{\beta}\right)^2}, \qquad \overline{\beta} = \frac{1}{N} \sum_{i=1}^{N} \hat{\beta}_{(-i)}
 ```
 
-where $N$ is the number of states whose removal leaves the estimate defined, $\hat{\beta}_{(-i)}$ is the ATT estimate with state $i$ removed, and $\hat{\beta}$ is the original ATT estimate. This is the cluster jackknife variance estimator centered at the original estimate ($\mathrm{CV}_3$ in [MacKinnon, Nielsen, and Webb (2023)](https://doi.org/10.1016/j.jeconom.2022.04.001)). Jackknife p-values are computed via a two-tailed test using a $t$-distribution with $N - 1$ degrees of freedom.
+where $N$ is the number of states whose removal leaves the estimate defined, $\hat{\beta}_{(-i)}$ is the ATT estimate with state $i$ removed, and $\overline{\beta}$ is the mean of those estimates. This is the cluster jackknife variance estimator centered at the mean of the delete-one estimates ($\mathrm{CV}_{3J}$ in [MacKinnon, Nielsen, and Webb (2023)](https://doi.org/10.1016/j.jeconom.2022.04.001); equation 87 of the DID-INT paper). Jackknife p-values are computed via a two-tailed test of the original ATT estimate using a $t$-distribution with $N - 1$ degrees of freedom.
 
 A minimum of two treated states and two control states are required to compute jackknife standard errors and p-values; if this condition is not met, these quantities are returned as `missing`. The same minimum applies to each estimate separately: a subaggregate ATT (or the ATT of a policy) only has a jackknife standard error if the $\widehat{\mathrm{ATT}}(s,t)$ values it averages involve at least two treated states and at least two control states, and if it can be computed with any one state removed. Otherwise its jackknife standard error and p-value are returned as `missing`.
 
@@ -389,7 +389,7 @@ For the `"state"` and `"sgt"` options, each treated state's treatment time is as
 
 ### Kernel-Smoothed P-Values
 
-With few alternative assignments, the p-value above can only take a few distinct values. When the number of permutations used, $nperm^{*}$, is no larger than the `ri_kernel_cutoff` argument (99 by default), **DiDInt.jl** instead reports the kernel-smoothed p-value of [Racine and MacKinnon (2007)](https://doi.org/10.1016/j.csda.2006.11.013), which replaces the indicator function with a smooth function:
+With few alternative assignments, the p-value above can only take a few distinct values. When the number of permutations used, $nperm^{*}$, is smaller than the `ri_kernel_cutoff` argument (99 by default), **DiDInt.jl** instead reports the kernel-smoothed p-value of [Racine and MacKinnon (2007)](https://doi.org/10.1016/j.csda.2006.11.013), which replaces the indicator function with a smooth function:
 
 ```math
 p_{RI} = 1 - \frac{1}{nperm^{*}} \sum_{r=1}^{nperm^{*}} \Phi\!\left(\frac{|ATT_{Actual}| - |ATT_{RI,r}|}{h}\right), \qquad h = 1.575\; \hat{\sigma}_{RI}\; (nperm^{*})^{-4/9}
@@ -546,7 +546,39 @@ with the variances and covariances estimated from each cell's regression. This t
 
 ## Plotting with `didint_plot()`
 
-`didint_plot()` is intended as a simple visual tool. For each requested `ccc` option it plots the $\hat{\lambda}_{s,t}$ values from Step 1 of the [Five Step Estimation Procedure](@ref) (equation 45 of the DID-INT paper) by state and period, or, for event study plots, the averages of the treated states' $\hat{\lambda}_{s,t}$ values by periods since treatment. These show how each form of covariate adjustment affects the trends in the outcome. They are not the [Integrated Long Differences](@ref) used by `didint()`, so the plots are not meant to reproduce the ATT estimates exactly (the two differ when `ccc = "int"` is used with covariates).
+`didint_plot()` prepares the data for three kinds of plots. All are visual aids built from the first-stage estimates of Step 1 of the [Five Step Estimation Procedure](@ref); none reproduces the ATT estimates of `didint()`.
+
+### Integrated Parallel Trends
+
+With `event = false` and `integrated = true` (the default), `didint_plot()` returns the data for the integrated parallel trends plot of the DID-INT paper (equations 36 to 38). The outcome is regressed on the covariates separately in every $(s,t)$ cell, as under two-way DID-INT, which gives $\hat{\lambda}_{s,t}$ and $\hat{\gamma}_{s,t}$. For a treated state $s$ and a state $j$, the change in the predicted outcome of $j$ between periods $t-1$ and $t$, evaluated at the covariate means of $s$ in period $t$, is
+
+```math
+\widehat{\delta}_{j \to s,t} = \left(\hat{\lambda}_{j,t} - \hat{\lambda}_{j,t-1}\right) + \left(\hat{\gamma}_{j,t} - \hat{\gamma}_{j,t-1}\right)'\,\overline{X}_{s,t}
+```
+
+It is computed for $j = s$ and for each comparison state of $s$: the never-treated states and, with `notyet = true`, the states not yet treated in period $t$. The `ccc` argument does not apply.
+
+These are the [Integrated Long Differences](@ref) of `didint()` under `ccc = "int"`, taken from one period to the next rather than from the period before treatment; in the first treated period the two coincide. One plot is made per treated state: if its series stays close to those of its comparison states before treatment, integrated parallel trends is plausible for that state.
+
+### Conditional Parallel Trends
+
+With `event = false` and `integrated = false`, the data are the $\hat{\lambda}_{s,t}$ values themselves, for every state, period and requested `ccc` option:
+
+```math
+\hat{\lambda}_{s,t} = \overline{Y}_{s,t} - \hat{\gamma}_{s,t}'\,\overline{X}_{s,t}
+```
+
+where $\hat{\gamma}_{s,t}$ are the covariate coefficients that the `ccc` option implies for the cell (`"none"` uses $\overline{Y}_{s,t}$ itself). Under every `ccc` option except `"int"`, `didint()` compares exactly the changes over time in these series, so series that move in parallel before treatment support conditional parallel trends under that option, and comparing the options shows which form of covariate adjustment makes the trends parallel. Under `"int"` the plotted levels depend on how the covariates are coded, and the integrated plot should be used instead.
+
+### Event Study
+
+With `event = true`, the $\hat{\lambda}_{s,t}$ values of the treated states are averaged by period relative to treatment, $e = t - g_s$, for each requested `ccc` option:
+
+```math
+\overline{\lambda}_{e} = \sum_{s} \omega_{s,e}\, \hat{\lambda}_{s,\,g_s + e}, \qquad \omega_{s,e} = \frac{n_{s,\,g_s+e}}{\sum_{s'} n_{s',\,g_{s'}+e}}
+```
+
+where $g_s$ is the treatment time of state $s$ and the sums run over the treated states observed $e$ periods from treatment (`weights = false` uses equal weights). The standard error and confidence interval of each average come from the weighted regression of those $\hat{\lambda}_{s,t}$ values on a constant. The plot shows the average covariate-adjusted outcome of the treated states around treatment. It contains no comparison states, so it describes the path of the treated states and does not estimate dynamic treatment effects, which `didint()` reports with `agg = "time"`.
 
 ## Fast Computation of Randomization Inference and Jackknife
 

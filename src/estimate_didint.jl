@@ -192,7 +192,7 @@ in `treatment_times`, and so on. A single treatment time applies to every treate
     to be considered when performing the randomization inference. If no more than `nperm` unique
     permutations exist, all of them are used.
 - `ri_kernel_cutoff::Union{Number, Nothing} = 99`
-    When the randomization inference uses `ri_kernel_cutoff` or fewer permutations (because
+    When the randomization inference uses fewer than `ri_kernel_cutoff` permutations (because
     `nperm` is that small, or because no more unique permutations exist), its p-values are kernel-smoothed
     (Racine & MacKinnon 2007) instead of counting the placebo estimates at least as large as the observed one.
     Set it to `nothing`, `false` or `0` to never smooth.
@@ -1334,8 +1334,9 @@ function jackknife_procedure(results::DataFrame, att_st::DataFrame, diff_df::Dat
                              integration::Union{CovariateFit, Nothing} = nothing,
                              policy = default_policy_options(treated_states))
 
-    # Delete-one-state (cluster) jackknife: the CV3 (CRV3) variance estimator, centered at the
-    # full-sample estimate (MacKinnon, Nielsen & Webb 2023). Each state is deleted as a treated
+    # Delete-one-state (cluster) jackknife: the CV3J variance estimator, centered at the mean
+    # of the delete-one estimates (MacKinnon, Nielsen & Webb 2023; Karim & Webb 2025, eq. 87).
+    # Each state is deleted as a treated
     # state and as a control, and the same weighted means are recomputed, at every level of the
     # output: the sub-aggregates, the aggregate ATT or each policy's ATT, and the pooled ATT.
     # Deleting a state leaves the other states' lambdas and slopes unchanged under ccc = "int"
@@ -1460,11 +1461,12 @@ end
 
 function jackknife_se_pval(estimates::AbstractVector, full_sample::Real)
 
-    # Jackknife SE sqrt((n-1)/n * sum_h (theta_h - theta)^2) over the n delete-one estimates
-    # theta_h, centered at the full-sample estimate theta (the CV3, or CRV3, estimator of MacKinnon,
-    # Nielsen & Webb 2023), and its two-sided p-value from a t(n-1) distribution
+    # Jackknife SE sqrt((n-1)/n * sum_h (theta_h - theta_bar)^2) over the n delete-one estimates
+    # theta_h, centered at their mean theta_bar (the CV3J estimator of MacKinnon, Nielsen & Webb
+    # 2023; Karim & Webb 2025, eq. 87), and the two-sided p-value of the full-sample estimate
+    # from a t(n-1) distribution
     n = length(estimates)
-    se = n >= 2 ? sqrt(sum((estimates .- full_sample).^2) * ((n - 1) / n)) : missing
+    se = n >= 2 ? sqrt(sum((estimates .- mean(estimates)).^2) * ((n - 1) / n)) : missing
     pval = n - 1 > 0 && !ismissing(se) ? 2 * (1 - cdf(TDist(n - 1), abs(full_sample / se))) : missing
     return se, pval
 end
@@ -1532,10 +1534,11 @@ function randomization_inference(results::DataFrame, att_st::DataFrame, long_dif
     end
 
     # PART THREE: COMPUTE P-VALS BASED ON THE PLACEBO ESTIMATES
-    # The kernel-smoothed p-value when at most ri_kernel_cutoff permutations were used, whether
-    # they are all the permutations that exist or a sample of them; otherwise the ordinary
-    # p-value. With a single permutation there is nothing to smooth.
-    use_kernel = 2 <= nperm <= ri_kernel_cutoff
+    # The kernel-smoothed p-value when fewer than ri_kernel_cutoff permutations were used,
+    # whether they are all the permutations that exist or a sample of them; otherwise the
+    # ordinary p-value (Karim & Webb 2025, Section 11.6). With a single permutation there is
+    # nothing to smooth.
+    use_kernel = 2 <= nperm < ri_kernel_cutoff
     pvalue(placebos, observed) = use_kernel ? ri_pvalue_kernel(placebos, observed) : ri_pvalue(placebos, observed)
     suffix = SUB_AGG_SPECS[agg].suffix
     for i in 1:nrow(results)

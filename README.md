@@ -8,7 +8,7 @@ Integrated difference-in-differences!
 
 **DiDInt.jl** introduces two functions:
 - `didint()`, which is used for estimating the average effect of treatment on the treated (ATT) while accounting for various violations of the common causal covariates (CCC) assumption
-- `didint_plot()` which produces datasets that can easily be used to make parallel trends plots that help determine which CCC violation should be accounted for when using `didint()`. `didint_plot` can also produce datasets that can easily be used to make event study plots.
+- `didint_plot()` which produces datasets that can easily be used to make integrated parallel trends plots, as well as conditional parallel trends plots that help determine which CCC violation should be accounted for when using `didint()`. `didint_plot` can also produce datasets that can easily be used to make event study plots.
 
 To learn more about the common causal covariates assumption and integrated difference-in-differences please see [Karim & Webb (2025)](https://arxiv.org/abs/2412.14447).
 
@@ -62,7 +62,7 @@ result = didint("coll", "state", "year", test_data,
 # Aggregate ATT
 #  estimate       att        se          pval         jknife_se  jknife_pval  ri_pval
 # ────────────────────────────────────────────────────────────────────────────────────
-#  Aggregate ATT  0.0462414  0.00769881  0.000959237   0.012354  0.000470121   0.0975
+#  Aggregate ATT  0.0462414  0.00769881  0.000959237  0.0123516   0.00046902   0.0975
 #
 # Sub-aggregate ATTs by treatment time (7)
 #  treatment_time  att          se          pval       jknife_se        jknife_pval      ri_pval  weight
@@ -70,10 +70,10 @@ result = didint("coll", "state", "year", test_data,
 #  1991-01-01       0.0553354   0.0222024   0.0342914  missing          missing           0.4575  0.201796
 #  1993-01-01       0.0504489   0.0161905   0.0169391  missing          missing           0.5175  0.191535
 #  1996-01-01       0.0424116   0.0255707   0.172536   missing          missing           0.5725  0.0756734
-#  1997-01-01       0.0606879   0.0236147   0.037012         0.0329885        0.0717569   0.28    0.321077
-#  1998-01-01       0.0398137   0.0406649   0.372511         0.0814308        0.627031    0.5825  0.108593
+#  1997-01-01       0.0606879   0.0236147   0.037012         0.0328756        0.0708186   0.28    0.321077
+#  1998-01-01       0.0398137   0.0406649   0.372511         0.0813398        0.626647    0.5825  0.108593
 #  1999-01-01       0.00173622  0.00350574  0.707256   missing          missing           0.985   0.0354853
-#  2000-01-01      -0.0253317   0.0333203   0.586179         0.0976972        0.796477    0.755   0.0658401
+#  2000-01-01      -0.0253317   0.0333203   0.586179         0.0971445        0.795346    0.755   0.0658401
 
 # The estimates are stored as tables...
 result.agg          # the aggregate ATT with its standard errors and p-values
@@ -95,15 +95,34 @@ Other aggregations are available through the `agg` argument (`"cohort"`, `"simpl
 
 ## `didint_plot()` - Prepare Data for Visualization
 
-The `didint_plot()` function produces a dataset in a long format that can easily be used for plotting parallel trends or event study plots.
+The `didint_plot()` function produces a dataset in a long format that can easily be used for plotting integrated parallel trends (the default), conditional parallel trends (`integrated = false`) or event study plots (`event = true`).
 
 ```julia
 
-# Generate data for a parallel trends plot
+# Generate data for an integrated parallel trends plot: for each treated state, the change
+# since the previous period in the predicted outcome of that state and of its comparison
+# states, all evaluated at the treated state's covariate means
+plot_integrated = didint_plot("coll", "state", "year", test_data,
+                              treatment_times = treated_times,
+                              treated_states = treated_states,
+                              covariates = ["asian", "black", "male"])
+plot_integrated[1:4, :]
+# 4×9 DataFrame
+#  Row │ treated_state  state   time    delta       ccc     period  treat_period  start_date  period_length
+#      │ String         String  String  Float64     String  Int64   Int64         String      String
+# ─────┼─────────────────────────────────────────────────────────────────────────────────────────────────────
+#    1 │ 34             34      1990    -0.0791523  int          1            11  1989        1 year
+#    2 │ 34             11      1990    -0.125941   int          1            11  1989        1 year
+#    3 │ 34             12      1990     0.0223095  int          1            11  1989        1 year
+#    4 │ 34             13      1990    -0.160495   int          1            11  1989        1 year
+
+
+# Generate data for a conditional parallel trends plot: the covariate-adjusted mean
+# outcome of every state and period, for each CCC specification
 plot_parallel = didint_plot("coll", "state", "year", test_data,
-                                   treatment_times = treated_times, 
-                                   treated_states = treated_states,
-                                   event = false, covariates = ["asian", "black", "male"])
+                            treatment_times = treated_times,
+                            treated_states = treated_states,
+                            integrated = false, covariates = ["asian", "black", "male"])
 plot_parallel[1:4, :]
 # 4×8 DataFrame
 #  Row │ state    time     lambda    ccc      period  start_date  treat_period  period_length

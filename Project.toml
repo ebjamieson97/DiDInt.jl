@@ -1,6 +1,6 @@
 name = "DiDInt"
 uuid = "a755adf4-2e2b-446b-93e8-5a1a900eb7ed"
-version = "0.11.0"
+version = "0.12.0"
 authors = ["Eric Jamieson <ericbrucejamieson@gmail.com>"]
 
 [deps]
