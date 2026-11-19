@@ -115,7 +115,6 @@ nothing # hide
 ![Conditional parallel trends, one panel per ccc option](plotting_conditional.png)
 
 The `ccc` and `treated_states` arguments select the options and the treated states to show.
-A treated state keeps its colour whichever states are shown.
 
 ```@example plots
 figure = plot(plot_data; treated_states = 72)
@@ -209,9 +208,6 @@ nothing # hide
   steadily towards or away from zero as treatment approaches suggest that the treated
   state was on a different trend, and a jump just before treatment suggests anticipation.
 
-The gaps before and after treatment are in the same units, so the placebo gaps show how
-large a violation of parallel trends would be next to the estimated effect.
-
 Without `ccc`, every option is shown, with a row of panels per treated state and a column
 per option. For one treated state this compares the options side by side:
 
@@ -301,8 +297,8 @@ nothing # hide
 
 ### Changes since the pre-treatment period
 
-`plot_type = "integrated2"` draws the same comparison with every change measured from the
-pre-treatment period of the treated state, as `didint()` measures it. Both lines are zero
+`plot_type = "integrated2"` draws the a similar comparison, but with every change measured from the
+pre-treatment period of the treated state (as opposed to just measuring the change from the prior period), as `didint()` measures it. Both lines are zero
 in that period.
 
 ```@example plots
@@ -314,10 +310,7 @@ nothing # hide
 ![Integrated parallel trends, changes since the pre-treatment period](plotting_integrated2.png)
 
 As in `"conditional2"`, the gap between the two lines is the ATT that `didint()`
-estimates in a treated period, and a placebo estimate before treatment. A trend that
-differs between the treated state and its controls accumulates in this plot, so it is
-easier to see than in the changes from one period to the next; on the other hand every
-point of a line shares the noise of the pre-treatment period. The data behind this plot
+estimates in a treated period, and a placebo estimate before treatment. The data behind this plot
 are in `plot_data.integrated2`:
 
 ```@example plots
