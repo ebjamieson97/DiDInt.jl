@@ -598,9 +598,9 @@ Under `ccc = "int"` each $\widehat{ATT}(s,t)$ evaluates every cell at the treate
 \widehat{\delta}_{j \to s,t} = \left(\hat{\lambda}_{j,t} - \hat{\lambda}_{j,t-1}\right) + \left(\hat{\gamma}_{j,t} - \hat{\gamma}_{j,t-1}\right)'\,\overline{X}_{s,t}
 ```
 
-It is computed for every treated state $s$ (the `treated_state_covars` column), for $j = s$ and for each control state of $s$. The `n` column holds $n_{j,t} + n_{j,t-1}$.
+It is computed for every treated state $s$, and for each control state of $s$. The `n` column holds $n_{j,t} + n_{j,t-1}$.
 
-These are the [Integrated Long Differences](@ref) of `didint()` under `ccc = "int"`, taken from one period to the next rather than from the pre-treatment period; in the first treated period the two coincide. The plot has one panel per treated state, which compares $\widehat{\delta}_{s \to s,t}$ with the average of $\widehat{\delta}_{c \to s,t}$ over its control states, weighted by $n_{c,t} + n_{c,t-1}$ (or with each of them). If the two lines stay close to each other before treatment, integrated parallel trends is plausible for that state. In the first treated period the gap between them is the estimate of `didint()` for that state and period, $\widehat{ATT}(s, g_s)$.
+These are the [Integrated Long Differences](@ref) of `didint()` under `ccc = "int"`, taken from one period to the next rather than from the pre-treatment period; in the first treated period the two coincide. The plot has one panel per treated state, which compares $\widehat{\delta}_{s \to s,t}$ with the average of $\widehat{\delta}_{c \to s,t}$ over its control states, weighted by $n_{c,t} + n_{c,t-1}$ (or, with `controls = "separate"`, with each $\widehat{\delta}_{c \to s,t}$). If the two lines stay close to each other before treatment, integrated parallel trends is plausible for that state. In the first treated period the gap between them is the estimate of `didint()` for that state and period, $\widehat{ATT}(s, g_s)$.
 
 The `"integrated2"` data measure the same changes from the pre-treatment period:
 
