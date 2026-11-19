@@ -92,9 +92,9 @@ save("trends.png", figure)
 ## Parallel trends plots
 - `facet::AbstractString = "ccc"`
     For `plot_type = "conditional"`: `"ccc"` draws one panel per `ccc` option with a line for every state;
-    `"state"` draws one panel per treated state, comparing it with its control states under a single `ccc`
-    option (chosen with `ccc` when the data have several). `"conditional2"` draws one panel per treated state
-    and `ccc` option, a row of panels per treated state.
+    `"state"` draws one panel per treated state and `ccc` option (a row of panels per treated state),
+    comparing the treated state with its control states. `"conditional2"` is always drawn that way. `ccc`
+    selects the options in both.
 - `controls::AbstractString = "average"`
     In the panels of a treated state (every plot type except `"event"` and `"conditional"` with
     `facet = "ccc"`): `"average"` draws one line for the average of the control states, `"separate"` a line
@@ -335,15 +335,16 @@ function selected_ccc(available, ccc)
     return filter(in(selected), available)
 end
 
-function single_ccc(available, ccc, what)
+function grid_panel_title(plot::DiDIntPlot, s, option, n_options)
 
-    # The one ccc option of a plot that shows a single option (`what` names the plot)
-    options = selected_ccc(available, ccc)
-    if length(options) != 1
-        error("$what shows a single 'ccc' option: choose one of ", join(options, ", "), " with the 'ccc' argument.")
-    end
-    return only(options)
+    # Title of the panel of treated state s under a ccc option, in a plot of n_options options
+    # (the option is named only when there are several; `option` is nothing for "int")
+    state_title = only(treated_state_titles(plot, [s]))
+    return n_options == 1 ? state_title : state_title * ", " * ccc_subtitle(option)
 end
+
+# A grid of treated states by ccc options has a column per option
+grid_columns(options) = length(options) == 1 ? nothing : length(options)
 
 function check_window(window)
 
@@ -571,27 +572,30 @@ end
 
 function conditional_state_layout(plot::DiDIntPlot, treated, ccc, controls, weights)
 
-    # One panel per treated state (the earliest treated first), under a single ccc option: the
-    # lambdas of the treated state and of its control states, the latter as one line per
-    # control state or as their average (see average_of_controls). A state that is not yet
-    # treated is a control up to the period before its treatment.
+    # One panel per treated state (the earliest treated first) and ccc option, a row of panels
+    # per treated state: the lambdas of the treated state and of its control states, the latter
+    # as one line per control state or as their average (see average_of_controls). A state
+    # that is not yet treated is a control up to the period before its treatment.
     specs = plot.specs
     isempty(specs.treated_states) && error("facet = \"state\" needs the treated states: call didint_plot() with 'treated_states' or 'gvar'.")
-    rows = plot.conditional
-    option = single_ccc(unique(rows.ccc), ccc, "facet = \"state\"")
-    rows = rows[rows.ccc .== option, :]
-
-    lambda = Dict(zip(zip(rows.state, rows.period), rows.lambda))
-    n = Dict(zip(zip(rows.state, rows.period), rows.n))
-    periods = sort(unique(rows.period))
-    controls_at = control_states_of(plot, unique(rows.state))
+    options = selected_ccc(unique(plot.conditional.ccc), ccc)
     treatment_period = Dict(zip(specs.treated_states, specs.treatment_periods))
     treated = by_treatment_time(plot, treated)
 
     series = empty_series()
     vlines = DataFrame(panel = Int[], x = Int[])
-    for (panel, s) in enumerate(treated)
+    panel_titles = String[]
+    # the lambdas, numbers of observations, periods and control states under each option
+    by_option = Dict(map(options) do option
+        rows = plot.conditional[plot.conditional.ccc .== option, :]
+        option => (lambda = Dict(zip(zip(rows.state, rows.period), rows.lambda)), n = Dict(zip(zip(rows.state, rows.period), rows.n)),
+                   periods = sort(unique(rows.period)), controls_at = control_states_of(plot, unique(rows.state)))
+    end)
+    for s in treated, option in options
+        (; lambda, n, periods, controls_at) = by_option[option]
         controls_of_s(period) = controls_at(s, period)
+        push!(panel_titles, grid_panel_title(plot, s, option, length(options)))
+        panel = length(panel_titles)
         if controls == "average"
             mean_periods, mean_values = average_of_controls(lambda, n, controls_of_s, periods, weights)
             add_line!(series, panel, "Control states", control_mean_label(weights), :control_mean, 0, mean_periods, mean_values)
@@ -609,8 +613,10 @@ function conditional_state_layout(plot::DiDIntPlot, treated, ccc, controls, weig
         add_line!(series, panel, s, "Treated state", :treated, 1, own_periods, [lambda[(s, period)] for period in own_periods])
         push!(vlines, (panel = panel, x = treatment_period[s]))
     end
-    return PlotLayout("conditional", conditional_title(plot, [option]), ccc_subtitle(option), "Time", outcome_label(plot, [option]), "",
-                      treated_state_titles(plot, treated), series, vlines, period_ticks(plot, series.x), [:vline => "First treated period"])
+    subtitle = length(options) == 1 ? ccc_subtitle(only(options)) : ""
+    return PlotLayout("conditional", conditional_title(plot, options), subtitle, "Time", outcome_label(plot, options), "",
+                      panel_titles, series, vlines, period_ticks(plot, series.x), [:vline => "First treated period"],
+                      grid_columns(options))
 end
 
 
@@ -670,8 +676,7 @@ function changes_layout(plot::DiDIntPlot, plot_type, treated, ccc, controls, wei
         own = state_rows[state_rows.state .== s, :]
         others = state_rows[state_rows.state .!= s, :]
         nrow(own) == 0 && continue
-        state_title = only(treated_state_titles(plot, [s]))
-        push!(panel_titles, length(options) == 1 ? state_title : state_title * ", " * ccc_subtitle(option))
+        push!(panel_titles, grid_panel_title(plot, s, option, length(options)))
         panel = length(panel_titles)
         line(periods, values) = long ? with_base_period(Int.(periods), Float64.(values), first(own.base_period)) : (periods, values)
         if controls == "average"
@@ -692,5 +697,5 @@ function changes_layout(plot::DiDIntPlot, plot_type, treated, ccc, controls, wei
     isempty(panel_titles) && error("No data of plot_type = \"$plot_type\" for the selected treated states.")
     return PlotLayout(plot_type, title, subtitle, "Time", ylabel, "", panel_titles, series, vlines,
                       period_ticks(plot, series.x), [:vline => "First treated period"],
-                      length(options) == 1 ? nothing : length(options))
+                      grid_columns(options))
 end

@@ -75,8 +75,8 @@
   package extension). Its `plot_type` argument chooses among five plots:
   - `"event"`: the event study, one panel per `ccc` option;
   - `"conditional"`: the conditional parallel trends, one panel per `ccc` option with a
-    line for every state or, with `facet = "state"`, one panel per treated state that
-    compares it with its control states under one `ccc` option;
+    line for every state or, with `facet = "state"`, one panel per treated state and `ccc`
+    option that compares the treated state with its control states;
   - `"conditional2"`: the conditional parallel trends as changes since the pre-treatment
     period, one panel per treated state and `ccc` option (a row of panels per treated
     state);

@@ -459,9 +459,27 @@ end
     periods, values = DiDInt.average_of_controls(gaps, Dict(key => 1 for key in keys(gaps)), period -> ["a", "b"], 0:4, true)
     @test periods == [0, 1, 3, 4] && values ≈ [2.0, 2.5, 8.0, 9.0]
 
-    # A single ccc option
-    @test_throws r"facet = \"state\" shows a single 'ccc' option" DiDInt.plot_layout(plot_object(); facet = "state")
-    @test DiDInt.plot_layout(plot_object(); facet = "state", ccc = "time").subtitle == "ccc = \"time\""
+    # Several ccc options: a row of panels per treated state, a column per option, each panel
+    # as the plot of its option alone
+    y = plot_object()
+    @test DiDInt.plot_layout(y; facet = "state", ccc = "time").subtitle == "ccc = \"time\""
+    options = DiDInt.selected_ccc(unique(y.conditional.ccc), nothing)
+    @test length(options) >= 2
+    grid = DiDInt.plot_layout(y; facet = "state")
+    @test grid.subtitle == "" && grid.ncols == length(options) && grid.title == layout.title
+    @test grid.panels == [state * ", ccc = \"" * option * "\"" for state in PLOT_STATE_TITLES for option in options]
+    for (i, option) in enumerate(options), controls in ["average", "separate"]
+        alone = DiDInt.plot_layout(y; facet = "state", ccc = option, controls = controls)
+        grid = DiDInt.plot_layout(y; facet = "state", controls = controls)
+        @test isnothing(alone.ncols)
+        for state in eachindex(PLOT_STATE_TITLES)
+            grid_panel = grid.series[grid.series.panel .== (state - 1) * length(options) + i, Not(:panel)]
+            @test isequal(grid_panel, alone.series[alone.series.panel .== state, Not(:panel)])
+        end
+    end
+    two = DiDInt.plot_layout(y; facet = "state", ccc = ["state", "hom"], treated_states = "s05")
+    @test two.panels == ["s05 (treated 2007), ccc = \"hom\"", "s05 (treated 2007), ccc = \"state\""] && two.ncols == 2
+    @test two.vlines == DataFrame(panel = [1, 2], x = [6, 6])
 end
 
 @testset "Plots of changes since the pre-treatment period (conditional2 and integrated2)" begin
@@ -588,6 +606,7 @@ end
              ((plot_type = "event", ccc = ["none", "int"], treated_states = ["s01", "s03", "s05"], window = (-3, 2), groupmin = 2), 2),
              ((plot_type = "conditional", treated_states = "s03", ccc = "hom"), 1),
              ((facet = "state", ccc = "add"), 5),
+             ((facet = "state", ccc = ["hom", "add"], treated_states = ["s01", "s04", "s05"]), 6),
              ((facet = "state", ccc = "state", controls = "separate", weights = false), 5),
              ((plot_type = "conditional2", ccc = "hom"), 5),
              ((plot_type = "conditional2", ccc = "time", controls = "separate", treated_states = "s04"), 1),

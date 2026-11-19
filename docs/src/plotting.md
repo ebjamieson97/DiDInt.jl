@@ -138,9 +138,10 @@ nothing # hide
 
 ### Outcome means, one panel per treated state
 
-With `facet = "state"` there is one panel per treated state, under a single `ccc` option.
-Each panel compares the treated state with the average of its control states. Parallel
-trends under that option means that the two lines move in parallel before the dashed line.
+With `facet = "state"` there is one panel per treated state and `ccc` option, a row of
+panels per treated state; `ccc` selects the options, here a single one. Each panel compares
+the treated state with the average of its control states. Parallel trends under that option
+means that the two lines move in parallel before the dashed line.
 
 ```@example plots
 figure = plot(plot_data; facet = "state", ccc = "state")
@@ -173,6 +174,18 @@ nothing # hide
 ```
 
 ![Conditional parallel trends of three treated states in one column](plotting_conditional_state_column.png)
+
+With several `ccc` options (or without `ccc`, which shows them all), each treated state has
+a row of panels, one per option:
+
+```@example plots
+figure = plot(plot_data; facet = "state", ccc = ["hom", "state", "add"],
+              treated_states = [71, 72])
+save("plotting_conditional_state_ccc.png", figure; px_per_unit = 1.5) # hide
+nothing # hide
+```
+
+![Conditional parallel trends of two treated states under three ccc options](plotting_conditional_state_ccc.png)
 
 ### Changes since the pre-treatment period
 
