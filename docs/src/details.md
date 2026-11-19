@@ -600,7 +600,7 @@ Under `ccc = "int"` each $\widehat{ATT}(s,t)$ evaluates every cell at the treate
 
 It is computed for every treated state $s$, and for each control state of $s$. The `n` column holds $n_{j,t} + n_{j,t-1}$.
 
-These are the [Integrated Long Differences](@ref) of `didint()` under `ccc = "int"`, taken from one period to the next rather than from the pre-treatment period; in the first treated period the two coincide. The plot has one panel per treated state, which compares $\widehat{\delta}_{s \to s,t}$ with the average of $\widehat{\delta}_{c \to s,t}$ over its control states, weighted by $n_{c,t} + n_{c,t-1}$ (or, with `controls = "separate"`, with each $\widehat{\delta}_{c \to s,t}$). If the two lines stay close to each other before treatment, integrated parallel trends is plausible for that state. In the first treated period the gap between them is the estimate of `didint()` for that state and period, $\widehat{ATT}(s, g_s)$.
+These are the [Integrated Long Differences](@ref) of `didint()` under `ccc = "int"`, taken from one period to the next rather than from the pre-treatment period; in the first treated period the two coincide. The plot has one panel per treated state, which compares $\widehat{\delta}_{s \to s,t}$ with the average of $\widehat{\delta}_{c \to s,t}$ over its control states, weighted by $n_{c,t} + n_{c,t-1}$ (or, with `controls = "separate"`, with each $\widehat{\delta}_{c \to s,t}$). If the two lines stay close to each other before treatment, integrated parallel trends may be plausible for that state. In the first treated period the gap between them is the estimate of `didint()` for that state and period, $\widehat{ATT}(s, g_s)$.
 
 The `"integrated2"` data measure the same changes from the pre-treatment period:
 
@@ -612,13 +612,13 @@ For $t \geq g_s$ these are the [Integrated Long Differences](@ref) of `didint()`
 
 ### Placebo Estimates Before Treatment
 
-In the plots of changes since the pre-treatment period (`"conditional2"` and `"integrated2"`), the gap between the treated state and the average of its controls in a period before treatment is the same difference-in-differences that `didint()` computes for a treated period, applied where no treatment has taken place. If the trends were parallel before treatment as well, and the treatment was not anticipated, it is zero in expectation. Parallel trends itself concerns the periods after treatment and cannot be tested, so these gaps are evidence on its plausibility. These gaps are the counterpart of the pre-treatment estimates of Callaway & Sant'Anna (2021) with a fixed base period, and the gaps before treatment in the `"integrated"` plot are the counterpart of their estimates with a base period that moves with $t$.
+In the plots of changes since the pre-treatment period (`"conditional2"` and `"integrated2"`), the gap between the treated state and the average of its controls in a period before treatment is the same difference-in-differences that `didint()` computes for a treated period, applied where no treatment has taken place. Parallel trends itself concerns the periods after treatment and cannot be tested, so these gaps are evidence on its plausibility.
 
 - Gaps before treatment that scatter around zero and are small next to the gaps after treatment support parallel trends.
 - Gaps that drift steadily towards or away from zero as treatment approaches suggest that the treated state was on a different trend, which the gaps after treatment then partly continue.
 - A jump in the last periods before treatment suggests anticipation.
 
-The gaps before and after treatment are in the same units, so they show how large a violation would be relative to the estimated effect. A trend that differs between a treated state and its controls accumulates in the changes since the pre-treatment period, where the changes from one period to the next show it as a small gap in each period; in return, every point of a line shares the sampling error of period $r_s$. The gap is zero by construction in period $r_s$, and the plots do not show the sampling error of the placebo estimates.
+A trend that differs between a treated state and its controls accumulates in the changes since the pre-treatment period, where the changes from one period to the next show it as a small gap in each period. The gap is zero by construction in period $r_s$. The plots do not show the confidence intervals around the placebo estimates.
 
 ### Event Study
 
@@ -633,8 +633,6 @@ where the sums run over the treated states observed $e$ periods from treatment (
 ### Drawing the Plots
 
 `plot` draws a `DiDIntPlot` once a [Makie](https://docs.makie.org) backend such as CairoMakie is loaded. Its `plot_type` argument chooses among `"event"`, `"conditional"`, `"conditional2"`, `"integrated"` and `"integrated2"`, and `treated_states` selects the treated states to show. A dashed vertical line marks the first treated period, and the panels of treated states are ordered from the earliest treated state to the latest.
-
-In the panels of a treated state, `weights = true` (the default) gives the control states the weights that `didint()` gives them under `weighting = "both"` or `"diff"`, and `weights = false` the equal weights of `"att"` or `"none"`.
 
 ## Fast Computation of Randomization Inference and Jackknife
 
