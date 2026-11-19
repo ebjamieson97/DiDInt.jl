@@ -69,22 +69,22 @@ save("trends.png", figure)
     - `"conditional"`: the conditional parallel trends, the mean outcome (adjusted for covariates) by period
       (see `facet`).
     - `"conditional2"`: the conditional parallel trends as changes since the pre-treatment period, one panel per
-      treated state: the change in its adjusted mean outcome since the period before its treatment, next to the
-      average change of its control states.
+      treated state and `ccc` option: the change in the treated state's adjusted mean outcome since the period
+      before its treatment, next to the average change of its control states.
     - `"integrated"`: the integrated parallel trends of `ccc = "int"`, one panel per treated state, as changes
       since the previous period.
     - `"integrated2"`: the same as changes since the pre-treatment period.
 
     In `"conditional2"` and `"integrated2"` both lines are zero in the pre-treatment period. The gap between them
     is the treated state's ATT in each treated period, as `didint()` estimates it, and a placebo estimate in each
-    period before treatment, which parallel trends requires to be close to zero.
+    period before treatment, which is close to zero if the trends were parallel before treatment.
 
     By default: the conditional parallel trends if `x` has them, otherwise the first kind that it has.
 - `treated_states = nothing`
     The treated state(s) to show, as a single value or a vector. By default all of them.
 - `ccc = nothing`
     The `ccc` option(s) to show in an event study or a conditional parallel trends plot, as a string or a vector
-    of strings. By default all of those in the data.
+    of strings. By default all of those in the data. The integrated parallel trends plots are those of `"int"`.
 - `window = nothing`
     A pair `(first, last)` that limits the horizontal axis: periods relative to treatment for an event study,
     period numbers (the `period` column) otherwise.
@@ -110,8 +110,9 @@ save("trends.png", figure)
     that rest on very few states are too wide to be of use.
 
 ## Appearance
-- `ncols::Union{Integer, Nothing} = nothing`: number of columns of panels. By default one per `ccc` option in a
-  `"conditional2"` plot of several options, otherwise about the square root of the number of panels.
+- `ncols::Union{Integer, Nothing} = nothing`: number of columns of panels. By default one per `ccc` option when
+  the panels are those of treated states under several options, otherwise about the square root of the number of
+  panels.
 - `size::Union{Tuple, Nothing} = nothing`: size of the figure, as `(width, height)`.
 - `title::Union{AbstractString, Nothing} = nothing`: title of the figure; `""` for none.
 - `theme`: a Makie `Theme` that replaces the default look.
@@ -658,7 +659,7 @@ function changes_layout(plot::DiDIntPlot, plot_type, treated, ccc, controls, wei
         subtitle = length(options) == 1 ? ccc_subtitle(only(options)) : ""
         ylabel = outcome_label(plot, options; prefix = "Change in ")
     else
-        if !isnothing(ccc) && unique(lowercase.(ccc isa AbstractVector ? ccc : [ccc])) != ["int"]
+        if !isnothing(ccc) && !(unique(replace.(lowercase.(ccc isa AbstractVector ? ccc : [ccc]), r"\s" => "")) in (["int"], ["all"]))
             error("The integrated parallel trends plot is that of ccc = \"int\"; 'ccc' cannot select another option.")
         end
         options = [nothing]

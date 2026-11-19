@@ -547,6 +547,10 @@ end
 
     # What cannot be drawn
     @test_throws r"cannot select another option" DiDInt.plot_layout(x; plot_type = "integrated2", ccc = "hom")
+    @test_throws r"cannot select another option" DiDInt.plot_layout(x; plot_type = "integrated", ccc = ["int", "hom"])
+    for ccc in ["int", "all", "ALL"], plot_type in ["integrated", "integrated2"]
+        @test isequal(DiDInt.plot_layout(x; plot_type = plot_type, ccc = ccc).series, DiDInt.plot_layout(x; plot_type = plot_type).series)
+    end
     @test_throws r"plot_type = \"integrated2\" were not prepared" DiDInt.plot_layout(plot_object(ccc = "hom"); plot_type = "integrated2")
 end
 
@@ -604,6 +608,8 @@ end
     cases = [((;), 5),
              ((plot_type = "event",), 6),
              ((plot_type = "event", ccc = ["none", "int"], treated_states = ["s01", "s03", "s05"], window = (-3, 2), groupmin = 2), 2),
+             # a confidence interval in a single period (drawn as a bar)
+             ((plot_type = "event", ccc = "hom", window = (1, 4), groupmin = 5), 1),
              ((plot_type = "conditional", treated_states = "s03", ccc = "hom"), 1),
              ((facet = "state", ccc = "add"), 5),
              ((facet = "state", ccc = ["hom", "add"], treated_states = ["s01", "s04", "s05"]), 6),

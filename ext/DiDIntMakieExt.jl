@@ -246,11 +246,16 @@ function draw_line!(axis, role, color, x, y, lower, upper, with_markers)
         with_markers && Makie.scatter!(axis, x, y; color = series_color(color), markersize = 7)
     else
         # An estimate with its confidence interval, a black line in a light band: a band over
-        # each run of periods that have an interval, and a square instead of a circle where
-        # there is none
+        # each run of periods that have an interval (a bar for a single period, which a band
+        # cannot show), and a square instead of a circle where there is none
         has_interval = .!ismissing.(lower) .& .!ismissing.(upper)
         for run in runs_of(has_interval)
-            Makie.band!(axis, x[run], Float64.(lower[run]), Float64.(upper[run]); color = (ESTIMATE_BAND_COLOR, 0.2))
+            if length(run) == 1
+                Makie.rangebars!(axis, x[run], Float64.(lower[run]), Float64.(upper[run]); color = (ESTIMATE_BAND_COLOR, 0.2),
+                                 linewidth = 10)
+            else
+                Makie.band!(axis, x[run], Float64.(lower[run]), Float64.(upper[run]); color = (ESTIMATE_BAND_COLOR, 0.2))
+            end
         end
         Makie.lines!(axis, x, y; color = ESTIMATE_COLOR, linewidth = 2)
         any(has_interval) && Makie.scatter!(axis, x[has_interval], y[has_interval]; color = ESTIMATE_COLOR, markersize = 8)

@@ -37,7 +37,7 @@ The `plot_type` argument of `plot` chooses the plot:
 |:-----------------|:--------------------------------------------------------------------------------------------|
 | `"event"`        | Event study, one panel per `ccc` option                                                      |
 | `"conditional"`  | Conditional parallel trends: the outcome means by period, per `ccc` option or per treated state |
-| `"conditional2"` | Conditional parallel trends: changes since the pre-treatment period, per treated state        |
+| `"conditional2"` | Conditional parallel trends: changes since the pre-treatment period, per treated state and `ccc` option |
 | `"integrated"`   | Integrated parallel trends: changes since the previous period, per treated state              |
 | `"integrated2"`  | Integrated parallel trends: changes since the pre-treatment period, per treated state         |
 
@@ -205,7 +205,7 @@ nothing # hide
 - In a treated period, the gap between the two lines is the ATT that `didint()` estimates
   for that state and period.
 - Before treatment, the gap is a placebo estimate: the same comparison where no effect is
-  expected yet. Parallel trends requires these gaps to be close to zero. Gaps that drift
+  expected yet. Gaps close to zero support parallel trends. Gaps that drift
   steadily towards or away from zero as treatment approaches suggest that the treated
   state was on a different trend, and a jump just before treatment suggests anticipation.
 
