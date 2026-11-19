@@ -182,8 +182,8 @@ plot(plot_data; plot_type = "conditional")
 
 ```julia
 # Conditional parallel trends as changes since the pre-treatment period, here for treated state 72
-# under ccc = "state": the gap between the lines is the ATT after treatment and a placebo estimate before
-plot(plot_data; plot_type = "conditional2", ccc = "state", treated_states = "72")
+# under each ccc option: the gap between the lines is the ATT after treatment and a placebo estimate before
+plot(plot_data; plot_type = "conditional2", treated_states = "72")
 ```
 
 ![Conditional parallel trends plot of changes since the pre-treatment period](docs/src/assets/readme_conditional2.png)

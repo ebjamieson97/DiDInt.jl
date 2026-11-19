@@ -576,7 +576,7 @@ The `"conditional2"` data are the differences from which `didint()` computes its
 \widehat{\delta}_{j,t} = \hat{\lambda}_{j,t} - \hat{\lambda}_{j,r_s}
 ```
 
-for every period $t \neq r_s$; in period $r_s$ the change is zero. The plot has one panel per treated state, under a single `ccc` option, which compares $\widehat{\delta}_{s,t}$ with the average over its control states,
+for every period $t \neq r_s$; in period $r_s$ the change is zero. The plot has one panel per treated state and `ccc` option, which compares $\widehat{\delta}_{s,t}$ with the average over its control states,
 
 ```math
 \overline{\delta}_{s,t} = \sum_{c \in C_{s,t}} w_{c,t}\, \widehat{\delta}_{c,t}, \qquad w_{c,t} = \frac{n_{c,t} + n_{c,r_s}}{\sum_{c' \in C_{s,t}} \left(n_{c',t} + n_{c',r_s}\right)}

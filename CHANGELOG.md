@@ -67,8 +67,9 @@
   other plot data do; before, it was estimated on the treated states only. Its estimates
   change under the `ccc` options `"hom"`, `"time"` and `"add"`.
 - The tables have a column `n`, the number of observations behind each row.
-- With `wrapper = "stata"` or `"r"` the `DiDIntPlot` is returned as well; the Stata and R
-  wrappers need updating to read its tables.
+- The `wrapper` argument of `didint_plot()` is removed: the Stata and R wrappers receive
+  the `DiDIntPlot` like every other caller, and need updating to read its tables. Its dates
+  are strings (formatted with `date_format`), as the wrappers need.
 - New: a `DiDIntPlot` can be drawn with `plot` once a [Makie](https://docs.makie.org)
   backend such as CairoMakie is loaded (Makie is an optional dependency, loaded as a
   package extension). Its `plot_type` argument chooses among five plots:
@@ -77,7 +78,8 @@
     line for every state or, with `facet = "state"`, one panel per treated state that
     compares it with its control states under one `ccc` option;
   - `"conditional2"`: the conditional parallel trends as changes since the pre-treatment
-    period, one panel per treated state;
+    period, one panel per treated state and `ccc` option (a row of panels per treated
+    state);
   - `"integrated"`: the integrated parallel trends, one panel per treated state, as
     changes since the previous period;
   - `"integrated2"`: the same as changes since the pre-treatment period.

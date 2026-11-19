@@ -121,11 +121,10 @@ end
     end
     @test early.specs.treated_states == INTEGRATION_TREATED && early.specs.always_treated == ["s06"]
 
-    # The Stata and R wrappers receive the DiDIntPlot as well
-    for wrapper in ["r", "stata", "julia"]
-        @test same_plot(plot_object(wrapper = wrapper), x)
-    end
-    @test_throws r"'wrapper' must be one of" plot_object(wrapper = "python")
+    # Dates are strings in every table and in the specifications, as the Stata and R wrappers need
+    @test !any(eltype(column) <: DiDInt.Dates.TimeType for field in DiDInt.PLOT_TYPES for column in eachcol(getfield(x, Symbol(field))))
+    @test !any(eltype(column) <: DiDInt.Dates.TimeType for column in eachcol(x.event_lambdas))
+    @test !any(value isa DiDInt.Dates.TimeType || (value isa AbstractVector && eltype(value) <: DiDInt.Dates.TimeType) for value in values(x.specs))
 
     # Display
     text = sprint(show, MIME("text/plain"), x)
@@ -510,8 +509,25 @@ end
         @test all((row.role == :treated) == (row.group == "s05") for row in eachrow(separate.series))
     end
 
+    # Several ccc options: a row of panels per treated state, a column per option, each panel
+    # as the plot of its option alone
+    options = DiDInt.selected_ccc(unique(x.conditional2.ccc), nothing)
+    @test length(options) >= 2
+    grid = DiDInt.plot_layout(x; plot_type = "conditional2")
+    @test grid.subtitle == "" && grid.ncols == length(options)
+    @test grid.panels == [state * ", ccc = \"" * option * "\"" for state in PLOT_STATE_TITLES for option in options]
+    for (i, option) in enumerate(options)
+        alone = DiDInt.plot_layout(x; plot_type = "conditional2", ccc = option)
+        @test isnothing(alone.ncols)
+        for state in eachindex(PLOT_STATE_TITLES)
+            grid_panel = grid.series[grid.series.panel .== (state - 1) * length(options) + i, Not(:panel)]
+            @test isequal(grid_panel, alone.series[alone.series.panel .== state, Not(:panel)])
+        end
+    end
+    two = DiDInt.plot_layout(x; plot_type = "conditional2", ccc = ["state", "hom"], treated_states = "s05")
+    @test two.panels == ["s05 (treated 2007), ccc = \"hom\"", "s05 (treated 2007), ccc = \"state\""] && two.ncols == 2
+
     # What cannot be drawn
-    @test_throws r"\"conditional2\" shows a single 'ccc' option" DiDInt.plot_layout(x; plot_type = "conditional2")
     @test_throws r"cannot select another option" DiDInt.plot_layout(x; plot_type = "integrated2", ccc = "hom")
     @test_throws r"plot_type = \"integrated2\" were not prepared" DiDInt.plot_layout(plot_object(ccc = "hom"); plot_type = "integrated2")
 end
@@ -575,6 +591,7 @@ end
              ((facet = "state", ccc = "state", controls = "separate", weights = false), 5),
              ((plot_type = "conditional2", ccc = "hom"), 5),
              ((plot_type = "conditional2", ccc = "time", controls = "separate", treated_states = "s04"), 1),
+             ((plot_type = "conditional2", treated_states = ["s01", "s04"]), 10),
              ((plot_type = "integrated",), 5),
              ((plot_type = "integrated", controls = "separate", treated_states = ["s01", "s05"]), 2),
              ((plot_type = "integrated2",), 5),

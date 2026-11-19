@@ -18,7 +18,7 @@ plot_data = didint_plot("coll", "state", "year", test_data,
 assets = joinpath(@__DIR__, "src", "assets")
 figures = ["readme_event.png" => plot(plot_data; plot_type = "event"),
            "readme_conditional.png" => plot(plot_data; plot_type = "conditional"),
-           "readme_conditional2.png" => plot(plot_data; plot_type = "conditional2", ccc = "state", treated_states = "72"),
+           "readme_conditional2.png" => plot(plot_data; plot_type = "conditional2", treated_states = "72"),
            "readme_integrated.png" => plot(plot_data; plot_type = "integrated"),
            "readme_integrated2.png" => plot(plot_data; plot_type = "integrated2")]
 for (file, figure) in figures

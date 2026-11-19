@@ -119,7 +119,8 @@ function draw_layout(layout::PlotLayout, ncols, size)
     # The figure: a title (with a second line under it), a grid of panels that share their axes (one panel per element of
     # `layout.panels`, filled row by row), the axis labels and a legend below the panels
     n_panels = length(layout.panels)
-    ncols = isnothing(ncols) ? (n_panels <= 3 ? n_panels : ceil(Int, sqrt(n_panels))) : min(ncols, n_panels)
+    ncols = something(ncols, layout.ncols, n_panels <= 3 ? n_panels : ceil(Int, sqrt(n_panels)))
+    ncols = min(ncols, n_panels)
     nrows = cld(n_panels, ncols)
     with_markers = draws_markers(layout)
     elements, labels = legend_contents(layout, with_markers)

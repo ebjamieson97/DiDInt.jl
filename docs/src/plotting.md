@@ -178,8 +178,8 @@ nothing # hide
 
 `didint()` compares the change in a treated state's adjusted mean outcome since its
 pre-treatment period with the average change of its control states over the same periods.
-`plot_type = "conditional2"` draws exactly those changes, one panel per treated state under
-a single `ccc` option. Both lines are zero in the pre-treatment period.
+`plot_type = "conditional2"` draws exactly those changes, one panel per treated state and
+`ccc` option. Both lines are zero in the pre-treatment period. Here under a single option:
 
 ```@example plots
 figure = plot(plot_data; plot_type = "conditional2", ccc = "state")
@@ -198,6 +198,18 @@ nothing # hide
 
 The gaps before and after treatment are in the same units, so the placebo gaps show how
 large a violation of parallel trends would be next to the estimated effect.
+
+Without `ccc`, every option is shown, with a row of panels per treated state and a column
+per option. For one treated state this compares the options side by side:
+
+```@example plots
+figure = plot(plot_data; plot_type = "conditional2", treated_states = 72)
+save("plotting_conditional2_ccc.png", figure; px_per_unit = 1.5) # hide
+nothing # hide
+```
+
+![Changes since the pre-treatment period of treated state 72 under each ccc option](plotting_conditional2_ccc.png)
+
 `controls = "separate"` draws each control state, here for one treated state:
 
 ```@example plots

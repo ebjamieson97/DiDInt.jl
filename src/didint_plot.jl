@@ -187,15 +187,12 @@ function didint_plot(
          freq_multiplier::Number = 1,
          start_date::Union{AbstractString, Number, Date, Nothing} = nothing,
          end_date::Union{AbstractString, Number, Date, Nothing} = nothing,
-         hc::Union{AbstractString, Number} = "hc1",
-         wrapper::Union{AbstractString, Nothing} = nothing)
+         hc::Union{AbstractString, Number} = "hc1")
 
     #--------------------------------------------------------------------------------------
     # Step 1: Check the arguments
     #--------------------------------------------------------------------------------------
 
-    # The Stata and R wrappers receive the DiDIntPlot like every other caller; `wrapper` is only checked
-    wrapper = init_wrapper_check(wrapper)
     data_type_check(data)
     date_format = check_date_format(date_format)
     freq_multiplier = check_positive_integer(freq_multiplier, "freq_multiplier")

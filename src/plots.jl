@@ -83,7 +83,7 @@ save("trends.png", figure)
 - `treated_states = nothing`
     The treated state(s) to show, as a single value or a vector. By default all of them.
 - `ccc = nothing`
-    The `ccc` option(s) to show in an event study or conditional parallel trends plot, as a string or a vector
+    The `ccc` option(s) to show in an event study or a conditional parallel trends plot, as a string or a vector
     of strings. By default all of those in the data.
 - `window = nothing`
     A pair `(first, last)` that limits the horizontal axis: periods relative to treatment for an event study,
@@ -93,7 +93,8 @@ save("trends.png", figure)
 - `facet::AbstractString = "ccc"`
     For `plot_type = "conditional"`: `"ccc"` draws one panel per `ccc` option with a line for every state;
     `"state"` draws one panel per treated state, comparing it with its control states under a single `ccc`
-    option (chosen with `ccc` when the data have several). `"conditional2"` also shows a single `ccc` option.
+    option (chosen with `ccc` when the data have several). `"conditional2"` draws one panel per treated state
+    and `ccc` option, a row of panels per treated state.
 - `controls::AbstractString = "average"`
     In the panels of a treated state (every plot type except `"event"` and `"conditional"` with
     `facet = "ccc"`): `"average"` draws one line for the average of the control states, `"separate"` a line
@@ -109,7 +110,8 @@ save("trends.png", figure)
     that rest on very few states are too wide to be of use.
 
 ## Appearance
-- `ncols::Union{Integer, Nothing} = nothing`: number of columns of panels.
+- `ncols::Union{Integer, Nothing} = nothing`: number of columns of panels. By default one per `ccc` option in a
+  `"conditional2"` plot of several options, otherwise about the square root of the number of panels.
 - `size::Union{Tuple, Nothing} = nothing`: size of the figure, as `(width, height)`.
 - `title::Union{AbstractString, Nothing} = nothing`: title of the figure; `""` for none.
 - `theme`: a Makie `Theme` that replaces the default look.
@@ -222,6 +224,8 @@ end
 #   legend_extras: entries of the legend for marks other than the lines, as kind => label,
 #            where the kind is :band (confidence interval), :no_interval (estimate without
 #            one) or :vline (vertical reference line)
+#   ncols:   the number of columns of panels that suits the plot (a grid of treated states by
+#            ccc options has one column per option), or nothing to let the drawing decide
 struct PlotLayout
     plot_type::String
     title::String
@@ -234,7 +238,11 @@ struct PlotLayout
     vlines::DataFrame
     xticks::Union{Nothing, Tuple{Vector{Int}, Vector{String}}}
     legend_extras::Vector{Pair{Symbol, String}}
+    ncols::Union{Nothing, Int}
 end
+
+PlotLayout(plot_type, title, subtitle, xlabel, ylabel, legend_title, panels, series, vlines, xticks, legend_extras) =
+    PlotLayout(plot_type, title, subtitle, xlabel, ylabel, legend_title, panels, series, vlines, xticks, legend_extras, nothing)
 
 empty_series() = DataFrame(panel = Int[], group = String[], label = String[], role = Symbol[], color = Int[], x = Int[],
                            y = Float64[], lower = Union{Missing, Float64}[], upper = Union{Missing, Float64}[])
@@ -365,13 +373,13 @@ function apply_window(layout::PlotLayout, window)
         kind == :no_interval ? any(ismissing, series.lower) : kind == :vline ? nrow(vlines) > 0 : true
     end
     return PlotLayout(layout.plot_type, layout.title, layout.subtitle, layout.xlabel, layout.ylabel, layout.legend_title,
-                      layout.panels, series, vlines, xticks, legend_extras)
+                      layout.panels, series, vlines, xticks, legend_extras, layout.ncols)
 end
 
 # A title given by the user replaces the title and the line under it
 with_title(layout::PlotLayout, title) = PlotLayout(layout.plot_type, String(title), "", layout.xlabel, layout.ylabel,
                                                    layout.legend_title, layout.panels, layout.series, layout.vlines, layout.xticks,
-                                                   layout.legend_extras)
+                                                   layout.legend_extras, layout.ncols)
 
 # Whether the outcome shown is adjusted for covariates: not without covariates, nor when only
 # ccc = "none" is shown
@@ -623,7 +631,8 @@ function changes_layout(plot::DiDIntPlot, plot_type, treated, ccc, controls, wei
     # One panel per treated state s, the earliest treated first: the change in the outcome of s
     # next to the changes of its control states, from the table of the plot type.
     #   "conditional2": the change in lambda since the period before the treatment of s, under
-    #                   a single ccc option other than "int"
+    #                   the ccc options other than "int"; with several options, one panel per
+    #                   treated state and option, a row of panels per treated state
     #   "integrated":   the change in the predicted outcome since the previous period, at the
     #                   covariate means of s (Karim & Webb 2025, eqs. 36-38)
     #   "integrated2":  the same since the period before the treatment of s
@@ -637,15 +646,16 @@ function changes_layout(plot::DiDIntPlot, plot_type, treated, ccc, controls, wei
     long = plot_type != "integrated"
     outcome = plot.specs.outcome
     if plot_type == "conditional2"
-        option = single_ccc(unique(rows.ccc), ccc, "plot_type = \"conditional2\"")
-        rows = rows[rows.ccc .== option, :]
+        options = selected_ccc(unique(rows.ccc), ccc)
         treated_column = :treated_state
-        title, subtitle = "Conditional parallel trends: changes since the pre-treatment period", ccc_subtitle(option)
-        ylabel = outcome_label(plot, [option]; prefix = "Change in ")
+        title = "Conditional parallel trends: changes since the pre-treatment period"
+        subtitle = length(options) == 1 ? ccc_subtitle(only(options)) : ""
+        ylabel = outcome_label(plot, options; prefix = "Change in ")
     else
         if !isnothing(ccc) && unique(lowercase.(ccc isa AbstractVector ? ccc : [ccc])) != ["int"]
             error("The integrated parallel trends plot is that of ccc = \"int\"; 'ccc' cannot select another option.")
         end
+        options = [nothing]
         treated_column = :treated_state_covars
         title = "Integrated parallel trends: changes since the " * (long ? "pre-treatment period" : "previous period")
         subtitle, ylabel = "", "Change in predicted " * outcome
@@ -653,14 +663,16 @@ function changes_layout(plot::DiDIntPlot, plot_type, treated, ccc, controls, wei
 
     series = empty_series()
     vlines = DataFrame(panel = Int[], x = Int[])
-    shown = String[]
-    for s in by_treatment_time(plot, treated)
-        state_rows = sort(rows[rows[!, treated_column] .== s, :], :period)
+    panel_titles = String[]
+    for s in by_treatment_time(plot, treated), option in options
+        option_rows = isnothing(option) ? rows : rows[rows.ccc .== option, :]
+        state_rows = sort(option_rows[option_rows[!, treated_column] .== s, :], :period)
         own = state_rows[state_rows.state .== s, :]
         others = state_rows[state_rows.state .!= s, :]
         nrow(own) == 0 && continue
-        push!(shown, s)
-        panel = length(shown)
+        state_title = only(treated_state_titles(plot, [s]))
+        push!(panel_titles, length(options) == 1 ? state_title : state_title * ", " * ccc_subtitle(option))
+        panel = length(panel_titles)
         line(periods, values) = long ? with_base_period(Int.(periods), Float64.(values), first(own.base_period)) : (periods, values)
         if controls == "average"
             periods = sort(unique(others.period))
@@ -677,7 +689,8 @@ function changes_layout(plot::DiDIntPlot, plot_type, treated, ccc, controls, wei
         add_line!(series, panel, s, "Treated state", :treated, 1, line(own.period, own.delta)...)
         push!(vlines, (panel = panel, x = first(own.treat_period)))
     end
-    isempty(shown) && error("No data of plot_type = \"$plot_type\" for the selected treated states.")
-    return PlotLayout(plot_type, title, subtitle, "Time", ylabel, "", treated_state_titles(plot, shown), series, vlines,
-                      period_ticks(plot, series.x), [:vline => "First treated period"])
+    isempty(panel_titles) && error("No data of plot_type = \"$plot_type\" for the selected treated states.")
+    return PlotLayout(plot_type, title, subtitle, "Time", ylabel, "", panel_titles, series, vlines,
+                      period_ticks(plot, series.x), [:vline => "First treated period"],
+                      length(options) == 1 ? nothing : length(options))
 end
