@@ -592,7 +592,7 @@ For $t < r_s$ the gap is a placebo estimate (see [Placebo Estimates Before Treat
 
 ### Integrated Parallel Trends
 
-Under `ccc = "int"` the $\hat{\lambda}_{s,t}$ values depend on how the covariates are coded, so the `"integrated"` data are instead those of the integrated parallel trends plot of the DID-INT paper (equations 36 to 38). The outcome is regressed on the covariates separately in every $(s,t)$ cell, which gives $\hat{\lambda}_{s,t}$ and $\hat{\gamma}_{s,t}$. For a treated state $s$ and a state $j$, the change in the predicted outcome of $j$ between periods $t-1$ and $t$, evaluated at the covariate means of $s$ in period $t$, is
+Under `ccc = "int"` each $\widehat{ATT}(s,t)$ evaluates every cell at the treated state's covariate means $\overline{X}_{s,t}$, so it depends on $\overline{X}_{s,t}$ and cannot be read from the $\hat{\lambda}_{s,t}$ values alone. The `"integrated"` data are therefore those of the integrated parallel trends plot of the DID-INT paper (equations 36 to 38). The outcome is regressed on the covariates separately in every $(s,t)$ cell, which gives $\hat{\lambda}_{s,t}$ and $\hat{\gamma}_{s,t}$. For a treated state $s$ and a state $j$, the change in the predicted outcome of $j$ between periods $t-1$ and $t$, evaluated at the covariate means of $s$ in period $t$, is
 
 ```math
 \widehat{\delta}_{j \to s,t} = \left(\hat{\lambda}_{j,t} - \hat{\lambda}_{j,t-1}\right) + \left(\hat{\gamma}_{j,t} - \hat{\gamma}_{j,t-1}\right)'\,\overline{X}_{s,t}
